@@ -160,9 +160,9 @@ struct ChatCommand: ParsableCommand {
                 print(currentDeepSearch ? "Deep search enabled".yellow : "Deep search disabled".blue)
                 continue
                 
-            case _ where input.hasPrefix("/nosearch"):
+            case _ where input.hasPrefix("/realtime"):
                 currentNoSearch = !currentNoSearch  // Toggle current state
-                print(currentNoSearch ? "Search disabled".red : "Search enabled".green)
+                print(currentNoSearch ? "Realtime disabled".red : "Realtime enabled".green)
                 continue
                 
             case _ where input.hasPrefix("/custom"):
@@ -225,14 +225,14 @@ struct ChatCommand: ParsableCommand {
                 print("Deep search disabled".blue)
                 continue
 
-            case "nosearch on":
-                currentNoSearch = true
-                print("Search disabled".red)
+            case "realtime on":
+                currentNoSearch = false
+                print("Realtime enabled".green)
                 continue
                 
-            case "nosearch off":
-                currentNoSearch = false
-                print("Search enabled".green)
+            case "realtime off":
+                currentNoSearch = true
+                print("Realtime disabled".red)
                 continue
                 
             case "custom on":
@@ -721,7 +721,7 @@ struct GrokCLI {
               (enableNoCustomInstructions ? "Custom instruction: OFF".blue : "Custom instruction: ON".yellow) + " | " + 
               (enableReasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + 
               (enableDeepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue) + " | " +
-              (enableNoSearch ? "Search: OFF".red : "Search: ON".green))
+              (enableNoSearch ? "Realtime: OFF".red : "Realtime: ON".green))
         if let conversationId = app.getCurrentConversationId() {
             print("Conversation ID: \(conversationId)".cyan)
         }
@@ -761,9 +761,9 @@ struct GrokCLI {
                 print(currentDeepSearch ? "Deep search enabled".yellow : "Deep search disabled".blue)
                 continue
                 
-            case _ where input.hasPrefix("/nosearch"):
+            case _ where input.hasPrefix("/realtime"):
                 currentNoSearch = !currentNoSearch  // Toggle current state
-                print(currentNoSearch ? "Search disabled".red : "Search enabled".green)
+                print(currentNoSearch ? "Realtime disabled".red : "Realtime enabled".green)
                 continue
                 
             case _ where input.hasPrefix("/custom"):
@@ -825,15 +825,15 @@ struct GrokCLI {
                 currentDeepSearch = false
                 print("Deep search disabled".blue)
                 continue
-                
-            case "nosearch on":
-                currentNoSearch = true
-                print("Search disabled".red)
+
+            case "realtime on":
+                currentNoSearch = false
+                print("Realtime enabled".green)
                 continue
                 
-            case "nosearch off":
-                currentNoSearch = false
-                print("Search enabled".green)
+            case "realtime off":
+                currentNoSearch = true
+                print("Realtime disabled".red)
                 continue
                 
             case "custom on":
@@ -930,7 +930,7 @@ struct GrokCLI {
             print("Debug: Message = \"\(messageText)\"")
             print("Debug: Reasoning = \(enableReasoning)")
             print("Debug: DeepSearch = \(enableDeepSearch)")
-            print("Debug: NoSearch = \(enableNoSearch)")
+            print("Debug: Realtime disabled = \(enableNoSearch)")
             print("Debug: Markdown = \(enableMarkdown)")
         }
         
@@ -1052,7 +1052,7 @@ struct GrokCLI {
           reset conversation, /reset-conversation - Start a new conversation thread
           reasoning on/off  - Toggle reasoning mode
           search on/off     - Toggle deep search
-          nosearch on/off   - Toggle web search on/off
+          realtime on/off   - Toggle realtime data on/off
           custom on/off     - Toggle custom instructions
           clear, cls        - Clear the screen
         
@@ -1127,7 +1127,7 @@ class OutputFormatter {
         - \("help".yellow): Show this help message
         - \("reasoning on/off".yellow) or \("/reason".yellow): Toggle reasoning mode
         - \("search on/off".yellow) or \("/search".yellow): Toggle deep search
-        - \("nosearch on/off".yellow) or \("/nosearch".yellow): Toggle web search on/off
+        - \("realtime on/off".yellow) or \("/realtime".yellow): Toggle realtime data on/off
         - \("custom on/off".yellow) or \("/custom".yellow): Toggle custom instructions
         - \("reset conversation".yellow) or \("/reset-conversation".yellow): Start a new conversation
         - \("/edit-instructions".yellow): Edit custom instructions
@@ -1138,7 +1138,7 @@ class OutputFormatter {
         - \("/exit".yellow): Exit chat mode
         - \("/reason".yellow): Toggle reasoning mode on/off
         - \("/search".yellow) or \("/deepsearch".yellow): Toggle deep search on/off
-        - \("/nosearch".yellow): Toggle web search on/off
+        - \("/realtime".yellow): Toggle realtime data on/off
         - \("/custom".yellow): Toggle custom instructions on/off
         - \("/reset-conversation".yellow): Start a new conversation
         - \("/edit-instructions".yellow): Edit custom instructions
@@ -1147,7 +1147,7 @@ class OutputFormatter {
         \("Modes:".cyan.bold)
         - \("Reasoning".yellow): Enables step-by-step explanations
         - \("Deep Search".yellow): Enables more comprehensive answers using web search
-        - \("No Search".yellow): Disables web search completely
+        - \("Realtime".yellow): Enables real-time data from web search and X
         - \("Custom Instructions".yellow): Enables/disables custom instructions for the assistant
         - \("Conversation Threading".yellow): Messages maintain context within the current conversation
         
