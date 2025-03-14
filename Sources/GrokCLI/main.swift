@@ -93,6 +93,23 @@ struct ChatCommand: ParsableCommand {
             
             // Process commands
             switch input.lowercased() {
+            // New slash commands
+            case _ where input.hasPrefix("/exit"):
+                isRunning = false
+                print("Goodbye!".cyan)
+                continue
+                
+            case _ where input.hasPrefix("/reason"):
+                currentReasoning = !currentReasoning  // Toggle current state
+                print(currentReasoning ? "Reasoning mode enabled".yellow : "Reasoning mode disabled".blue)
+                continue
+                
+            case _ where input.hasPrefix("/search"), _ where input.hasPrefix("/deepsearch"):
+                currentDeepSearch = !currentDeepSearch  // Toggle current state
+                print(currentDeepSearch ? "Deep search enabled".yellow : "Deep search disabled".blue)
+                continue
+                
+            // Keep existing commands for backward compatibility
             case "exit", "quit":
                 isRunning = false
                 print("Goodbye!".cyan)
@@ -427,7 +444,7 @@ struct GrokCLI {
         let inputReader = InputReader()
         
         // Initialization message
-        print("Initializing Grok CLI...".cyan)
+        print("Calling Grok API...".cyan)
         
         if enableDebug {
             print("Debug: initialMessage = \(initialMessage)")
@@ -486,6 +503,23 @@ struct GrokCLI {
             
             // Process commands
             switch input.lowercased() {
+            // New slash commands
+            case _ where input.hasPrefix("/exit"):
+                isRunning = false
+                print("Goodbye!".cyan)
+                continue
+                
+            case _ where input.hasPrefix("/reason"):
+                currentReasoning = !currentReasoning  // Toggle current state
+                print(currentReasoning ? "Reasoning mode enabled".yellow : "Reasoning mode disabled".blue)
+                continue
+                
+            case _ where input.hasPrefix("/search"), _ where input.hasPrefix("/deepsearch"):
+                currentDeepSearch = !currentDeepSearch  // Toggle current state
+                print(currentDeepSearch ? "Deep search enabled".yellow : "Deep search disabled".blue)
+                continue
+                
+            // Keep existing commands for backward compatibility
             case "exit", "quit":
                 isRunning = false
                 print("Goodbye!".cyan)
@@ -728,11 +762,16 @@ class OutputFormatter {
         print("""
         
         \("Available Commands:".cyan.bold)
-        - \("exit".yellow): Exit the chat session
+        - \("exit".yellow) or \("/exit".yellow): Exit the chat session
         - \("help".yellow): Show this help message
-        - \("reasoning on/off".yellow): Toggle reasoning mode
-        - \("search on/off".yellow): Toggle deep search
+        - \("reasoning on/off".yellow) or \("/reason".yellow): Toggle reasoning mode
+        - \("search on/off".yellow) or \("/search".yellow): Toggle deep search
         - \("clear".yellow): Clear the screen
+        
+        \("Slash Commands:".cyan.bold)
+        - \("/exit".yellow): Exit chat mode
+        - \("/reason".yellow): Toggle reasoning mode on/off
+        - \("/search".yellow) or \("/deepsearch".yellow): Toggle deep search on/off
         
         \("Modes:".cyan.bold)
         - \("Reasoning".yellow): Enables step-by-step explanations
