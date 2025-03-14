@@ -10,6 +10,11 @@ struct ChatCommand: ParsableCommand {
         abstract: "Start an interactive chat session with Grok"
     )
     
+    // Default custom instructions for the assistant
+    static let defaultCustomInstructions = """
+    You are a highly capable, thoughtful, and precise assistant. Your goal is to deeply understand the user's intent, ask clarifying questions when needed, think step-by-step through complex problems, provide clear and accurate answers, and proactively anticipate helpful follow-up information. Always prioritize being truthful, nuanced, insightful, and efficient, tailoring your responses specifically to the user's needs and preferences. If conversational dialogue, be more human. when possible, use brevity.
+    """
+    
     @Argument(parsing: .remaining, help: "Optional initial message to send to Grok")
     var initialMessage: [String] = []
     
@@ -24,6 +29,9 @@ struct ChatCommand: ParsableCommand {
     
     @Flag(name: .long, help: "Show debug information")
     var debug = false
+    
+    @Flag(name: .long, help: "Disable custom instructions for the assistant")
+    var noCustomInstructions = false
     
     func run() async throws {
         let app = GrokCLIApp.shared
@@ -60,7 +68,8 @@ struct ChatCommand: ParsableCommand {
                 let response = try await app.query(
                     message: message,
                     enableReasoning: reasoning,
-                    enableDeepSearch: deepSearch
+                    enableDeepSearch: deepSearch,
+                    customInstructions: noCustomInstructions ? "" : Self.defaultCustomInstructions
                 )
                 
                 // Format and display the response
@@ -159,7 +168,8 @@ struct ChatCommand: ParsableCommand {
                 let response = try await app.query(
                     message: input,
                     enableReasoning: currentReasoning,
-                    enableDeepSearch: currentDeepSearch
+                    enableDeepSearch: currentDeepSearch,
+                    customInstructions: noCustomInstructions ? "" : Self.defaultCustomInstructions
                 )
                 
                 // Format and display the response
@@ -181,6 +191,9 @@ struct QueryCommand: ParsableCommand {
         abstract: "Send a one-off query to Grok and get the response"
     )
     
+    // Default custom instructions for the assistant
+    static let defaultCustomInstructions = ChatCommand.defaultCustomInstructions
+    
     @Argument(help: "The question or prompt to send to Grok")
     var prompt: [String]
     
@@ -195,6 +208,9 @@ struct QueryCommand: ParsableCommand {
     
     @Flag(name: .long, help: "Show debug information")
     var debug = false
+    
+    @Flag(name: .long, help: "Disable custom instructions for the assistant")
+    var noCustomInstructions = false
     
     func run() async throws {
         guard !prompt.isEmpty else {
@@ -216,7 +232,8 @@ struct QueryCommand: ParsableCommand {
             let response = try await app.query(
                 message: message,
                 enableReasoning: reasoning,
-                enableDeepSearch: deepSearch
+                enableDeepSearch: deepSearch,
+                customInstructions: noCustomInstructions ? "" : Self.defaultCustomInstructions
             )
             
             // Format and display the response
@@ -237,6 +254,9 @@ struct MessageCommand: ParsableCommand {
         abstract: "Send a single message to Grok and get a response"
     )
     
+    // Default custom instructions for the assistant
+    static let defaultCustomInstructions = ChatCommand.defaultCustomInstructions
+    
     @Argument(parsing: .remaining, help: "The message to send")
     var messageWords: [String]
     
@@ -251,6 +271,9 @@ struct MessageCommand: ParsableCommand {
     
     @Flag(name: .long, help: "Show debug information")
     var debug = false
+    
+    @Flag(name: .long, help: "Disable custom instructions for the assistant")
+    var noCustomInstructions = false
     
     func run() async throws {
         let app = GrokCLIApp.shared
@@ -282,7 +305,8 @@ struct MessageCommand: ParsableCommand {
             let response = try await app.query(
                 message: message,
                 enableReasoning: reasoning,
-                enableDeepSearch: deepSearch
+                enableDeepSearch: deepSearch,
+                customInstructions: noCustomInstructions ? "" : Self.defaultCustomInstructions
             )
             
             // Display the response
@@ -471,7 +495,8 @@ struct GrokCLI {
                 let response = try await app.query(
                     message: message,
                     enableReasoning: enableReasoning,
-                    enableDeepSearch: enableDeepSearch
+                    enableDeepSearch: enableDeepSearch,
+                    customInstructions: ""
                 )
                 
                 // Format and display the response
@@ -569,7 +594,8 @@ struct GrokCLI {
                 let response = try await app.query(
                     message: input,
                     enableReasoning: currentReasoning,
-                    enableDeepSearch: currentDeepSearch
+                    enableDeepSearch: currentDeepSearch,
+                    customInstructions: ""
                 )
                 
                 // Format and display the response
@@ -639,7 +665,8 @@ struct GrokCLI {
             let response = try await app.query(
                 message: messageText,
                 enableReasoning: enableReasoning,
-                enableDeepSearch: enableDeepSearch
+                enableDeepSearch: enableDeepSearch,
+                customInstructions: ""
             )
             
             // Display response
@@ -1010,12 +1037,13 @@ class GrokCLIApp {
     }
     
     // Send a single message and get response
-    func query(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false) async throws -> String {
+    func query(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, customInstructions: String = "") async throws -> String {
         if isDebug {
             print("Debug: Sending message to Grok:")
             print("Debug: - Message: \(message)")
             print("Debug: - Reasoning: \(enableReasoning)")
             print("Debug: - Deep Search: \(enableDeepSearch)")
+            print("Debug: - Custom Instructions: \(customInstructions.isEmpty ? "None" : "Enabled")")
         }
         
         let client = try initializeClient()
@@ -1028,7 +1056,8 @@ class GrokCLIApp {
             let response = try await client.sendMessage(
                 message: message,
                 enableReasoning: enableReasoning,
-                enableDeepSearch: enableDeepSearch
+                enableDeepSearch: enableDeepSearch,
+                customInstructions: customInstructions
             )
             
             if isDebug {
