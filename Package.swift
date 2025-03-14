@@ -40,7 +40,7 @@ let package = Package(
             ]),
         .testTarget(
             name: "GrokClientTests",
-            dependencies: ["GrokClient"]),
+            dependencies: ["GrokClient", "GrokCLI"]),
     ],
     swiftLanguageModes: [.v5]
 ) 

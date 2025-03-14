@@ -1,4 +1,5 @@
 import XCTest
+@testable import GrokClient
 @testable import GrokCLI
 
 final class ConfigManagerTests: XCTestCase {
@@ -69,7 +70,11 @@ final class ConfigManagerTests: XCTestCase {
         // Test that invalid file throws error
         let app = GrokCLIApp.shared
         XCTAssertThrowsError(try app.getCookiesFromFile()) { error in
-            XCTAssertEqual(error as? GrokError, GrokError.invalidCredentials)
+            if let grokError = error as? GrokError {
+                XCTAssertEqual(grokError, GrokError.invalidCredentials)
+            } else {
+                XCTFail("Expected GrokError but got \(type(of: error))")
+            }
         }
     }
     

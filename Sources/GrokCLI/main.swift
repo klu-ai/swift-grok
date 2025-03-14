@@ -407,12 +407,12 @@ struct AuthCommand: ParsableCommand {
             abstract: "Generate new credentials by extracting cookies from your browser"
         )
         
-        func run() throws {
+        func run() async throws {
             print("Extracting credentials from browser...".cyan)
             
             do {
                 let app = GrokCLIApp.shared
-                let credentialsPath = try app.generateCredentials()
+                let credentialsPath = try await app.generateCredentials()
                 print("Successfully generated credentials!".green)
                 print("Saved to: \(credentialsPath)".cyan)
             } catch {
@@ -541,7 +541,7 @@ struct GrokCLI {
         case "message":
             try await handleMessageCommand(args: remainingArgs)
         case "auth":
-            try handleAuthCommand(args: remainingArgs)
+            try await handleAuthCommand(args: remainingArgs)
         case "help":
             showHelp()
         case "chat":
@@ -831,7 +831,7 @@ struct GrokCLI {
     }
     
     // Handle the auth command
-    static func handleAuthCommand(args: [String]) throws {
+    static func handleAuthCommand(args: [String]) async throws {
         if args.isEmpty {
             print("Auth commands:".cyan)
             print("  generate     - Generate new credentials from browser cookies")
@@ -846,7 +846,7 @@ struct GrokCLI {
         case "generate":
             print("Extracting credentials from browser...".cyan)
             do {
-                let credentialsPath = try app.generateCredentials()
+                let credentialsPath = try await app.generateCredentials()
                 print("Successfully generated credentials!".green)
                 print("Saved to: \(credentialsPath)".cyan)
             } catch {
@@ -1237,9 +1237,9 @@ class GrokCLIApp {
     }
     
     // Generate new credentials using cookie extractor
-    func generateCredentials() throws -> String {
+    func generateCredentials() async throws -> String {
         // Return path to generated credentials
-        return try configManager.runCookieExtractor()
+        return try await configManager.runCookieExtractor()
     }
 }
 
@@ -1289,7 +1289,7 @@ class ConfigManager {
     }
     
     // Run the cookie extractor and return the path to generated credentials
-    func runCookieExtractor() throws -> String {
+    func runCookieExtractor() async throws -> String {
         try ensureConfigDirectoryExists()
         
         // Determine path to cookie_extractor.py
@@ -1311,7 +1311,7 @@ class ConfigManager {
             }
             
             // Download the script
-            let (data, response) = try URLSession.shared.synchronousDataTask(with: url)
+            let (data, response) = try await URLSession.shared.data(from: url)
             
             guard let httpResponse = response as? HTTPURLResponse,
                   httpResponse.statusCode == 200 else {
