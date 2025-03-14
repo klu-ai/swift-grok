@@ -41,17 +41,61 @@ public struct MessageResponse: Codable {
     }
 }
 
+// Add WebSearchResult struct
+public struct WebSearchResult: Codable {
+    public let url: String
+    public let title: String
+    public let preview: String
+    public let siteName: String?
+    public let description: String?
+    public let citationId: String?
+    
+    public init(url: String, title: String, preview: String, siteName: String? = nil, description: String? = nil, citationId: String? = nil) {
+        self.url = url
+        self.title = title
+        self.preview = preview
+        self.siteName = siteName
+        self.description = description
+        self.citationId = citationId
+    }
+}
+
+// Add XPost struct
+public struct XPost: Codable {
+    public let username: String
+    public let name: String
+    public let text: String
+    public let createTime: String?
+    public let profileImageUrl: String?
+    public let postId: String
+    public let citationId: String?
+    
+    public init(username: String, name: String, text: String, postId: String, createTime: String? = nil, profileImageUrl: String? = nil, citationId: String? = nil) {
+        self.username = username
+        self.name = name
+        self.text = text
+        self.postId = postId
+        self.createTime = createTime
+        self.profileImageUrl = profileImageUrl
+        self.citationId = citationId
+    }
+}
+
 public struct ConversationResponse: Codable {
     public let message: String
     public let conversationId: String
     public let responseId: String
     public let timestamp: Date?
+    public let webSearchResults: [WebSearchResult]?
+    public let xposts: [XPost]?
     
-    public init(message: String, conversationId: String, responseId: String, timestamp: Date? = nil) {
+    public init(message: String, conversationId: String, responseId: String, timestamp: Date? = nil, webSearchResults: [WebSearchResult]? = nil, xposts: [XPost]? = nil) {
         self.message = message
         self.conversationId = conversationId
         self.responseId = responseId
         self.timestamp = timestamp
+        self.webSearchResults = webSearchResults
+        self.xposts = xposts
     }
 }
 
@@ -91,12 +135,80 @@ internal struct ResponseContent: Codable {
     let isSoftStop: Bool?
 }
 
+// Add internal models for web search results and X posts
+internal struct WebSearchResultInternal: Codable {
+    let url: String
+    let title: String
+    let preview: String
+    let searchEngineText: String
+    let description: String
+    let siteName: String
+    let metadataTitle: String
+    let creator: String
+    let image: String
+    let favicon: String
+    let citationId: String
+}
+
+internal struct XPostInternal: Codable {
+    let username: String
+    let name: String
+    let text: String
+    let createTime: String
+    let profileImageUrl: String
+    let postId: String
+    let citationId: String
+    // Additional fields like parent, quote, viewCount are omitted for simplicity
+}
+
 internal struct ModelResponse: Codable {
     let message: String
     let responseId: String?
     let sender: String?
     let createTime: String?
     let parentResponseId: String?
+    let webSearchResults: [WebSearchResultInternal]?
+    let xposts: [XPostInternal]?
+    
+    // Helper functions to convert internal models to public models
+    func extractWebSearchResults() -> [WebSearchResult]? {
+        guard let results = webSearchResults else { return nil }
+        
+        // Filter out empty results and convert to public model
+        return results.compactMap { result in
+            // Skip empty URL entries
+            guard !result.url.isEmpty else { return nil }
+            
+            return WebSearchResult(
+                url: result.url,
+                title: result.title,
+                preview: result.preview,
+                siteName: result.siteName.isEmpty ? nil : result.siteName,
+                description: result.description.isEmpty ? nil : result.description,
+                citationId: result.citationId.isEmpty ? nil : result.citationId
+            )
+        }
+    }
+    
+    func extractXPosts() -> [XPost]? {
+        guard let posts = xposts else { return nil }
+        
+        // Filter out empty posts and convert to public model
+        return posts.compactMap { post in
+            // Skip empty username entries
+            guard !post.username.isEmpty else { return nil }
+            
+            return XPost(
+                username: post.username,
+                name: post.name,
+                text: post.text,
+                postId: post.postId,
+                createTime: post.createTime.isEmpty ? nil : post.createTime,
+                profileImageUrl: post.profileImageUrl.isEmpty ? nil : post.profileImageUrl,
+                citationId: post.citationId.isEmpty ? nil : post.citationId
+            )
+        }
+    }
 }
 
 // MARK: - GrokClient Class
@@ -155,20 +267,22 @@ public class GrokClient {
     ///   - message: The user's input message
     ///   - enableReasoning: Whether to enable reasoning mode (cannot be used with deepSearch)
     ///   - enableDeepSearch: Whether to enable deep search (cannot be used with reasoning)
+    ///   - disableSearch: Whether to disable web search entirely (separate from deepSearch)
     ///   - customInstructions: Optional custom instructions for the model, empty string to disable
+    ///   - temporary: Whether the message and thread should not be saved (private mode)
     /// - Returns: A dictionary representing the payload
-    internal func preparePayload(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, customInstructions: String = "") -> [String: Any] {
+    internal func preparePayload(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, disableSearch: Bool = false, customInstructions: String = "", temporary: Bool = false) -> [String: Any] {
         if enableReasoning && enableDeepSearch {
             print("Warning: Both reasoning and deep search enabled. Deep search will be ignored.")
         }
         
         return [
-            "temporary": false,
+            "temporary": temporary,
             "modelName": "grok-3",
             "message": message,
             "fileAttachments": [],
             "imageAttachments": [],
-            "disableSearch": false,
+            "disableSearch": disableSearch,
             "enableImageGeneration": true,
             "returnImageBytes": false,
             "returnRawGrokInXaiRequest": false,
@@ -190,10 +304,12 @@ public class GrokClient {
     ///   - message: The user's input message
     ///   - enableReasoning: Whether to enable reasoning mode (cannot be used with deepSearch)
     ///   - enableDeepSearch: Whether to enable deep search (cannot be used with reasoning)
+    ///   - disableSearch: Whether to disable web search entirely (separate from deepSearch)
     ///   - customInstructions: Optional custom instructions, defaults to empty string (no instructions)
+    ///   - temporary: Whether the message and thread should not be saved (private mode), defaults to false
     /// - Returns: A tuple with the complete response and conversationId from Grok
     /// - Throws: Network, decoding, or API errors
-    public func sendMessage(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, customInstructions: String = "") async throws -> ConversationResponse {
+    public func sendMessage(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, disableSearch: Bool = false, customInstructions: String = "", temporary: Bool = false) async throws -> ConversationResponse {
         let url = URL(string: "\(baseURL)/conversations/new")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -208,7 +324,9 @@ public class GrokClient {
             message: message, 
             enableReasoning: enableReasoning, 
             enableDeepSearch: enableDeepSearch,
-            customInstructions: customInstructions
+            disableSearch: disableSearch,
+            customInstructions: customInstructions,
+            temporary: temporary
         )
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         
@@ -232,6 +350,8 @@ public class GrokClient {
         var fullResponse = ""
         var conversationId = ""
         var responseId = ""
+        let webSearchResults: [WebSearchResult]? = nil
+        let xposts: [XPost]? = nil
         
         for try await line in bytes.lines {
             // Parse the JSON from each line
@@ -244,7 +364,9 @@ public class GrokClient {
                         message: modelResponse.message,
                         conversationId: conversationId,
                         responseId: responseId,
-                        timestamp: Date()
+                        timestamp: Date(),
+                        webSearchResults: modelResponse.extractWebSearchResults(),
+                        xposts: modelResponse.extractXPosts()
                     )
                 }
                 
@@ -272,7 +394,9 @@ public class GrokClient {
             message: fullResponse.trimmingCharacters(in: .whitespacesAndNewlines),
             conversationId: conversationId,
             responseId: responseId,
-            timestamp: Date()
+            timestamp: Date(),
+            webSearchResults: webSearchResults,
+            xposts: xposts
         )
     }
     
@@ -283,8 +407,10 @@ public class GrokClient {
     ///   - message: The user's input message
     ///   - enableReasoning: Whether to enable reasoning mode
     ///   - enableDeepSearch: Whether to enable deep search
+    ///   - disableSearch: Whether to disable web search entirely (separate from deepSearch)
     ///   - customInstructions: Optional custom instructions
-    /// - Returns: A tuple with the complete response and response ID
+    ///   - temporary: Whether the message and thread should not be saved (private mode), defaults to false
+    /// - Returns: A tuple with the complete response, response ID, web search results, and X posts
     /// - Throws: Network, decoding, or API errors
     public func continueConversation(
         conversationId: String,
@@ -292,8 +418,10 @@ public class GrokClient {
         message: String,
         enableReasoning: Bool = false,
         enableDeepSearch: Bool = false,
-        customInstructions: String = ""
-    ) async throws -> (message: String, responseId: String) {
+        disableSearch: Bool = false,
+        customInstructions: String = "",
+        temporary: Bool = false
+    ) async throws -> (message: String, responseId: String, webSearchResults: [WebSearchResult]?, xposts: [XPost]?) {
         let url = URL(string: "\(baseURL)/conversations/\(conversationId)/responses")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -308,7 +436,9 @@ public class GrokClient {
             message: message,
             enableReasoning: enableReasoning,
             enableDeepSearch: enableDeepSearch,
-            customInstructions: customInstructions
+            disableSearch: disableSearch,
+            customInstructions: customInstructions,
+            temporary: temporary
         )
         payload["parentResponseId"] = parentResponseId
         
@@ -333,6 +463,8 @@ public class GrokClient {
         // Process the streaming response
         var fullResponse = ""
         var responseId = ""
+        var webSearchResults: [WebSearchResult]? = nil
+        var xposts: [XPost]? = nil
         var foundCompleteResponse = false
         
         for try await line in bytes.lines {
@@ -357,6 +489,10 @@ public class GrokClient {
                         if let respId = nestedModelResponse.responseId ?? streamingResponse.result?.response?.responseId {
                             responseId = respId
                         }
+                        
+                        // Extract web search results and X posts
+                        webSearchResults = nestedModelResponse.extractWebSearchResults()
+                        xposts = nestedModelResponse.extractXPosts()
                     }
                     
                     // Check for complete response in /responses format (directly under result.modelResponse)
@@ -368,6 +504,10 @@ public class GrokClient {
                         if let respId = directModelResponse.responseId ?? streamingResponse.result?.responseId {
                             responseId = respId
                         }
+                        
+                        // Extract web search results and X posts
+                        webSearchResults = directModelResponse.extractWebSearchResults()
+                        xposts = directModelResponse.extractXPosts()
                     }
                     
                     // Accumulate token if this is a streaming token
@@ -394,6 +534,60 @@ public class GrokClient {
                                     if let respId = modelResponse["responseId"] as? String ?? result["responseId"] as? String {
                                         responseId = respId
                                     }
+                                    
+                                    // Try to extract web search results
+                                    if let webSearchResultsJson = modelResponse["webSearchResults"] as? [[String: Any]] {
+                                        var results: [WebSearchResult] = []
+                                        for resultJson in webSearchResultsJson {
+                                            if let url = resultJson["url"] as? String, !url.isEmpty,
+                                               let title = resultJson["title"] as? String,
+                                               let preview = resultJson["preview"] as? String {
+                                                let siteName = resultJson["siteName"] as? String
+                                                let description = resultJson["description"] as? String
+                                                let citationId = resultJson["citationId"] as? String
+                                                
+                                                results.append(WebSearchResult(
+                                                    url: url,
+                                                    title: title,
+                                                    preview: preview,
+                                                    siteName: siteName?.isEmpty ?? true ? nil : siteName,
+                                                    description: description?.isEmpty ?? true ? nil : description,
+                                                    citationId: citationId?.isEmpty ?? true ? nil : citationId
+                                                ))
+                                            }
+                                        }
+                                        if !results.isEmpty {
+                                            webSearchResults = results
+                                        }
+                                    }
+                                    
+                                    // Try to extract X posts
+                                    if let xpostsJson = modelResponse["xposts"] as? [[String: Any]] {
+                                        var posts: [XPost] = []
+                                        for postJson in xpostsJson {
+                                            if let username = postJson["username"] as? String, !username.isEmpty,
+                                               let name = postJson["name"] as? String,
+                                               let text = postJson["text"] as? String,
+                                               let postId = postJson["postId"] as? String {
+                                                let createTime = postJson["createTime"] as? String
+                                                let profileImageUrl = postJson["profileImageUrl"] as? String
+                                                let citationId = postJson["citationId"] as? String
+                                                
+                                                posts.append(XPost(
+                                                    username: username,
+                                                    name: name,
+                                                    text: text,
+                                                    postId: postId,
+                                                    createTime: createTime?.isEmpty ?? true ? nil : createTime,
+                                                    profileImageUrl: profileImageUrl?.isEmpty ?? true ? nil : profileImageUrl,
+                                                    citationId: citationId?.isEmpty ?? true ? nil : citationId
+                                                ))
+                                            }
+                                        }
+                                        if !posts.isEmpty {
+                                            xposts = posts
+                                        }
+                                    }
                                 }
                                 // Format 2: Check if modelResponse is in result.response
                                 else if let response = result["response"] as? [String: Any],
@@ -404,6 +598,60 @@ public class GrokClient {
                                     
                                     if let respId = modelResponse["responseId"] as? String ?? response["responseId"] as? String {
                                         responseId = respId
+                                    }
+                                    
+                                    // Try to extract web search results
+                                    if let webSearchResultsJson = modelResponse["webSearchResults"] as? [[String: Any]] {
+                                        var results: [WebSearchResult] = []
+                                        for resultJson in webSearchResultsJson {
+                                            if let url = resultJson["url"] as? String, !url.isEmpty,
+                                               let title = resultJson["title"] as? String,
+                                               let preview = resultJson["preview"] as? String {
+                                                let siteName = resultJson["siteName"] as? String
+                                                let description = resultJson["description"] as? String
+                                                let citationId = resultJson["citationId"] as? String
+                                                
+                                                results.append(WebSearchResult(
+                                                    url: url,
+                                                    title: title,
+                                                    preview: preview,
+                                                    siteName: siteName?.isEmpty ?? true ? nil : siteName,
+                                                    description: description?.isEmpty ?? true ? nil : description,
+                                                    citationId: citationId?.isEmpty ?? true ? nil : citationId
+                                                ))
+                                            }
+                                        }
+                                        if !results.isEmpty {
+                                            webSearchResults = results
+                                        }
+                                    }
+                                    
+                                    // Try to extract X posts
+                                    if let xpostsJson = modelResponse["xposts"] as? [[String: Any]] {
+                                        var posts: [XPost] = []
+                                        for postJson in xpostsJson {
+                                            if let username = postJson["username"] as? String, !username.isEmpty,
+                                               let name = postJson["name"] as? String,
+                                               let text = postJson["text"] as? String,
+                                               let postId = postJson["postId"] as? String {
+                                                let createTime = postJson["createTime"] as? String
+                                                let profileImageUrl = postJson["profileImageUrl"] as? String
+                                                let citationId = postJson["citationId"] as? String
+                                                
+                                                posts.append(XPost(
+                                                    username: username,
+                                                    name: name,
+                                                    text: text,
+                                                    postId: postId,
+                                                    createTime: createTime?.isEmpty ?? true ? nil : createTime,
+                                                    profileImageUrl: profileImageUrl?.isEmpty ?? true ? nil : profileImageUrl,
+                                                    citationId: citationId?.isEmpty ?? true ? nil : citationId
+                                                ))
+                                            }
+                                        }
+                                        if !posts.isEmpty {
+                                            xposts = posts
+                                        }
                                     }
                                 }
                                 // Format 3: Check for token in streaming response
@@ -427,13 +675,15 @@ public class GrokClient {
         
         // If we found a complete response, return it
         if foundCompleteResponse && !fullResponse.isEmpty {
-            return (message: fullResponse, responseId: responseId)
+            return (message: fullResponse, responseId: responseId, webSearchResults: webSearchResults, xposts: xposts)
         }
         
         // Fallback to returning whatever we accumulated
         return (
             message: fullResponse.trimmingCharacters(in: .whitespacesAndNewlines),
-            responseId: responseId
+            responseId: responseId,
+            webSearchResults: webSearchResults,
+            xposts: xposts
         )
     }
     

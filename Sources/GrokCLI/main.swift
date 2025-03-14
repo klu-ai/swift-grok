@@ -45,6 +45,9 @@ struct ChatCommand: ParsableCommand {
     @Flag(name: .long, help: "Enable deep search for more comprehensive answers")
     var deepSearch = false
     
+    @Flag(name: .long, help: "Disable real-time data (no web or x search)")
+    var noSearch = false
+    
     @Flag(name: .shortAndLong, help: "Use markdown formatting in output")
     var markdown = false
     
@@ -53,6 +56,9 @@ struct ChatCommand: ParsableCommand {
     
     @Flag(name: .long, help: "Disable custom instructions for the assistant")
     var noCustomInstructions = false
+    
+    @Flag(name: .long, help: "Enable private mode (conversations will not be saved)")
+    var `private` = false
     
     func run() async throws {
         let app = GrokCLIApp.shared
@@ -93,7 +99,9 @@ struct ChatCommand: ParsableCommand {
                     message: message,
                     enableReasoning: reasoning,
                     enableDeepSearch: deepSearch,
-                    customInstructions: noCustomInstructions ? "" : GrokCLI.getCustomInstructions()
+                    disableSearch: noSearch,
+                    customInstructions: noCustomInstructions ? ChatCommand.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
+                    temporary: `private`
                 )
                 
                 // Format and display the response
@@ -101,7 +109,9 @@ struct ChatCommand: ParsableCommand {
                     response,
                     conversationId: app.getCurrentConversationId(),
                     responseId: app.getLastResponseId(),
-                    debug: debug
+                    debug: debug,
+                    webSearchResults: app.getLastWebSearchResults(),
+                    xposts: app.getLastXPosts()
                 )
                 return
             } catch {
@@ -113,8 +123,13 @@ struct ChatCommand: ParsableCommand {
             }
         }
         
-        print("Connected to Grok! Type 'exit' to quit, 'help' for commands.".green)
-        print("Chat mode".cyan + " | " + (noCustomInstructions ? "Custom instruction: OFF".blue : "Custom instruction: ON".yellow) + " | " + (reasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + (deepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue))
+        print("Connected to Grok! Type 'quit' to exit, 'new' to start a new thread, 'help' for commands.".green)
+        print("Chat mode".cyan + " | " + 
+              (noCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom instruction: ON".yellow) + " | " + 
+              (reasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + 
+              (deepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue) + " | " + 
+              (noSearch ? "Realtime: OFF".red : "Realtime: ON".green) + " | " + 
+              (`private` ? "Private: ON".yellow : "Private: OFF".blue))
         if let conversationId = app.getCurrentConversationId() {
             print("Conversation ID: \(conversationId)".cyan)
         }
@@ -125,6 +140,8 @@ struct ChatCommand: ParsableCommand {
         var currentReasoning = reasoning
         var currentDeepSearch = deepSearch
         var currentNoCustomInstructions = noCustomInstructions
+        var currentNoSearch = noSearch
+        var currentPrivate = `private`
         
         while isRunning {
             // Display prompt
@@ -143,6 +160,21 @@ struct ChatCommand: ParsableCommand {
                 print("Goodbye!".cyan)
                 continue
                 
+            case _ where input.hasPrefix("/new"):
+                app.resetConversation()
+                print("Started a new conversation thread.".yellow)
+                if let conversationId = app.getCurrentConversationId() {
+                    print("Conversation ID: \(conversationId)".cyan)
+                }
+                continue
+                
+            case _ where input.hasPrefix("/quit"):
+                isRunning = false
+                // Reset conversation ID when exiting
+                app.resetConversation()
+                print("Goodbye!".cyan)
+                continue
+                
             case _ where input.hasPrefix("/reason"):
                 currentReasoning = !currentReasoning  // Toggle current state
                 print(currentReasoning ? "Reasoning mode enabled".yellow : "Reasoning mode disabled".blue)
@@ -153,9 +185,28 @@ struct ChatCommand: ParsableCommand {
                 print(currentDeepSearch ? "Deep search enabled".yellow : "Deep search disabled".blue)
                 continue
                 
+            case _ where input.hasPrefix("/realtime"):
+                currentNoSearch = !currentNoSearch  // Toggle current state
+                print(currentNoSearch ? "Realtime disabled".red : "Realtime enabled".green)
+                continue
+                
             case _ where input.hasPrefix("/custom"):
                 currentNoCustomInstructions = !currentNoCustomInstructions  // Toggle current state
-                print(currentNoCustomInstructions ? "Custom instructions disabled".blue : "Custom instructions enabled".yellow)
+                print(currentNoCustomInstructions ? "Custom instructions disabled (using defaults)".blue : "Custom instructions enabled".yellow)
+                continue
+                
+            case _ where input.hasPrefix("/private"):
+                // If we have an existing conversation, start a new one when switching to private mode
+                if currentPrivate == false && app.getCurrentConversationId() != nil {
+                    app.resetConversation()
+                    print("Started a new private conversation thread.".yellow)
+                } else {
+                    currentPrivate = !currentPrivate  // Toggle current state
+                }
+                print(currentPrivate ? "Private mode enabled".yellow : "Private mode disabled".blue)
+                if currentPrivate {
+                    print("Your conversations will not be saved.".yellow)
+                }
                 continue
                 
             case _ where input.hasPrefix("/reset-conversation"):
@@ -177,7 +228,14 @@ struct ChatCommand: ParsableCommand {
                 continue
                 
             // Keep existing commands for backward compatibility
-            case "exit", "quit":
+            case "exit":
+                isRunning = false
+                // Reset conversation ID when exiting
+                app.resetConversation()
+                print("Goodbye!".cyan)
+                continue
+                
+            case "quit":
                 isRunning = false
                 // Reset conversation ID when exiting
                 app.resetConversation()
@@ -191,6 +249,14 @@ struct ChatCommand: ParsableCommand {
             case "new conversation", "new-conversation", "reset conversation", "reset-conversation":
                 app.resetConversation()
                 print("Conversation reset. Starting a new conversation.".yellow)
+                continue
+                
+            case "new":
+                app.resetConversation()
+                print("Started a new conversation thread.".yellow)
+                if let conversationId = app.getCurrentConversationId() {
+                    print("Conversation ID: \(conversationId)".cyan)
+                }
                 continue
                 
             case "reasoning on", "reason on":
@@ -212,6 +278,16 @@ struct ChatCommand: ParsableCommand {
                 currentDeepSearch = false
                 print("Deep search disabled".blue)
                 continue
+
+            case "realtime on":
+                currentNoSearch = false
+                print("Realtime enabled".green)
+                continue
+                
+            case "realtime off":
+                currentNoSearch = true
+                print("Realtime disabled".red)
+                continue
                 
             case "custom on":
                 currentNoCustomInstructions = false
@@ -220,7 +296,23 @@ struct ChatCommand: ParsableCommand {
                 
             case "custom off":
                 currentNoCustomInstructions = true
-                print("Custom instructions disabled".blue)
+                print("Custom instructions disabled (using defaults)".blue)
+                continue
+                
+            case "private on":
+                // If we have an existing conversation, start a new one when switching to private mode
+                if currentPrivate == false && app.getCurrentConversationId() != nil {
+                    app.resetConversation()
+                    print("Started a new private conversation thread.".yellow)
+                }
+                currentPrivate = true
+                print("Private mode enabled".yellow)
+                print("Your conversations will not be saved.".yellow)
+                continue
+                
+            case "private off":
+                currentPrivate = false
+                print("Private mode disabled".blue)
                 continue
                 
             case "clear", "cls":
@@ -244,7 +336,9 @@ struct ChatCommand: ParsableCommand {
                     message: input,
                     enableReasoning: currentReasoning,
                     enableDeepSearch: currentDeepSearch,
-                    customInstructions: currentNoCustomInstructions ? "" : GrokCLI.getCustomInstructions()
+                    disableSearch: currentNoSearch,
+                    customInstructions: currentNoCustomInstructions ? ChatCommand.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
+                    temporary: currentPrivate
                 )
                 
                 // Format and display the response
@@ -252,11 +346,13 @@ struct ChatCommand: ParsableCommand {
                     response,
                     conversationId: app.getCurrentConversationId(),
                     responseId: app.getLastResponseId(),
-                    debug: debug
+                    debug: currentNoCustomInstructions ? false : debug,
+                    webSearchResults: app.getLastWebSearchResults(),
+                    xposts: app.getLastXPosts()
                 )
             } catch {
                 formatter.printError("Error: \(error.localizedDescription)")
-                if debug {
+                if currentNoCustomInstructions ? false : debug {
                     print("Debug stack trace: \(error)")
                 }
             }
@@ -305,6 +401,9 @@ struct QueryCommand: ParsableCommand {
     @Flag(name: .long, help: "Enable deep search for more comprehensive answers")
     var deepSearch = false
     
+    @Flag(name: .long, help: "Disable real-time data (no web or x search)")
+    var noSearch = false
+    
     @Flag(name: .shortAndLong, help: "Use markdown formatting in output")
     var markdown = false
     
@@ -313,6 +412,9 @@ struct QueryCommand: ParsableCommand {
     
     @Flag(name: .long, help: "Disable custom instructions for the assistant")
     var noCustomInstructions = false
+    
+    @Flag(name: .long, help: "Enable private mode (conversations will not be saved)")
+    var privateMode = false
     
     func run() async throws {
         guard !prompt.isEmpty else {
@@ -335,11 +437,17 @@ struct QueryCommand: ParsableCommand {
                 message: message,
                 enableReasoning: reasoning,
                 enableDeepSearch: deepSearch,
-                customInstructions: noCustomInstructions ? "" : Self.defaultCustomInstructions
+                disableSearch: noSearch,
+                customInstructions: noCustomInstructions ? Self.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
+                temporary: privateMode
             )
             
             // Format and display the response
-            formatter.printResponse(response)
+            formatter.printResponse(
+                response,
+                webSearchResults: app.getLastWebSearchResults(),
+                xposts: app.getLastXPosts()
+            )
         } catch {
             formatter.printError("Error: \(error.localizedDescription)")
             if debug {
@@ -368,6 +476,9 @@ struct MessageCommand: ParsableCommand {
     @Flag(name: .long, help: "Enable deep search for more comprehensive answers")
     var deepSearch = false
     
+    @Flag(name: .long, help: "Disable real-time data (no web or x search)")
+    var noSearch = false
+    
     @Flag(name: .shortAndLong, help: "Use markdown formatting in output")
     var markdown = false
     
@@ -376,6 +487,9 @@ struct MessageCommand: ParsableCommand {
     
     @Flag(name: .long, help: "Disable custom instructions for the assistant")
     var noCustomInstructions = false
+    
+    @Flag(name: .long, help: "Enable private mode (conversations will not be saved)")
+    var privateMode = false
     
     func run() async throws {
         let app = GrokCLIApp.shared
@@ -408,11 +522,20 @@ struct MessageCommand: ParsableCommand {
                 message: message,
                 enableReasoning: reasoning,
                 enableDeepSearch: deepSearch,
-                customInstructions: noCustomInstructions ? "" : Self.defaultCustomInstructions
+                disableSearch: noSearch,
+                customInstructions: noCustomInstructions ? Self.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
+                temporary: privateMode
             )
             
             // Display the response
-            formatter.printResponse(response)
+            formatter.printResponse(
+                response,
+                conversationId: app.getCurrentConversationId(),
+                responseId: app.getLastResponseId(),
+                debug: debug,
+                webSearchResults: app.getLastWebSearchResults(),
+                xposts: app.getLastXPosts()
+            )
         } catch {
             formatter.printError("Error: \(error.localizedDescription)")
             if debug {
@@ -558,7 +681,7 @@ struct GrokCLI {
         let remainingArgs = Array(arguments.dropFirst())
         
         // Check if first argument is a recognized command
-        let recognizedCommands = ["message", "auth", "help", "chat"]
+        let recognizedCommands = ["message", "auth", "help"]
         
         // If not a recognized command, treat all arguments as an initial message for chat
         if !recognizedCommands.contains(command) {
@@ -574,11 +697,6 @@ struct GrokCLI {
             try await handleAuthCommand(args: remainingArgs)
         case "help":
             showHelp()
-        case "chat":
-            // Use ChatCommand instead of handleChatCommand
-            var chatArgs = ["chat"]
-            chatArgs.append(contentsOf: remainingArgs)
-            try await ChatCommand.parse(chatArgs).run()
         default:
             print("Unknown command: \(command)")
             print("Run 'grok help' for usage information.")
@@ -594,6 +712,8 @@ struct GrokCLI {
         var enableMarkdown = false
         var enableDebug = false
         var enableNoCustomInstructions = false
+        var enableNoSearch = false
+        var enablePrivate = false
         
         // Parse all arguments
         for arg in args {
@@ -607,6 +727,10 @@ struct GrokCLI {
                 enableDebug = true
             } else if arg == "--no-custom-instructions" {
                 enableNoCustomInstructions = true
+            } else if arg == "--no-search" {
+                enableNoSearch = true
+            } else if arg == "--private" {
+                enablePrivate = true
             } else {
                 initialMessage.append(arg)
             }
@@ -650,7 +774,9 @@ struct GrokCLI {
                     message: message,
                     enableReasoning: enableReasoning,
                     enableDeepSearch: enableDeepSearch,
-                    customInstructions: ""
+                    disableSearch: enableNoSearch,
+                    customInstructions: enableNoCustomInstructions ? ChatCommand.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
+                    temporary: enablePrivate
                 )
                 
                 // Format and display the response
@@ -658,7 +784,9 @@ struct GrokCLI {
                     response,
                     conversationId: app.getCurrentConversationId(),
                     responseId: app.getLastResponseId(),
-                    debug: enableDebug
+                    debug: enableDebug,
+                    webSearchResults: app.getLastWebSearchResults(),
+                    xposts: app.getLastXPosts()
                 )
             } catch {
                 formatter.printError("Error sending message: \(error.localizedDescription)")
@@ -669,8 +797,13 @@ struct GrokCLI {
             }
         }
         
-        print("Connected to Grok! Type 'exit' to quit, 'help' for commands.".green)
-        print("Chat mode".cyan + " | " + (enableNoCustomInstructions ? "Custom instruction: OFF".blue : "Custom instruction: ON".yellow) + " | " + (enableReasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + (enableDeepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue))
+        print("Connected to Grok! Type 'quit' to exit, 'new' to start a new thread, 'help' for commands.".green)
+        print("Chat mode".cyan + " | " + 
+              (enableNoCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom instruction: ON".yellow) + " | " + 
+              (enableReasoning ? "Reasoning".green + " | " : "") + 
+              (enableDeepSearch ? "Deep Search".green + " | " : "") +
+              (enableNoSearch ? "No Realtime".red : "Realtime".green) + " | " +
+              (enablePrivate ? "Private".red : "Saved".blue))
         if let conversationId = app.getCurrentConversationId() {
             print("Conversation ID: \(conversationId)".cyan)
         }
@@ -681,6 +814,8 @@ struct GrokCLI {
         var currentReasoning = enableReasoning
         var currentDeepSearch = enableDeepSearch
         var currentNoCustomInstructions = enableNoCustomInstructions
+        var currentNoSearch = enableNoSearch
+        var currentPrivate = enablePrivate
         
         while isRunning {
             // Display prompt
@@ -699,6 +834,21 @@ struct GrokCLI {
                 print("Goodbye!".cyan)
                 continue
                 
+            case _ where input.hasPrefix("/new"):
+                app.resetConversation()
+                print("Started a new conversation thread.".yellow)
+                if let conversationId = app.getCurrentConversationId() {
+                    print("Conversation ID: \(conversationId)".cyan)
+                }
+                continue
+                
+            case _ where input.hasPrefix("/quit"):
+                isRunning = false
+                // Reset conversation ID when exiting
+                app.resetConversation()
+                print("Goodbye!".cyan)
+                continue
+                
             case _ where input.hasPrefix("/reason"):
                 currentReasoning = !currentReasoning  // Toggle current state
                 print(currentReasoning ? "Reasoning mode enabled".yellow : "Reasoning mode disabled".blue)
@@ -709,9 +859,28 @@ struct GrokCLI {
                 print(currentDeepSearch ? "Deep search enabled".yellow : "Deep search disabled".blue)
                 continue
                 
+            case _ where input.hasPrefix("/realtime"):
+                currentNoSearch = !currentNoSearch  // Toggle current state
+                print(currentNoSearch ? "Realtime disabled".red : "Realtime enabled".green)
+                continue
+                
             case _ where input.hasPrefix("/custom"):
                 currentNoCustomInstructions = !currentNoCustomInstructions  // Toggle current state
-                print(currentNoCustomInstructions ? "Custom instructions disabled".blue : "Custom instructions enabled".yellow)
+                print(currentNoCustomInstructions ? "Custom instructions disabled (using defaults)".blue : "Custom instructions enabled".yellow)
+                continue
+                
+            case _ where input.hasPrefix("/private"):
+                // If we have an existing conversation, start a new one when switching to private mode
+                if currentPrivate == false && app.getCurrentConversationId() != nil {
+                    app.resetConversation()
+                    print("Started a new private conversation thread.".yellow)
+                } else {
+                    currentPrivate = !currentPrivate  // Toggle current state
+                }
+                print(currentPrivate ? "Private mode enabled".yellow : "Private mode disabled".blue)
+                if currentPrivate {
+                    print("Your conversations will not be saved.".yellow)
+                }
                 continue
                 
             case _ where input.hasPrefix("/reset-conversation"):
@@ -733,7 +902,14 @@ struct GrokCLI {
                 continue
                 
             // Keep existing commands for backward compatibility
-            case "exit", "quit":
+            case "exit":
+                isRunning = false
+                // Reset conversation ID when exiting
+                app.resetConversation()
+                print("Goodbye!".cyan)
+                continue
+                
+            case "quit":
                 isRunning = false
                 // Reset conversation ID when exiting
                 app.resetConversation()
@@ -747,6 +923,14 @@ struct GrokCLI {
             case "new conversation", "new-conversation", "reset conversation", "reset-conversation":
                 app.resetConversation()
                 print("Conversation reset. Starting a new conversation.".yellow)
+                continue
+                
+            case "new":
+                app.resetConversation()
+                print("Started a new conversation thread.".yellow)
+                if let conversationId = app.getCurrentConversationId() {
+                    print("Conversation ID: \(conversationId)".cyan)
+                }
                 continue
                 
             case "reasoning on", "reason on":
@@ -768,6 +952,16 @@ struct GrokCLI {
                 currentDeepSearch = false
                 print("Deep search disabled".blue)
                 continue
+
+            case "realtime on":
+                currentNoSearch = false
+                print("Realtime enabled".green)
+                continue
+                
+            case "realtime off":
+                currentNoSearch = true
+                print("Realtime disabled".red)
+                continue
                 
             case "custom on":
                 currentNoCustomInstructions = false
@@ -776,7 +970,23 @@ struct GrokCLI {
                 
             case "custom off":
                 currentNoCustomInstructions = true
-                print("Custom instructions disabled".blue)
+                print("Custom instructions disabled (using defaults)".blue)
+                continue
+                
+            case "private on":
+                // If we have an existing conversation, start a new one when switching to private mode
+                if currentPrivate == false && app.getCurrentConversationId() != nil {
+                    app.resetConversation()
+                    print("Started a new private conversation thread.".yellow)
+                }
+                currentPrivate = true
+                print("Private mode enabled".yellow)
+                print("Your conversations will not be saved.".yellow)
+                continue
+                
+            case "private off":
+                currentPrivate = false
+                print("Private mode disabled".blue)
                 continue
                 
             case "clear", "cls":
@@ -800,7 +1010,9 @@ struct GrokCLI {
                     message: input,
                     enableReasoning: currentReasoning,
                     enableDeepSearch: currentDeepSearch,
-                    customInstructions: currentNoCustomInstructions ? "" : GrokCLI.getCustomInstructions()
+                    disableSearch: currentNoSearch,
+                    customInstructions: currentNoCustomInstructions ? ChatCommand.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
+                    temporary: currentPrivate
                 )
                 
                 // Format and display the response
@@ -808,7 +1020,9 @@ struct GrokCLI {
                     response,
                     conversationId: app.getCurrentConversationId(),
                     responseId: app.getLastResponseId(),
-                    debug: currentNoCustomInstructions ? false : enableDebug
+                    debug: currentNoCustomInstructions ? false : enableDebug,
+                    webSearchResults: app.getLastWebSearchResults(),
+                    xposts: app.getLastXPosts()
                 )
             } catch {
                 formatter.printError("Error: \(error.localizedDescription)")
@@ -832,6 +1046,8 @@ struct GrokCLI {
         var enableDeepSearch = false
         var enableMarkdown = false
         var enableDebug = false
+        var enableNoSearch = false
+        var enablePrivate = false
         
         for arg in args {
             if arg == "--reasoning" {
@@ -842,6 +1058,10 @@ struct GrokCLI {
                 enableMarkdown = true
             } else if arg == "--debug" {
                 enableDebug = true
+            } else if arg == "--no-search" {
+                enableNoSearch = true
+            } else if arg == "--private" {
+                enablePrivate = true
             } else {
                 message.append(arg)
             }
@@ -857,6 +1077,7 @@ struct GrokCLI {
             print("Debug: Message = \"\(messageText)\"")
             print("Debug: Reasoning = \(enableReasoning)")
             print("Debug: DeepSearch = \(enableDeepSearch)")
+            print("Debug: Realtime disabled = \(enableNoSearch)")
             print("Debug: Markdown = \(enableMarkdown)")
         }
         
@@ -880,7 +1101,9 @@ struct GrokCLI {
                 message: messageText,
                 enableReasoning: enableReasoning,
                 enableDeepSearch: enableDeepSearch,
-                customInstructions: ""
+                disableSearch: enableNoSearch,
+                customInstructions: ChatCommand.defaultCustomInstructions,
+                temporary: enablePrivate
             )
             
             // Display response
@@ -888,7 +1111,9 @@ struct GrokCLI {
                 response,
                 conversationId: app.getCurrentConversationId(),
                 responseId: app.getLastResponseId(),
-                debug: enableDebug
+                debug: enableDebug,
+                webSearchResults: app.getLastWebSearchResults(),
+                xposts: app.getLastXPosts()
             )
         } catch {
             if enableDebug {
@@ -957,36 +1182,39 @@ struct GrokCLI {
         
         Commands:
           message <text>    - Send a message to Grok and exit
-          chat [text]       - Start an interactive chat session (optional initial message)
           auth              - Authentication commands
           help              - Show help information
         
         Message/Chat Options:
           --reasoning       - Enable reasoning mode for step-by-step explanations
           --deep-search     - Enable deep search for more comprehensive answers
+          --no-search       - Disable real-time data (no web or x search)
           -m, --markdown    - Use markdown formatting in output
           --debug           - Show debug information
           --no-custom-instructions - Disable custom instructions for the assistant
+          --private         - Enable private mode (conversations will not be saved)
         
         Chat Commands:
-          exit, /exit       - Exit the chat session
+          new, /new         - Start a new conversation thread
           help              - Show help information
-          reset conversation, /reset-conversation - Start a new conversation thread
           reasoning on/off  - Toggle reasoning mode
           search on/off     - Toggle deep search
+          realtime on/off   - Toggle real-time data on/off
           custom on/off     - Toggle custom instructions
+          private on/off    - Toggle private mode (messages won't be saved)
           clear, cls        - Clear the screen
+          exit, /exit       - Quit the app
         
         Notes:
           - In chat mode, conversation context is maintained between messages
-          - Use 'reset conversation' to start a new conversation thread
+          - Use 'new', '/new' to start a new conversation thread
+          - Use 'exit', '/exit', 'quit', '/quit' to exit the app
           - The message command always starts a new conversation without context
         
         Examples:
           grok              - Start interactive chat mode
           grok Hello        - Start chat with initial message "Hello"
           grok message Hello, how are you today?
-          grok chat What is quantum computing? --reasoning
           grok auth generate
         """)
     }
@@ -1002,7 +1230,7 @@ class OutputFormatter {
         self.useMarkdown = useMarkdown
     }
     
-    func printResponse(_ response: String, conversationId: String? = nil, responseId: String? = nil, debug: Bool = false) {
+    func printResponse(_ response: String, conversationId: String? = nil, responseId: String? = nil, debug: Bool = false, webSearchResults: [WebSearchResult]? = nil, xposts: [XPost]? = nil) {
         print("\n" + "Grok:".green.bold)
         
         if useMarkdown {
@@ -1010,6 +1238,20 @@ class OutputFormatter {
             printMarkdown(response)
         } else {
             print(response)
+        }
+        
+        // Show sources information if available
+        let webSearchCount = webSearchResults?.count ?? 0
+        let xpostsCount = xposts?.count ?? 0
+        
+        if webSearchCount > 0 || xpostsCount > 0 {
+            print("\n" + "Sources:".cyan)
+            if webSearchCount > 0 {
+                print("Web search results: \(webSearchCount)".yellow)
+            }
+            if xpostsCount > 0 {
+                print("X posts: \(xpostsCount)".yellow)
+            }
         }
         
         // Print conversation and response IDs if in debug mode
@@ -1029,31 +1271,30 @@ class OutputFormatter {
     func printHelp() {
         print("""
         
-        \("Available Commands:".cyan.bold)
-        - \("exit".yellow) or \("/exit".yellow): Exit the chat session
+        \("Basic Commands:".cyan.bold)
+        - \("new".yellow): Start a new conversation thread
         - \("help".yellow): Show this help message
-        - \("reasoning on/off".yellow) or \("/reason".yellow): Toggle reasoning mode
-        - \("search on/off".yellow) or \("/search".yellow): Toggle deep search
-        - \("custom on/off".yellow) or \("/custom".yellow): Toggle custom instructions
-        - \("reset conversation".yellow) or \("/reset-conversation".yellow): Start a new conversation
-        - \("/edit-instructions".yellow): Edit custom instructions
-        - \("/reset-instructions".yellow): Reset custom instructions to defaults
         - \("clear".yellow): Clear the screen
+        - \("quit".yellow): Exit the app
         
         \("Slash Commands:".cyan.bold)
-        - \("/exit".yellow): Exit chat mode
+        - \("/new".yellow): Start a new conversation thread
         - \("/reason".yellow): Toggle reasoning mode on/off
         - \("/search".yellow) or \("/deepsearch".yellow): Toggle deep search on/off
+        - \("/realtime".yellow): Toggle real-time data on/off
         - \("/custom".yellow): Toggle custom instructions on/off
-        - \("/reset-conversation".yellow): Start a new conversation
+        - \("/private".yellow): Toggle private mode on/off (messages won't be saved)
         - \("/edit-instructions".yellow): Edit custom instructions
         - \("/reset-instructions".yellow): Reset custom instructions to defaults
+        - \("/quit".yellow): Exit the app
         
         \("Modes:".cyan.bold)
         - \("Reasoning".yellow): Enables step-by-step explanations
         - \("Deep Search".yellow): Enables more comprehensive answers using web search
+        - \("Realtime".yellow): Enables real-time data from web search and X
         - \("Custom Instructions".yellow): Enables/disables custom instructions for the assistant
         - \("Conversation Threading".yellow): Messages maintain context within the current conversation
+        - \("Private Mode".yellow): When enabled, conversations will not be saved
         
         """)
     }
@@ -1187,6 +1428,8 @@ class GrokCLIApp {
     private var isDebug = false
     private var currentConversationId: String?
     private var lastResponseId: String?
+    private var lastWebSearchResults: [WebSearchResult]?
+    private var lastXPosts: [XPost]?
     
     private init() {}
     
@@ -1199,6 +1442,8 @@ class GrokCLIApp {
     func resetConversation() {
         currentConversationId = nil
         lastResponseId = nil
+        lastWebSearchResults = nil
+        lastXPosts = nil
     }
     
     // Get the current conversation ID
@@ -1209,6 +1454,16 @@ class GrokCLIApp {
     // Get the last response ID
     func getLastResponseId() -> String? {
         return lastResponseId
+    }
+    
+    // Get the last web search results
+    func getLastWebSearchResults() -> [WebSearchResult]? {
+        return lastWebSearchResults
+    }
+    
+    // Get the last X posts
+    func getLastXPosts() -> [XPost]? {
+        return lastXPosts
     }
     
     // Load cookies directly from GrokCookies.swift file
@@ -1306,13 +1561,15 @@ class GrokCLIApp {
     }
     
     // Send a single message and get response
-    func query(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, customInstructions: String = "") async throws -> String {
+    func query(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, disableSearch: Bool = false, customInstructions: String = "", temporary: Bool = false) async throws -> String {
         if isDebug {
             print("Debug: Sending message to Grok:")
             print("Debug: - Message: \(message)")
             print("Debug: - Reasoning: \(enableReasoning)")
             print("Debug: - Deep Search: \(enableDeepSearch)")
+            print("Debug: - Disable Search: \(disableSearch)")
             print("Debug: - Custom Instructions: \(customInstructions.isEmpty ? "None" : "Enabled")")
+            print("Debug: - Private Mode: \(temporary ? "ON" : "OFF")")
             if let conversationId = currentConversationId {
                 print("Debug: - Conversation ID: \(conversationId)")
                 if let responseId = lastResponseId {
@@ -1332,21 +1589,27 @@ class GrokCLIApp {
         do {
             if let conversationId = currentConversationId, let parentResponseId = lastResponseId {
                 // Continue existing conversation
-                let (responseMessage, newResponseId) = try await client.continueConversation(
+                let (responseMessage, newResponseId, webSearchResults, xposts) = try await client.continueConversation(
                     conversationId: conversationId,
                     parentResponseId: parentResponseId,
                     message: message,
                     enableReasoning: enableReasoning,
                     enableDeepSearch: enableDeepSearch,
-                    customInstructions: customInstructions
+                    disableSearch: disableSearch,
+                    customInstructions: customInstructions,
+                    temporary: temporary
                 )
                 
-                // Save the latest response ID
+                // Save the latest response ID and additional data
                 self.lastResponseId = newResponseId
+                self.lastWebSearchResults = webSearchResults
+                self.lastXPosts = xposts
                 
                 if isDebug {
                     print("Debug: Response received for conversation \(conversationId), length: \(responseMessage.count) characters")
                     print("Debug: New Response ID: \(newResponseId)")
+                    print("Debug: Web Search Results: \(webSearchResults?.count ?? 0)")
+                    print("Debug: X Posts: \(xposts?.count ?? 0)")
                 }
                 
                 return responseMessage
@@ -1356,17 +1619,23 @@ class GrokCLIApp {
                     message: message,
                     enableReasoning: enableReasoning,
                     enableDeepSearch: enableDeepSearch,
-                    customInstructions: customInstructions
+                    disableSearch: disableSearch,
+                    customInstructions: customInstructions,
+                    temporary: temporary
                 )
                 
-                // Save conversation ID and response ID for future messages
+                // Save conversation ID, response ID, and additional data
                 self.currentConversationId = conversationResponse.conversationId
                 self.lastResponseId = conversationResponse.responseId
+                self.lastWebSearchResults = conversationResponse.webSearchResults
+                self.lastXPosts = conversationResponse.xposts
                 
                 if isDebug {
                     print("Debug: Response received, length: \(conversationResponse.message.count) characters")
                     print("Debug: Conversation ID: \(conversationResponse.conversationId)")
                     print("Debug: Response ID: \(conversationResponse.responseId)")
+                    print("Debug: Web Search Results: \(conversationResponse.webSearchResults?.count ?? 0)")
+                    print("Debug: X Posts: \(conversationResponse.xposts?.count ?? 0)")
                 }
                 
                 return conversationResponse.message
