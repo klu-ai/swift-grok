@@ -33,7 +33,7 @@ struct ChatCommand: ParsableCommand {
         let inputReader = InputReader()
         
         // Initialization message
-        print("Initializing Grok CLI...".cyan)
+        print("Calling Grok API...".cyan)
         
         if debug {
             print("Debug: initialMessage = \(initialMessage)")
@@ -253,7 +253,7 @@ struct MessageCommand: ParsableCommand {
         }
         
         // Initialization message
-        print("Initializing Grok CLI...".cyan)
+        print("Calling Grok API...".cyan)
         print("Sending: \(message)".cyan)
         print("Thinking...".blue)
         
@@ -363,17 +363,22 @@ struct GrokCLI {
         let arguments = Array(CommandLine.arguments.dropFirst()) // Drop the executable name
         
         if arguments.isEmpty {
-            // No arguments provided, show help
-            print("Usage: grok <command> [options]")
-            print("Commands:")
-            print("  message <text>    - Send a message to Grok")
-            print("  auth              - Authentication commands")
-            print("  help              - Show help information")
+            // No arguments provided, start interactive chat mode
+            try await handleChatCommand(args: [])
             return
         }
         
-        let command = arguments[0]
+        let command = arguments[0].lowercased() // Convert to lowercase for case-insensitive comparison
         let remainingArgs = Array(arguments.dropFirst())
+        
+        // Check if first argument is a recognized command
+        let recognizedCommands = ["message", "auth", "help", "chat"]
+        
+        // If not a recognized command, treat all arguments as an initial message for chat
+        if !recognizedCommands.contains(command) {
+            try await handleChatCommand(args: arguments)
+            return
+        }
         
         // Process the command
         switch command {
@@ -383,9 +388,164 @@ struct GrokCLI {
             try handleAuthCommand(args: remainingArgs)
         case "help":
             showHelp()
+        case "chat":
+            try await handleChatCommand(args: remainingArgs)
         default:
             print("Unknown command: \(command)")
             print("Run 'grok help' for usage information.")
+        }
+    }
+    
+    // Handle the chat command for interactive sessions
+    static func handleChatCommand(args: [String]) async throws {
+        // Parse options
+        var initialMessage: [String] = []
+        var enableReasoning = false
+        var enableDeepSearch = false
+        var enableMarkdown = false
+        var enableDebug = false
+        
+        // Parse all arguments
+        for arg in args {
+            if arg == "--reasoning" {
+                enableReasoning = true
+            } else if arg == "--deep-search" {
+                enableDeepSearch = true
+            } else if arg == "--markdown" || arg == "-m" {
+                enableMarkdown = true
+            } else if arg == "--debug" {
+                enableDebug = true
+            } else {
+                initialMessage.append(arg)
+            }
+        }
+        
+        let app = GrokCLIApp.shared
+        app.setDebugMode(enableDebug)
+        
+        let formatter = OutputFormatter(useMarkdown: enableMarkdown)
+        let inputReader = InputReader()
+        
+        // Initialization message
+        print("Initializing Grok CLI...".cyan)
+        
+        if enableDebug {
+            print("Debug: initialMessage = \(initialMessage)")
+        }
+        
+        // Try to initialize the client to check authentication before starting
+        do {
+            _ = try app.initializeClient()
+            print("Authentication successful".green)
+        } catch {
+            print("Authentication Error: \(error.localizedDescription)".red)
+            print("Please run 'grok auth' to set up your credentials.".yellow)
+            return
+        }
+        
+        // If there's an initial message, send it immediately
+        if !initialMessage.isEmpty {
+            let message = initialMessage.joined(separator: " ")
+            print("Sending message: \(message)".cyan)
+            print("Thinking...".blue)
+            
+            do {
+                // Send the message to Grok
+                let response = try await app.query(
+                    message: message,
+                    enableReasoning: enableReasoning,
+                    enableDeepSearch: enableDeepSearch
+                )
+                
+                // Format and display the response
+                formatter.printResponse(response)
+            } catch {
+                formatter.printError("Error sending message: \(error.localizedDescription)")
+                if enableDebug {
+                    print("Debug stack trace: \(error)")
+                }
+                return
+            }
+        }
+        
+        print("Connected to Grok! Type 'exit' to quit, 'help' for commands.".green)
+        print("Chat mode".cyan + " | " + (enableReasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + (enableDeepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue))
+        print("\nEnter your message:".cyan)
+        
+        // Main chat loop
+        var isRunning = true
+        var currentReasoning = enableReasoning
+        var currentDeepSearch = enableDeepSearch
+        
+        while isRunning {
+            // Display prompt
+            print("> ".green, terminator: "")
+            
+            // Get user input
+            guard let input = inputReader.readLine() else { break }
+            
+            // Process commands
+            switch input.lowercased() {
+            case "exit", "quit":
+                isRunning = false
+                print("Goodbye!".cyan)
+                continue
+                
+            case "help":
+                formatter.printHelp()
+                continue
+                
+            case "reasoning on", "reason on":
+                currentReasoning = true
+                print("Reasoning mode enabled".yellow)
+                continue
+                
+            case "reasoning off", "reason off":
+                currentReasoning = false
+                print("Reasoning mode disabled".blue)
+                continue
+                
+            case "search on", "deepsearch on":
+                currentDeepSearch = true
+                print("Deep search enabled".yellow)
+                continue
+                
+            case "search off", "deepsearch off":
+                currentDeepSearch = false
+                print("Deep search disabled".blue)
+                continue
+                
+            case "clear", "cls":
+                formatter.clearScreen()
+                continue
+                
+            case "":
+                continue
+                
+            default:
+                // Process as message to Grok
+                break
+            }
+            
+            // Show "thinking" indicator
+            print("Thinking...".blue)
+            
+            do {
+                // Send the message to Grok
+                let response = try await app.query(
+                    message: input,
+                    enableReasoning: currentReasoning,
+                    enableDeepSearch: currentDeepSearch
+                )
+                
+                // Format and display the response
+                formatter.printResponse(response)
+            } catch {
+                formatter.printError("Error: \(error.localizedDescription)")
+                if enableDebug {
+                    print("Debug stack trace: \(error)")
+                }
+            }
         }
     }
     
@@ -511,22 +671,27 @@ struct GrokCLI {
         print("""
         Grok CLI - Interact with Grok AI from your terminal
         
-        Usage: grok <command> [options]
+        Usage: grok [command] [options]
+        
+        Running just 'grok' with no commands starts an interactive chat session.
         
         Commands:
-          message <text>    - Send a message to Grok
+          message <text>    - Send a message to Grok and exit
+          chat [text]       - Start an interactive chat session (optional initial message)
           auth              - Authentication commands
           help              - Show help information
         
-        Message Options:
+        Message/Chat Options:
           --reasoning       - Enable reasoning mode for step-by-step explanations
           --deep-search     - Enable deep search for more comprehensive answers
           -m, --markdown    - Use markdown formatting in output
           --debug           - Show debug information
         
         Examples:
+          grok              - Start interactive chat mode
+          grok Hello        - Start chat with initial message "Hello"
           grok message Hello, how are you today?
-          grok message What is quantum computing? --reasoning
+          grok chat What is quantum computing? --reasoning
           grok auth generate
         """)
     }
