@@ -144,13 +144,10 @@ struct ChatCommand: ParsableCommand {
             switch input.lowercased() {
             // New slash commands
             case _ where input.hasPrefix("/exit"):
-                // Instead of exiting the app, just reset conversation and continue
+                isRunning = false
+                // Reset conversation ID when exiting
                 app.resetConversation()
-                print("Left conversation. Starting a new thread.".yellow)
-                print("Type 'quit' to exit the app completely.".cyan)
-                if let conversationId = app.getCurrentConversationId() {
-                    print("Conversation ID: \(conversationId)".cyan)
-                }
+                print("Goodbye!".cyan)
                 continue
                 
             case _ where input.hasPrefix("/new"):
@@ -208,13 +205,10 @@ struct ChatCommand: ParsableCommand {
                 
             // Keep existing commands for backward compatibility
             case "exit":
-                // Instead of exiting the app, just reset conversation and continue
+                isRunning = false
+                // Reset conversation ID when exiting
                 app.resetConversation()
-                print("Left conversation. Starting a new thread.".yellow)
-                print("Type 'quit' to exit the app completely.".cyan)
-                if let conversationId = app.getCurrentConversationId() {
-                    print("Conversation ID: \(conversationId)".cyan)
-                }
+                print("Goodbye!".cyan)
                 continue
                 
             case "quit":
@@ -635,7 +629,7 @@ struct GrokCLI {
         let remainingArgs = Array(arguments.dropFirst())
         
         // Check if first argument is a recognized command
-        let recognizedCommands = ["message", "auth", "help", "chat"]
+        let recognizedCommands = ["message", "auth", "help"]
         
         // If not a recognized command, treat all arguments as an initial message for chat
         if !recognizedCommands.contains(command) {
@@ -651,11 +645,6 @@ struct GrokCLI {
             try await handleAuthCommand(args: remainingArgs)
         case "help":
             showHelp()
-        case "chat":
-            // Use ChatCommand instead of handleChatCommand
-            var chatArgs = ["chat"]
-            chatArgs.append(contentsOf: remainingArgs)
-            try await ChatCommand.parse(chatArgs).run()
         default:
             print("Unknown command: \(command)")
             print("Run 'grok help' for usage information.")
@@ -781,13 +770,10 @@ struct GrokCLI {
             switch input.lowercased() {
             // New slash commands
             case _ where input.hasPrefix("/exit"):
-                // Instead of exiting the app, just reset conversation and continue
+                isRunning = false
+                // Reset conversation ID when exiting
                 app.resetConversation()
-                print("Left conversation. Starting a new thread.".yellow)
-                print("Type '/quit' to exit the app completely.".cyan)
-                if let conversationId = app.getCurrentConversationId() {
-                    print("Conversation ID: \(conversationId)".cyan)
-                }
+                print("Goodbye!".cyan)
                 continue
                 
             case _ where input.hasPrefix("/new"):
@@ -845,13 +831,10 @@ struct GrokCLI {
                 
             // Keep existing commands for backward compatibility
             case "exit":
-                // Instead of exiting the app, just reset conversation and continue
+                isRunning = false
+                // Reset conversation ID when exiting
                 app.resetConversation()
-                print("Left conversation. Starting a new thread.".yellow)
-                print("Type 'quit' to exit the app completely.".cyan)
-                if let conversationId = app.getCurrentConversationId() {
-                    print("Conversation ID: \(conversationId)".cyan)
-                }
+                print("Goodbye!".cyan)
                 continue
                 
             case "quit":
@@ -1119,19 +1102,18 @@ struct GrokCLI {
         
         Chat Commands:
           new, /new         - Start a new conversation thread
-          exit, /exit       - Leave the current conversation and start a new thread
-          quit, /quit       - Exit the chat session
           help              - Show help information
           reasoning on/off  - Toggle reasoning mode
           search on/off     - Toggle deep search
           realtime on/off   - Toggle real-time data on/off
           custom on/off     - Toggle custom instructions
           clear, cls        - Clear the screen
+          exit, /exit       - Quit the app
         
         Notes:
           - In chat mode, conversation context is maintained between messages
-          - Use 'exit', '/exit', 'new', '/new' to start a new conversation thread
-          - Use 'quit', '/quit' to exit the app
+          - Use 'new', '/new' to start a new conversation thread
+          - Use 'exit', '/exit', 'quit', '/quit' to exit the app
           - The message command always starts a new conversation without context
         
         Examples:
@@ -1198,12 +1180,13 @@ class OutputFormatter {
         - \("new".yellow): Start a new conversation thread
         - \("help".yellow): Show this help message
         - \("clear".yellow): Clear the screen
-        - \("exit".yellow): Leave the current conversation and start a new thread
+        - \("exit".yellow): Exit the app
+        - \("quit".yellow): Exit the app
         
         \("Slash Commands:".cyan.bold)
         - \("/new".yellow): Start a new conversation thread
-        - \("/exit".yellow): Leave the current conversation and start a new thread
-        - \("/quit".yellow): Quit the app
+        - \("/exit".yellow): Exit the app
+        - \("/quit".yellow): Exit the app
         - \("/reason".yellow): Toggle reasoning mode on/off
         - \("/search".yellow) or \("/deepsearch".yellow): Toggle deep search on/off
         - \("/realtime".yellow): Toggle real-time data on/off
