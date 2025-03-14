@@ -72,7 +72,11 @@ internal struct StreamingResponse: Codable {
 
 internal struct StreamingResult: Codable {
     let response: ResponseContent?
+    let modelResponse: ModelResponse?
     let conversation: ConversationData?
+    let responseId: String?
+    let isThinking: Bool?
+    let isSoftStop: Bool?
 }
 
 internal struct ConversationData: Codable {
@@ -83,10 +87,16 @@ internal struct ResponseContent: Codable {
     let token: String?
     let modelResponse: ModelResponse?
     let responseId: String?
+    let isThinking: Bool?
+    let isSoftStop: Bool?
 }
 
 internal struct ModelResponse: Codable {
     let message: String
+    let responseId: String?
+    let sender: String?
+    let createTime: String?
+    let parentResponseId: String?
 }
 
 // MARK: - GrokClient Class
@@ -326,45 +336,84 @@ public class GrokClient {
         var foundCompleteResponse = false
         
         for try await line in bytes.lines {
-            // Parse the JSON from each line
+            // Skip empty lines
+            if line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                continue
+            }
+            
             if let data = line.data(using: .utf8) {
-                // First attempt to parse as StreamingResponse
-                if let streamingResponse = try? JSONDecoder().decode(StreamingResponse.self, from: data) {
-                    // Check for complete response
-                    if let modelResponse = streamingResponse.result?.response?.modelResponse {
+                do {
+                    // Parse the JSON response
+                    let streamingResponse = try JSONDecoder().decode(StreamingResponse.self, from: data)
+                    
+                    // Handle both response formats
+                    
+                    // Check for complete response in /new format (nested under response.modelResponse)
+                    if let nestedModelResponse = streamingResponse.result?.response?.modelResponse {
                         foundCompleteResponse = true
-                        fullResponse = modelResponse.message
+                        fullResponse = nestedModelResponse.message
+                        
+                        // Capture responseId from model response or parent
+                        if let respId = nestedModelResponse.responseId ?? streamingResponse.result?.response?.responseId {
+                            responseId = respId
+                        }
                     }
                     
-                    // Capture the response ID if available
-                    if let content = streamingResponse.result?.response,
-                       let id = content.responseId {
-                        responseId = id
+                    // Check for complete response in /responses format (directly under result.modelResponse)
+                    else if let directModelResponse = streamingResponse.result?.modelResponse {
+                        foundCompleteResponse = true
+                        fullResponse = directModelResponse.message
+                        
+                        // Capture responseId from model response or parent
+                        if let respId = directModelResponse.responseId ?? streamingResponse.result?.responseId {
+                            responseId = respId
+                        }
                     }
                     
-                    // Accumulate token
-                    if let token = streamingResponse.result?.response?.token {
+                    // Accumulate token if this is a streaming token
+                    else if let token = streamingResponse.result?.response?.token {
                         fullResponse += token
+                        
+                        // Capture responseId if available
+                        if let respId = streamingResponse.result?.response?.responseId ?? streamingResponse.result?.responseId {
+                            responseId = respId
+                        }
                     }
-                } else {
-                    // Try to parse as other possible response formats
+                } catch {
+                    // Fallback: try to parse as raw JSON and extract data
                     do {
-                        // This attempts to parse as a JSON object with a "responses" array
-                        if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                           let responses = json["responses"] as? [[String: Any]],
-                           !responses.isEmpty {
-                            
-                            // Find the assistant response (typically the last one)
-                            for response in responses.reversed() {
-                                if let sender = response["sender"] as? String,
-                                   sender == "ASSISTANT",
-                                   let message = response["message"] as? String,
-                                   let respId = response["responseId"] as? String {
-                                    
-                                    fullResponse = message
-                                    responseId = respId
+                        if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                            // Try to navigate through the JSON structure
+                            if let result = json["result"] as? [String: Any] {
+                                // Format 1: Check if modelResponse is directly in result
+                                if let modelResponse = result["modelResponse"] as? [String: Any],
+                                   let message = modelResponse["message"] as? String {
                                     foundCompleteResponse = true
-                                    break
+                                    fullResponse = message
+                                    
+                                    if let respId = modelResponse["responseId"] as? String ?? result["responseId"] as? String {
+                                        responseId = respId
+                                    }
+                                }
+                                // Format 2: Check if modelResponse is in result.response
+                                else if let response = result["response"] as? [String: Any],
+                                        let modelResponse = response["modelResponse"] as? [String: Any],
+                                        let message = modelResponse["message"] as? String {
+                                    foundCompleteResponse = true
+                                    fullResponse = message
+                                    
+                                    if let respId = modelResponse["responseId"] as? String ?? response["responseId"] as? String {
+                                        responseId = respId
+                                    }
+                                }
+                                // Format 3: Check for token in streaming response
+                                else if let response = result["response"] as? [String: Any],
+                                        let token = response["token"] as? String {
+                                    fullResponse += token
+                                    
+                                    if let respId = response["responseId"] as? String {
+                                        responseId = respId
+                                    }
                                 }
                             }
                         }
