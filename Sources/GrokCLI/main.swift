@@ -45,6 +45,9 @@ struct ChatCommand: ParsableCommand {
     @Flag(name: .long, help: "Enable deep search for more comprehensive answers")
     var deepSearch = false
     
+    @Flag(name: .long, help: "Disable real-time data (no web or x search)")
+    var noSearch = false
+    
     @Flag(name: .shortAndLong, help: "Use markdown formatting in output")
     var markdown = false
     
@@ -93,6 +96,7 @@ struct ChatCommand: ParsableCommand {
                     message: message,
                     enableReasoning: reasoning,
                     enableDeepSearch: deepSearch,
+                    disableSearch: noSearch,
                     customInstructions: noCustomInstructions ? "" : GrokCLI.getCustomInstructions()
                 )
                 
@@ -116,7 +120,7 @@ struct ChatCommand: ParsableCommand {
         }
         
         print("Connected to Grok! Type 'exit' to quit, 'help' for commands.".green)
-        print("Chat mode".cyan + " | " + (noCustomInstructions ? "Custom instruction: OFF".blue : "Custom instruction: ON".yellow) + " | " + (reasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + (deepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue))
+        print("Chat mode".cyan + " | " + (noCustomInstructions ? "Custom instruction: OFF".blue : "Custom instruction: ON".yellow) + " | " + (reasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + (deepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue) + " | " + (noSearch ? "Realtime: OFF".red : "Realtime: ON".green))
         if let conversationId = app.getCurrentConversationId() {
             print("Conversation ID: \(conversationId)".cyan)
         }
@@ -127,6 +131,7 @@ struct ChatCommand: ParsableCommand {
         var currentReasoning = reasoning
         var currentDeepSearch = deepSearch
         var currentNoCustomInstructions = noCustomInstructions
+        var currentNoSearch = noSearch
         
         while isRunning {
             // Display prompt
@@ -153,6 +158,11 @@ struct ChatCommand: ParsableCommand {
             case _ where input.hasPrefix("/search"), _ where input.hasPrefix("/deepsearch"):
                 currentDeepSearch = !currentDeepSearch  // Toggle current state
                 print(currentDeepSearch ? "Deep search enabled".yellow : "Deep search disabled".blue)
+                continue
+                
+            case _ where input.hasPrefix("/nosearch"):
+                currentNoSearch = !currentNoSearch  // Toggle current state
+                print(currentNoSearch ? "Search disabled".red : "Search enabled".green)
                 continue
                 
             case _ where input.hasPrefix("/custom"):
@@ -214,6 +224,16 @@ struct ChatCommand: ParsableCommand {
                 currentDeepSearch = false
                 print("Deep search disabled".blue)
                 continue
+
+            case "nosearch on":
+                currentNoSearch = true
+                print("Search disabled".red)
+                continue
+                
+            case "nosearch off":
+                currentNoSearch = false
+                print("Search enabled".green)
+                continue
                 
             case "custom on":
                 currentNoCustomInstructions = false
@@ -246,6 +266,7 @@ struct ChatCommand: ParsableCommand {
                     message: input,
                     enableReasoning: currentReasoning,
                     enableDeepSearch: currentDeepSearch,
+                    disableSearch: currentNoSearch,
                     customInstructions: currentNoCustomInstructions ? "" : GrokCLI.getCustomInstructions()
                 )
                 
@@ -254,13 +275,13 @@ struct ChatCommand: ParsableCommand {
                     response,
                     conversationId: app.getCurrentConversationId(),
                     responseId: app.getLastResponseId(),
-                    debug: debug,
+                    debug: currentNoCustomInstructions ? false : debug,
                     webSearchResults: app.getLastWebSearchResults(),
                     xposts: app.getLastXPosts()
                 )
             } catch {
                 formatter.printError("Error: \(error.localizedDescription)")
-                if debug {
+                if currentNoCustomInstructions ? false : debug {
                     print("Debug stack trace: \(error)")
                 }
             }
@@ -309,6 +330,9 @@ struct QueryCommand: ParsableCommand {
     @Flag(name: .long, help: "Enable deep search for more comprehensive answers")
     var deepSearch = false
     
+    @Flag(name: .long, help: "Disable real-time data (no web or x search)")
+    var noSearch = false
+    
     @Flag(name: .shortAndLong, help: "Use markdown formatting in output")
     var markdown = false
     
@@ -339,6 +363,7 @@ struct QueryCommand: ParsableCommand {
                 message: message,
                 enableReasoning: reasoning,
                 enableDeepSearch: deepSearch,
+                disableSearch: noSearch,
                 customInstructions: noCustomInstructions ? "" : Self.defaultCustomInstructions
             )
             
@@ -375,6 +400,9 @@ struct MessageCommand: ParsableCommand {
     
     @Flag(name: .long, help: "Enable deep search for more comprehensive answers")
     var deepSearch = false
+    
+    @Flag(name: .long, help: "Disable real-time data (no web or x search)")
+    var noSearch = false
     
     @Flag(name: .shortAndLong, help: "Use markdown formatting in output")
     var markdown = false
@@ -416,6 +444,7 @@ struct MessageCommand: ParsableCommand {
                 message: message,
                 enableReasoning: reasoning,
                 enableDeepSearch: deepSearch,
+                disableSearch: noSearch,
                 customInstructions: noCustomInstructions ? "" : Self.defaultCustomInstructions
             )
             
@@ -606,6 +635,7 @@ struct GrokCLI {
         var enableMarkdown = false
         var enableDebug = false
         var enableNoCustomInstructions = false
+        var enableNoSearch = false
         
         // Parse all arguments
         for arg in args {
@@ -619,6 +649,8 @@ struct GrokCLI {
                 enableDebug = true
             } else if arg == "--no-custom-instructions" {
                 enableNoCustomInstructions = true
+            } else if arg == "--no-search" {
+                enableNoSearch = true
             } else {
                 initialMessage.append(arg)
             }
@@ -662,6 +694,7 @@ struct GrokCLI {
                     message: message,
                     enableReasoning: enableReasoning,
                     enableDeepSearch: enableDeepSearch,
+                    disableSearch: enableNoSearch,
                     customInstructions: ""
                 )
                 
@@ -684,7 +717,11 @@ struct GrokCLI {
         }
         
         print("Connected to Grok! Type 'exit' to quit, 'help' for commands.".green)
-        print("Chat mode".cyan + " | " + (enableNoCustomInstructions ? "Custom instruction: OFF".blue : "Custom instruction: ON".yellow) + " | " + (enableReasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + (enableDeepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue))
+        print("Chat mode".cyan + " | " + 
+              (enableNoCustomInstructions ? "Custom instruction: OFF".blue : "Custom instruction: ON".yellow) + " | " + 
+              (enableReasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + 
+              (enableDeepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue) + " | " +
+              (enableNoSearch ? "Search: OFF".red : "Search: ON".green))
         if let conversationId = app.getCurrentConversationId() {
             print("Conversation ID: \(conversationId)".cyan)
         }
@@ -695,6 +732,7 @@ struct GrokCLI {
         var currentReasoning = enableReasoning
         var currentDeepSearch = enableDeepSearch
         var currentNoCustomInstructions = enableNoCustomInstructions
+        var currentNoSearch = enableNoSearch
         
         while isRunning {
             // Display prompt
@@ -721,6 +759,11 @@ struct GrokCLI {
             case _ where input.hasPrefix("/search"), _ where input.hasPrefix("/deepsearch"):
                 currentDeepSearch = !currentDeepSearch  // Toggle current state
                 print(currentDeepSearch ? "Deep search enabled".yellow : "Deep search disabled".blue)
+                continue
+                
+            case _ where input.hasPrefix("/nosearch"):
+                currentNoSearch = !currentNoSearch  // Toggle current state
+                print(currentNoSearch ? "Search disabled".red : "Search enabled".green)
                 continue
                 
             case _ where input.hasPrefix("/custom"):
@@ -783,6 +826,16 @@ struct GrokCLI {
                 print("Deep search disabled".blue)
                 continue
                 
+            case "nosearch on":
+                currentNoSearch = true
+                print("Search disabled".red)
+                continue
+                
+            case "nosearch off":
+                currentNoSearch = false
+                print("Search enabled".green)
+                continue
+                
             case "custom on":
                 currentNoCustomInstructions = false
                 print("Custom instructions enabled".yellow)
@@ -814,6 +867,7 @@ struct GrokCLI {
                     message: input,
                     enableReasoning: currentReasoning,
                     enableDeepSearch: currentDeepSearch,
+                    disableSearch: currentNoSearch,
                     customInstructions: currentNoCustomInstructions ? "" : GrokCLI.getCustomInstructions()
                 )
                 
@@ -848,6 +902,7 @@ struct GrokCLI {
         var enableDeepSearch = false
         var enableMarkdown = false
         var enableDebug = false
+        var enableNoSearch = false
         
         for arg in args {
             if arg == "--reasoning" {
@@ -858,6 +913,8 @@ struct GrokCLI {
                 enableMarkdown = true
             } else if arg == "--debug" {
                 enableDebug = true
+            } else if arg == "--no-search" {
+                enableNoSearch = true
             } else {
                 message.append(arg)
             }
@@ -873,6 +930,7 @@ struct GrokCLI {
             print("Debug: Message = \"\(messageText)\"")
             print("Debug: Reasoning = \(enableReasoning)")
             print("Debug: DeepSearch = \(enableDeepSearch)")
+            print("Debug: NoSearch = \(enableNoSearch)")
             print("Debug: Markdown = \(enableMarkdown)")
         }
         
@@ -896,6 +954,7 @@ struct GrokCLI {
                 message: messageText,
                 enableReasoning: enableReasoning,
                 enableDeepSearch: enableDeepSearch,
+                disableSearch: enableNoSearch,
                 customInstructions: ""
             )
             
@@ -982,6 +1041,7 @@ struct GrokCLI {
         Message/Chat Options:
           --reasoning       - Enable reasoning mode for step-by-step explanations
           --deep-search     - Enable deep search for more comprehensive answers
+          --no-search       - Disable real-time data (no web or x search)
           -m, --markdown    - Use markdown formatting in output
           --debug           - Show debug information
           --no-custom-instructions - Disable custom instructions for the assistant
@@ -992,6 +1052,7 @@ struct GrokCLI {
           reset conversation, /reset-conversation - Start a new conversation thread
           reasoning on/off  - Toggle reasoning mode
           search on/off     - Toggle deep search
+          nosearch on/off   - Toggle web search on/off
           custom on/off     - Toggle custom instructions
           clear, cls        - Clear the screen
         
@@ -1066,6 +1127,7 @@ class OutputFormatter {
         - \("help".yellow): Show this help message
         - \("reasoning on/off".yellow) or \("/reason".yellow): Toggle reasoning mode
         - \("search on/off".yellow) or \("/search".yellow): Toggle deep search
+        - \("nosearch on/off".yellow) or \("/nosearch".yellow): Toggle web search on/off
         - \("custom on/off".yellow) or \("/custom".yellow): Toggle custom instructions
         - \("reset conversation".yellow) or \("/reset-conversation".yellow): Start a new conversation
         - \("/edit-instructions".yellow): Edit custom instructions
@@ -1076,6 +1138,7 @@ class OutputFormatter {
         - \("/exit".yellow): Exit chat mode
         - \("/reason".yellow): Toggle reasoning mode on/off
         - \("/search".yellow) or \("/deepsearch".yellow): Toggle deep search on/off
+        - \("/nosearch".yellow): Toggle web search on/off
         - \("/custom".yellow): Toggle custom instructions on/off
         - \("/reset-conversation".yellow): Start a new conversation
         - \("/edit-instructions".yellow): Edit custom instructions
@@ -1084,6 +1147,7 @@ class OutputFormatter {
         \("Modes:".cyan.bold)
         - \("Reasoning".yellow): Enables step-by-step explanations
         - \("Deep Search".yellow): Enables more comprehensive answers using web search
+        - \("No Search".yellow): Disables web search completely
         - \("Custom Instructions".yellow): Enables/disables custom instructions for the assistant
         - \("Conversation Threading".yellow): Messages maintain context within the current conversation
         
@@ -1352,12 +1416,13 @@ class GrokCLIApp {
     }
     
     // Send a single message and get response
-    func query(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, customInstructions: String = "") async throws -> String {
+    func query(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, disableSearch: Bool = false, customInstructions: String = "") async throws -> String {
         if isDebug {
             print("Debug: Sending message to Grok:")
             print("Debug: - Message: \(message)")
             print("Debug: - Reasoning: \(enableReasoning)")
             print("Debug: - Deep Search: \(enableDeepSearch)")
+            print("Debug: - Disable Search: \(disableSearch)")
             print("Debug: - Custom Instructions: \(customInstructions.isEmpty ? "None" : "Enabled")")
             if let conversationId = currentConversationId {
                 print("Debug: - Conversation ID: \(conversationId)")
@@ -1384,6 +1449,7 @@ class GrokCLIApp {
                     message: message,
                     enableReasoning: enableReasoning,
                     enableDeepSearch: enableDeepSearch,
+                    disableSearch: disableSearch,
                     customInstructions: customInstructions
                 )
                 
@@ -1406,6 +1472,7 @@ class GrokCLIApp {
                     message: message,
                     enableReasoning: enableReasoning,
                     enableDeepSearch: enableDeepSearch,
+                    disableSearch: disableSearch,
                     customInstructions: customInstructions
                 )
                 
