@@ -41,17 +41,61 @@ public struct MessageResponse: Codable {
     }
 }
 
+// Add WebSearchResult struct
+public struct WebSearchResult: Codable {
+    public let url: String
+    public let title: String
+    public let preview: String
+    public let siteName: String?
+    public let description: String?
+    public let citationId: String?
+    
+    public init(url: String, title: String, preview: String, siteName: String? = nil, description: String? = nil, citationId: String? = nil) {
+        self.url = url
+        self.title = title
+        self.preview = preview
+        self.siteName = siteName
+        self.description = description
+        self.citationId = citationId
+    }
+}
+
+// Add XPost struct
+public struct XPost: Codable {
+    public let username: String
+    public let name: String
+    public let text: String
+    public let createTime: String?
+    public let profileImageUrl: String?
+    public let postId: String
+    public let citationId: String?
+    
+    public init(username: String, name: String, text: String, postId: String, createTime: String? = nil, profileImageUrl: String? = nil, citationId: String? = nil) {
+        self.username = username
+        self.name = name
+        self.text = text
+        self.postId = postId
+        self.createTime = createTime
+        self.profileImageUrl = profileImageUrl
+        self.citationId = citationId
+    }
+}
+
 public struct ConversationResponse: Codable {
     public let message: String
     public let conversationId: String
     public let responseId: String
     public let timestamp: Date?
+    public let webSearchResults: [WebSearchResult]?
+    public let xposts: [XPost]?
     
-    public init(message: String, conversationId: String, responseId: String, timestamp: Date? = nil) {
+    public init(message: String, conversationId: String, responseId: String, timestamp: Date? = nil, webSearchResults: [WebSearchResult]? = nil, xposts: [XPost]? = nil) {
         self.message = message
         self.conversationId = conversationId
         self.responseId = responseId
         self.timestamp = timestamp
+        self.webSearchResults = webSearchResults
+        self.xposts = xposts
     }
 }
 
@@ -91,12 +135,80 @@ internal struct ResponseContent: Codable {
     let isSoftStop: Bool?
 }
 
+// Add internal models for web search results and X posts
+internal struct WebSearchResultInternal: Codable {
+    let url: String
+    let title: String
+    let preview: String
+    let searchEngineText: String
+    let description: String
+    let siteName: String
+    let metadataTitle: String
+    let creator: String
+    let image: String
+    let favicon: String
+    let citationId: String
+}
+
+internal struct XPostInternal: Codable {
+    let username: String
+    let name: String
+    let text: String
+    let createTime: String
+    let profileImageUrl: String
+    let postId: String
+    let citationId: String
+    // Additional fields like parent, quote, viewCount are omitted for simplicity
+}
+
 internal struct ModelResponse: Codable {
     let message: String
     let responseId: String?
     let sender: String?
     let createTime: String?
     let parentResponseId: String?
+    let webSearchResults: [WebSearchResultInternal]?
+    let xposts: [XPostInternal]?
+    
+    // Helper functions to convert internal models to public models
+    func extractWebSearchResults() -> [WebSearchResult]? {
+        guard let results = webSearchResults else { return nil }
+        
+        // Filter out empty results and convert to public model
+        return results.compactMap { result in
+            // Skip empty URL entries
+            guard !result.url.isEmpty else { return nil }
+            
+            return WebSearchResult(
+                url: result.url,
+                title: result.title,
+                preview: result.preview,
+                siteName: result.siteName.isEmpty ? nil : result.siteName,
+                description: result.description.isEmpty ? nil : result.description,
+                citationId: result.citationId.isEmpty ? nil : result.citationId
+            )
+        }
+    }
+    
+    func extractXPosts() -> [XPost]? {
+        guard let posts = xposts else { return nil }
+        
+        // Filter out empty posts and convert to public model
+        return posts.compactMap { post in
+            // Skip empty username entries
+            guard !post.username.isEmpty else { return nil }
+            
+            return XPost(
+                username: post.username,
+                name: post.name,
+                text: post.text,
+                postId: post.postId,
+                createTime: post.createTime.isEmpty ? nil : post.createTime,
+                profileImageUrl: post.profileImageUrl.isEmpty ? nil : post.profileImageUrl,
+                citationId: post.citationId.isEmpty ? nil : post.citationId
+            )
+        }
+    }
 }
 
 // MARK: - GrokClient Class
@@ -232,6 +344,8 @@ public class GrokClient {
         var fullResponse = ""
         var conversationId = ""
         var responseId = ""
+        var webSearchResults: [WebSearchResult]? = nil
+        var xposts: [XPost]? = nil
         
         for try await line in bytes.lines {
             // Parse the JSON from each line
@@ -244,7 +358,9 @@ public class GrokClient {
                         message: modelResponse.message,
                         conversationId: conversationId,
                         responseId: responseId,
-                        timestamp: Date()
+                        timestamp: Date(),
+                        webSearchResults: modelResponse.extractWebSearchResults(),
+                        xposts: modelResponse.extractXPosts()
                     )
                 }
                 
@@ -272,7 +388,9 @@ public class GrokClient {
             message: fullResponse.trimmingCharacters(in: .whitespacesAndNewlines),
             conversationId: conversationId,
             responseId: responseId,
-            timestamp: Date()
+            timestamp: Date(),
+            webSearchResults: webSearchResults,
+            xposts: xposts
         )
     }
     
