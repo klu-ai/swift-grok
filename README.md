@@ -269,7 +269,19 @@ This script will:
 Start an interactive chat session with Grok:
 
 ```bash
-grok chat [--reasoning] [--deep-search] [-m/--markdown]
+grok 
+```
+
+or
+
+```bash
+grok hello
+```
+
+or
+
+```bash
+grok [--reasoning] [--deep-search] [-m/--markdown]
 ```
 
 Options:
@@ -289,7 +301,7 @@ In the chat session, you can use these commands:
 Send a single query to Grok:
 
 ```bash
-grok query [--reasoning] [--deep-search] [-m/--markdown] "Your question here"
+grok message [--reasoning] [--deep-search] [-m/--markdown] "Your question here"
 ```
 
 #### Authentication
@@ -318,5 +330,5 @@ swift build
 swift test
 
 # Build and run the CLI directly
-swift run GrokCLI
+swift run grok
 ``` 
