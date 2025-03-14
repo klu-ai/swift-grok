@@ -76,7 +76,7 @@ struct ChatCommand: ParsableCommand {
                 formatter.printResponse(response)
                 return
             } catch {
-                formatter.printError("Error sending message: \(error.localizedDescription)")
+                formatter.printError("Error: \(error.localizedDescription)")
                 if debug {
                     print("Debug stack trace: \(error)")
                 }
@@ -85,13 +85,14 @@ struct ChatCommand: ParsableCommand {
         }
         
         print("Connected to Grok! Type 'exit' to quit, 'help' for commands.".green)
-        print("Chat mode".cyan + " | " + (reasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + (deepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue))
+        print("Chat mode".cyan + " | " + (noCustomInstructions ? "Custom instruction: OFF".blue : "Custom instruction: ON".yellow) + " | " + (reasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + (deepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue))
         print("\nEnter your message:".cyan)
         
         // Main chat loop
         var isRunning = true
         var currentReasoning = reasoning
         var currentDeepSearch = deepSearch
+        var currentNoCustomInstructions = noCustomInstructions
         
         while isRunning {
             // Display prompt
@@ -116,6 +117,11 @@ struct ChatCommand: ParsableCommand {
             case _ where input.hasPrefix("/search"), _ where input.hasPrefix("/deepsearch"):
                 currentDeepSearch = !currentDeepSearch  // Toggle current state
                 print(currentDeepSearch ? "Deep search enabled".yellow : "Deep search disabled".blue)
+                continue
+                
+            case _ where input.hasPrefix("/custom"):
+                currentNoCustomInstructions = !currentNoCustomInstructions  // Toggle current state
+                print(currentNoCustomInstructions ? "Custom instructions disabled".blue : "Custom instructions enabled".yellow)
                 continue
                 
             // Keep existing commands for backward compatibility
@@ -148,6 +154,16 @@ struct ChatCommand: ParsableCommand {
                 print("Deep search disabled".blue)
                 continue
                 
+            case "custom on":
+                currentNoCustomInstructions = false
+                print("Custom instructions enabled".yellow)
+                continue
+                
+            case "custom off":
+                currentNoCustomInstructions = true
+                print("Custom instructions disabled".blue)
+                continue
+                
             case "clear", "cls":
                 formatter.clearScreen()
                 continue
@@ -169,7 +185,7 @@ struct ChatCommand: ParsableCommand {
                     message: input,
                     enableReasoning: currentReasoning,
                     enableDeepSearch: currentDeepSearch,
-                    customInstructions: noCustomInstructions ? "" : Self.defaultCustomInstructions
+                    customInstructions: currentNoCustomInstructions ? "" : Self.defaultCustomInstructions
                 )
                 
                 // Format and display the response
@@ -430,7 +446,10 @@ struct GrokCLI {
         case "help":
             showHelp()
         case "chat":
-            try await handleChatCommand(args: remainingArgs)
+            // Use ChatCommand instead of handleChatCommand
+            var chatArgs = ["chat"]
+            chatArgs.append(contentsOf: remainingArgs)
+            try await ChatCommand.parse(chatArgs).run()
         default:
             print("Unknown command: \(command)")
             print("Run 'grok help' for usage information.")
@@ -445,6 +464,7 @@ struct GrokCLI {
         var enableDeepSearch = false
         var enableMarkdown = false
         var enableDebug = false
+        var enableNoCustomInstructions = false
         
         // Parse all arguments
         for arg in args {
@@ -456,6 +476,8 @@ struct GrokCLI {
                 enableMarkdown = true
             } else if arg == "--debug" {
                 enableDebug = true
+            } else if arg == "--no-custom-instructions" {
+                enableNoCustomInstructions = true
             } else {
                 initialMessage.append(arg)
             }
@@ -511,13 +533,14 @@ struct GrokCLI {
         }
         
         print("Connected to Grok! Type 'exit' to quit, 'help' for commands.".green)
-        print("Chat mode".cyan + " | " + (enableReasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + (enableDeepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue))
+        print("Chat mode".cyan + " | " + (enableNoCustomInstructions ? "Custom instruction: OFF".blue : "Custom instruction: ON".yellow) + " | " + (enableReasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + (enableDeepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue))
         print("\nEnter your message:".cyan)
         
         // Main chat loop
         var isRunning = true
         var currentReasoning = enableReasoning
         var currentDeepSearch = enableDeepSearch
+        var currentNoCustomInstructions = enableNoCustomInstructions
         
         while isRunning {
             // Display prompt
@@ -542,6 +565,11 @@ struct GrokCLI {
             case _ where input.hasPrefix("/search"), _ where input.hasPrefix("/deepsearch"):
                 currentDeepSearch = !currentDeepSearch  // Toggle current state
                 print(currentDeepSearch ? "Deep search enabled".yellow : "Deep search disabled".blue)
+                continue
+                
+            case _ where input.hasPrefix("/custom"):
+                currentNoCustomInstructions = !currentNoCustomInstructions  // Toggle current state
+                print(currentNoCustomInstructions ? "Custom instructions disabled".blue : "Custom instructions enabled".yellow)
                 continue
                 
             // Keep existing commands for backward compatibility
@@ -572,6 +600,16 @@ struct GrokCLI {
             case "search off", "deepsearch off":
                 currentDeepSearch = false
                 print("Deep search disabled".blue)
+                continue
+                
+            case "custom on":
+                currentNoCustomInstructions = false
+                print("Custom instructions enabled".yellow)
+                continue
+                
+            case "custom off":
+                currentNoCustomInstructions = true
+                print("Custom instructions disabled".blue)
                 continue
                 
             case "clear", "cls":
@@ -747,6 +785,7 @@ struct GrokCLI {
           --deep-search     - Enable deep search for more comprehensive answers
           -m, --markdown    - Use markdown formatting in output
           --debug           - Show debug information
+          --no-custom-instructions - Disable custom instructions for the assistant
         
         Examples:
           grok              - Start interactive chat mode
@@ -793,16 +832,19 @@ class OutputFormatter {
         - \("help".yellow): Show this help message
         - \("reasoning on/off".yellow) or \("/reason".yellow): Toggle reasoning mode
         - \("search on/off".yellow) or \("/search".yellow): Toggle deep search
+        - \("custom on/off".yellow) or \("/custom".yellow): Toggle custom instructions
         - \("clear".yellow): Clear the screen
         
         \("Slash Commands:".cyan.bold)
         - \("/exit".yellow): Exit chat mode
         - \("/reason".yellow): Toggle reasoning mode on/off
         - \("/search".yellow) or \("/deepsearch".yellow): Toggle deep search on/off
+        - \("/custom".yellow): Toggle custom instructions on/off
         
         \("Modes:".cyan.bold)
         - \("Reasoning".yellow): Enables step-by-step explanations
         - \("Deep Search".yellow): Enables more comprehensive answers using web search
+        - \("Custom Instructions".yellow): Enables/disables custom instructions for the assistant
         
         """)
     }
