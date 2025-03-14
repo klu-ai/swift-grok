@@ -208,4 +208,85 @@ print(deepSearchResponse)
 
 ## License
 
-[MIT License](LICENSE) 
+[MIT License](LICENSE)
+
+## GrokCLI
+
+The GrokCLI is a command-line interface for interacting with Grok AI directly from your terminal.
+
+### Installation
+
+To install the GrokCLI, run:
+
+```bash
+# Standard installation (attempts to extract Grok cookies automatically)
+./Scripts/install_cli.sh
+
+# Installation without cookie extraction
+./Scripts/install_cli.sh -s
+```
+
+This script will:
+1. Extract Grok cookies from your browser (if you're logged in and don't use `-s` flag)
+2. Build the CLI with the extracted cookies included
+3. Install the `grok` command and the necessary dependencies to your local bin directory
+
+If cookie extraction is successful during installation, you can start using GrokCLI immediately. Otherwise, you'll need to authenticate after installation.
+
+### Authentication
+
+If cookies weren't extracted during installation, you need to authenticate:
+
+```bash
+# Generate and save cookies from your browser
+grok auth generate
+
+# Or import from an existing JSON file
+grok auth import /path/to/cookies.json
+```
+
+### Usage
+
+GrokCLI provides several commands:
+
+#### Interactive Chat
+
+Start an interactive chat session with Grok:
+
+```bash
+grok chat [--reasoning] [--deep-search] [-m/--markdown]
+```
+
+Options:
+- `--reasoning`: Enable step-by-step reasoning mode
+- `--deep-search`: Enable comprehensive deep search
+- `--markdown`: Format responses with markdown styling
+
+In the chat session, you can use these commands:
+- `help`: Show available commands
+- `reasoning on/off`: Toggle reasoning mode
+- `search on/off`: Toggle deep search
+- `clear`: Clear the screen
+- `exit` or `quit`: End the session
+
+#### One-off Query
+
+Send a single query to Grok:
+
+```bash
+grok query [--reasoning] [--deep-search] [-m/--markdown] "Your question here"
+```
+
+#### Authentication
+
+Before using GrokCLI, you need to set up authentication:
+
+```bash
+# Generate credentials by extracting cookies from your browser
+grok auth generate
+
+# Or import credentials from a JSON file
+grok auth import /path/to/credentials.json
+```
+
+Make sure you're logged in to Grok in your browser before running `grok auth generate`. 
