@@ -1289,7 +1289,7 @@ class ConfigManager {
     }
     
     // Run the cookie extractor and return the path to generated credentials
-    func runCookieExtractor() throws -> String {
+    func runCookieExtractor() async throws -> String {
         try ensureConfigDirectoryExists()
         
         // Determine path to cookie_extractor.py
@@ -1311,7 +1311,7 @@ class ConfigManager {
             }
             
             // Download the script
-            let (data, response) = try URLSession.shared.synchronousDataTask(with: url)
+            let (data, response) = try await URLSession.shared.data(from: url)
             
             guard let httpResponse = response as? HTTPURLResponse,
                   httpResponse.statusCode == 200 else {
