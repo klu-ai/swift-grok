@@ -119,7 +119,7 @@ struct ChatCommand: ParsableCommand {
             }
         }
         
-        print("Connected to Grok! Type 'exit' to quit, 'help' for commands.".green)
+        print("Connected to Grok! Type 'quit' to exit, 'new' to start a new thread, 'help' for commands.".green)
         print("Chat mode".cyan + " | " + (noCustomInstructions ? "Custom instruction: OFF".blue : "Custom instruction: ON".yellow) + " | " + (reasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + (deepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue) + " | " + (noSearch ? "Realtime: OFF".red : "Realtime: ON".green))
         if let conversationId = app.getCurrentConversationId() {
             print("Conversation ID: \(conversationId)".cyan)
@@ -144,6 +144,24 @@ struct ChatCommand: ParsableCommand {
             switch input.lowercased() {
             // New slash commands
             case _ where input.hasPrefix("/exit"):
+                // Instead of exiting the app, just reset conversation and continue
+                app.resetConversation()
+                print("Left conversation. Starting a new thread.".yellow)
+                print("Type 'quit' to exit the app completely.".cyan)
+                if let conversationId = app.getCurrentConversationId() {
+                    print("Conversation ID: \(conversationId)".cyan)
+                }
+                continue
+                
+            case _ where input.hasPrefix("/new"):
+                app.resetConversation()
+                print("Started a new conversation thread.".yellow)
+                if let conversationId = app.getCurrentConversationId() {
+                    print("Conversation ID: \(conversationId)".cyan)
+                }
+                continue
+                
+            case _ where input.hasPrefix("/quit"):
                 isRunning = false
                 // Reset conversation ID when exiting
                 app.resetConversation()
@@ -189,7 +207,17 @@ struct ChatCommand: ParsableCommand {
                 continue
                 
             // Keep existing commands for backward compatibility
-            case "exit", "quit":
+            case "exit":
+                // Instead of exiting the app, just reset conversation and continue
+                app.resetConversation()
+                print("Left conversation. Starting a new thread.".yellow)
+                print("Type 'quit' to exit the app completely.".cyan)
+                if let conversationId = app.getCurrentConversationId() {
+                    print("Conversation ID: \(conversationId)".cyan)
+                }
+                continue
+                
+            case "quit":
                 isRunning = false
                 // Reset conversation ID when exiting
                 app.resetConversation()
@@ -203,6 +231,14 @@ struct ChatCommand: ParsableCommand {
             case "new conversation", "new-conversation", "reset conversation", "reset-conversation":
                 app.resetConversation()
                 print("Conversation reset. Starting a new conversation.".yellow)
+                continue
+                
+            case "new":
+                app.resetConversation()
+                print("Started a new conversation thread.".yellow)
+                if let conversationId = app.getCurrentConversationId() {
+                    print("Conversation ID: \(conversationId)".cyan)
+                }
                 continue
                 
             case "reasoning on", "reason on":
@@ -716,7 +752,7 @@ struct GrokCLI {
             }
         }
         
-        print("Connected to Grok! Type 'exit' to quit, 'help' for commands.".green)
+        print("Connected to Grok! Type 'quit' to exit, 'new' to start a new thread, 'help' for commands.".green)
         print("Chat mode".cyan + " | " + 
               (enableNoCustomInstructions ? "Custom instruction: OFF".blue : "Custom instruction: ON".yellow) + " | " + 
               (enableReasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + 
@@ -745,6 +781,24 @@ struct GrokCLI {
             switch input.lowercased() {
             // New slash commands
             case _ where input.hasPrefix("/exit"):
+                // Instead of exiting the app, just reset conversation and continue
+                app.resetConversation()
+                print("Left conversation. Starting a new thread.".yellow)
+                print("Type '/quit' to exit the app completely.".cyan)
+                if let conversationId = app.getCurrentConversationId() {
+                    print("Conversation ID: \(conversationId)".cyan)
+                }
+                continue
+                
+            case _ where input.hasPrefix("/new"):
+                app.resetConversation()
+                print("Started a new conversation thread.".yellow)
+                if let conversationId = app.getCurrentConversationId() {
+                    print("Conversation ID: \(conversationId)".cyan)
+                }
+                continue
+                
+            case _ where input.hasPrefix("/quit"):
                 isRunning = false
                 // Reset conversation ID when exiting
                 app.resetConversation()
@@ -790,7 +844,17 @@ struct GrokCLI {
                 continue
                 
             // Keep existing commands for backward compatibility
-            case "exit", "quit":
+            case "exit":
+                // Instead of exiting the app, just reset conversation and continue
+                app.resetConversation()
+                print("Left conversation. Starting a new thread.".yellow)
+                print("Type 'quit' to exit the app completely.".cyan)
+                if let conversationId = app.getCurrentConversationId() {
+                    print("Conversation ID: \(conversationId)".cyan)
+                }
+                continue
+                
+            case "quit":
                 isRunning = false
                 // Reset conversation ID when exiting
                 app.resetConversation()
@@ -804,6 +868,14 @@ struct GrokCLI {
             case "new conversation", "new-conversation", "reset conversation", "reset-conversation":
                 app.resetConversation()
                 print("Conversation reset. Starting a new conversation.".yellow)
+                continue
+                
+            case "new":
+                app.resetConversation()
+                print("Started a new conversation thread.".yellow)
+                if let conversationId = app.getCurrentConversationId() {
+                    print("Conversation ID: \(conversationId)".cyan)
+                }
                 continue
                 
             case "reasoning on", "reason on":
@@ -1047,7 +1119,9 @@ struct GrokCLI {
           --no-custom-instructions - Disable custom instructions for the assistant
         
         Chat Commands:
-          exit, /exit       - Exit the chat session
+          exit, /exit       - Leave the current conversation and start a new thread
+          quit, /quit       - Exit the chat session
+          new, /new         - Start a new conversation thread
           help              - Show help information
           reset conversation, /reset-conversation - Start a new conversation thread
           reasoning on/off  - Toggle reasoning mode
@@ -1058,7 +1132,8 @@ struct GrokCLI {
         
         Notes:
           - In chat mode, conversation context is maintained between messages
-          - Use 'reset conversation' to start a new conversation thread
+          - Use 'exit', '/exit', 'new', '/new' to start a new conversation thread
+          - Use 'quit', '/quit' to exit the app
           - The message command always starts a new conversation without context
         
         Examples:
@@ -1123,12 +1198,16 @@ class OutputFormatter {
         print("""
         
         \("Basic Commands:".cyan.bold)
-        - \("exit".yellow) or \("/exit".yellow): Exit the chat session
+        - \("exit".yellow): Leave the current conversation and start a new thread
+        - \("quit".yellow): Exit the chat session
+        - \("new".yellow): Start a new conversation thread
         - \("help".yellow): Show this help message
         - \("clear".yellow): Clear the screen
         
         \("Slash Commands:".cyan.bold)
-        - \("/exit".yellow): Exit chat mode
+        - \("/exit".yellow): Leave the current conversation and start a new thread
+        - \("/quit".yellow): Exit chat mode
+        - \("/new".yellow): Start a new conversation thread
         - \("/reason".yellow): Toggle reasoning mode on/off
         - \("/search".yellow) or \("/deepsearch".yellow): Toggle deep search on/off
         - \("/realtime".yellow): Toggle real-time data on/off
