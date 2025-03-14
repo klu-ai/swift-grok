@@ -1,10 +1,6 @@
 # SwiftGrok Documentation
 
-## Project Overview
-
-SwiftGrok is a Swift implementation of a client for interacting with the Grok AI API. The implementation is based on the Python client found at https://github.com/mem0ai/grok3-api and matches its functionality including streaming responses, reasoning mode, and deep search capabilities.
-
-### Project Structure
+## Project Structure
 
 The project follows the standard Swift Package Manager structure:
 
