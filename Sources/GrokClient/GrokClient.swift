@@ -269,14 +269,15 @@ public class GrokClient {
     ///   - enableDeepSearch: Whether to enable deep search (cannot be used with reasoning)
     ///   - disableSearch: Whether to disable web search entirely (separate from deepSearch)
     ///   - customInstructions: Optional custom instructions for the model, empty string to disable
+    ///   - temporary: Whether the message and thread should not be saved (private mode)
     /// - Returns: A dictionary representing the payload
-    internal func preparePayload(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, disableSearch: Bool = false, customInstructions: String = "") -> [String: Any] {
+    internal func preparePayload(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, disableSearch: Bool = false, customInstructions: String = "", temporary: Bool = false) -> [String: Any] {
         if enableReasoning && enableDeepSearch {
             print("Warning: Both reasoning and deep search enabled. Deep search will be ignored.")
         }
         
         return [
-            "temporary": false,
+            "temporary": temporary,
             "modelName": "grok-3",
             "message": message,
             "fileAttachments": [],
@@ -305,9 +306,10 @@ public class GrokClient {
     ///   - enableDeepSearch: Whether to enable deep search (cannot be used with reasoning)
     ///   - disableSearch: Whether to disable web search entirely (separate from deepSearch)
     ///   - customInstructions: Optional custom instructions, defaults to empty string (no instructions)
+    ///   - temporary: Whether the message and thread should not be saved (private mode), defaults to false
     /// - Returns: A tuple with the complete response and conversationId from Grok
     /// - Throws: Network, decoding, or API errors
-    public func sendMessage(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, disableSearch: Bool = false, customInstructions: String = "") async throws -> ConversationResponse {
+    public func sendMessage(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, disableSearch: Bool = false, customInstructions: String = "", temporary: Bool = false) async throws -> ConversationResponse {
         let url = URL(string: "\(baseURL)/conversations/new")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -323,7 +325,8 @@ public class GrokClient {
             enableReasoning: enableReasoning, 
             enableDeepSearch: enableDeepSearch,
             disableSearch: disableSearch,
-            customInstructions: customInstructions
+            customInstructions: customInstructions,
+            temporary: temporary
         )
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         
@@ -406,6 +409,7 @@ public class GrokClient {
     ///   - enableDeepSearch: Whether to enable deep search
     ///   - disableSearch: Whether to disable web search entirely (separate from deepSearch)
     ///   - customInstructions: Optional custom instructions
+    ///   - temporary: Whether the message and thread should not be saved (private mode), defaults to false
     /// - Returns: A tuple with the complete response, response ID, web search results, and X posts
     /// - Throws: Network, decoding, or API errors
     public func continueConversation(
@@ -415,7 +419,8 @@ public class GrokClient {
         enableReasoning: Bool = false,
         enableDeepSearch: Bool = false,
         disableSearch: Bool = false,
-        customInstructions: String = ""
+        customInstructions: String = "",
+        temporary: Bool = false
     ) async throws -> (message: String, responseId: String, webSearchResults: [WebSearchResult]?, xposts: [XPost]?) {
         let url = URL(string: "\(baseURL)/conversations/\(conversationId)/responses")!
         var request = URLRequest(url: url)
@@ -432,7 +437,8 @@ public class GrokClient {
             enableReasoning: enableReasoning,
             enableDeepSearch: enableDeepSearch,
             disableSearch: disableSearch,
-            customInstructions: customInstructions
+            customInstructions: customInstructions,
+            temporary: temporary
         )
         payload["parentResponseId"] = parentResponseId
         
