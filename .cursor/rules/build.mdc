@@ -5,13 +5,12 @@ alwaysApply: true
 ---
 # Swift Grok Client Development Guidelines
 
+Always use swift-tools-version:6.0
+
 ## Build & Testing Commands
 ```
 swift build                    # Build the package
 swift test                     # Run all tests
-swift test --filter <TestName> # Run a specific test
-swiftlint                      # Run linter
-swift package generate-xcodeproj # Generate Xcode project
 ```
 
 ## Code Style Guidelines
