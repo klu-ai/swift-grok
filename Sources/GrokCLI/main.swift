@@ -58,6 +58,9 @@ struct ChatCommand: ParsableCommand {
         let app = GrokCLIApp.shared
         app.setDebugMode(debug)
         
+        // Reset conversation ID when starting a new chat session
+        app.resetConversation()
+        
         let formatter = OutputFormatter(useMarkdown: markdown)
         let inputReader = InputReader()
         
@@ -94,7 +97,12 @@ struct ChatCommand: ParsableCommand {
                 )
                 
                 // Format and display the response
-                formatter.printResponse(response)
+                formatter.printResponse(
+                    response,
+                    conversationId: app.getCurrentConversationId(),
+                    responseId: app.getLastResponseId(),
+                    debug: debug
+                )
                 return
             } catch {
                 formatter.printError("Error: \(error.localizedDescription)")
@@ -107,6 +115,9 @@ struct ChatCommand: ParsableCommand {
         
         print("Connected to Grok! Type 'exit' to quit, 'help' for commands.".green)
         print("Chat mode".cyan + " | " + (noCustomInstructions ? "Custom instruction: OFF".blue : "Custom instruction: ON".yellow) + " | " + (reasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + (deepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue))
+        if let conversationId = app.getCurrentConversationId() {
+            print("Conversation ID: \(conversationId)".cyan)
+        }
         print("\nEnter your message:".cyan)
         
         // Main chat loop
@@ -127,6 +138,8 @@ struct ChatCommand: ParsableCommand {
             // New slash commands
             case _ where input.hasPrefix("/exit"):
                 isRunning = false
+                // Reset conversation ID when exiting
+                app.resetConversation()
                 print("Goodbye!".cyan)
                 continue
                 
@@ -145,6 +158,11 @@ struct ChatCommand: ParsableCommand {
                 print(currentNoCustomInstructions ? "Custom instructions disabled".blue : "Custom instructions enabled".yellow)
                 continue
                 
+            case _ where input.hasPrefix("/reset-conversation"):
+                app.resetConversation()
+                print("Conversation reset. Starting a new conversation.".yellow)
+                continue
+                
             case _ where input.hasPrefix("/edit-instructions"):
                 if currentNoCustomInstructions {
                     print("Please enable custom instructions first using '/custom' or 'custom on'".yellow)
@@ -161,11 +179,18 @@ struct ChatCommand: ParsableCommand {
             // Keep existing commands for backward compatibility
             case "exit", "quit":
                 isRunning = false
+                // Reset conversation ID when exiting
+                app.resetConversation()
                 print("Goodbye!".cyan)
                 continue
                 
             case "help":
                 formatter.printHelp()
+                continue
+                
+            case "new conversation", "new-conversation", "reset conversation", "reset-conversation":
+                app.resetConversation()
+                print("Conversation reset. Starting a new conversation.".yellow)
                 continue
                 
             case "reasoning on", "reason on":
@@ -223,7 +248,12 @@ struct ChatCommand: ParsableCommand {
                 )
                 
                 // Format and display the response
-                formatter.printResponse(response)
+                formatter.printResponse(
+                    response,
+                    conversationId: app.getCurrentConversationId(),
+                    responseId: app.getLastResponseId(),
+                    debug: debug
+                )
             } catch {
                 formatter.printError("Error: \(error.localizedDescription)")
                 if debug {
@@ -585,6 +615,9 @@ struct GrokCLI {
         let app = GrokCLIApp.shared
         app.setDebugMode(enableDebug)
         
+        // Reset conversation ID when starting a new chat session
+        app.resetConversation()
+        
         let formatter = OutputFormatter(useMarkdown: enableMarkdown)
         let inputReader = InputReader()
         
@@ -621,7 +654,12 @@ struct GrokCLI {
                 )
                 
                 // Format and display the response
-                formatter.printResponse(response)
+                formatter.printResponse(
+                    response,
+                    conversationId: app.getCurrentConversationId(),
+                    responseId: app.getLastResponseId(),
+                    debug: enableDebug
+                )
             } catch {
                 formatter.printError("Error sending message: \(error.localizedDescription)")
                 if enableDebug {
@@ -633,6 +671,9 @@ struct GrokCLI {
         
         print("Connected to Grok! Type 'exit' to quit, 'help' for commands.".green)
         print("Chat mode".cyan + " | " + (enableNoCustomInstructions ? "Custom instruction: OFF".blue : "Custom instruction: ON".yellow) + " | " + (enableReasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + (enableDeepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue))
+        if let conversationId = app.getCurrentConversationId() {
+            print("Conversation ID: \(conversationId)".cyan)
+        }
         print("\nEnter your message:".cyan)
         
         // Main chat loop
@@ -653,6 +694,8 @@ struct GrokCLI {
             // New slash commands
             case _ where input.hasPrefix("/exit"):
                 isRunning = false
+                // Reset conversation ID when exiting
+                app.resetConversation()
                 print("Goodbye!".cyan)
                 continue
                 
@@ -671,6 +714,11 @@ struct GrokCLI {
                 print(currentNoCustomInstructions ? "Custom instructions disabled".blue : "Custom instructions enabled".yellow)
                 continue
                 
+            case _ where input.hasPrefix("/reset-conversation"):
+                app.resetConversation()
+                print("Conversation reset. Starting a new conversation.".yellow)
+                continue
+                
             case _ where input.hasPrefix("/edit-instructions"):
                 if currentNoCustomInstructions {
                     print("Please enable custom instructions first using '/custom' or 'custom on'".yellow)
@@ -687,11 +735,18 @@ struct GrokCLI {
             // Keep existing commands for backward compatibility
             case "exit", "quit":
                 isRunning = false
+                // Reset conversation ID when exiting
+                app.resetConversation()
                 print("Goodbye!".cyan)
                 continue
                 
             case "help":
                 formatter.printHelp()
+                continue
+                
+            case "new conversation", "new-conversation", "reset conversation", "reset-conversation":
+                app.resetConversation()
+                print("Conversation reset. Starting a new conversation.".yellow)
                 continue
                 
             case "reasoning on", "reason on":
@@ -749,10 +804,15 @@ struct GrokCLI {
                 )
                 
                 // Format and display the response
-                formatter.printResponse(response)
+                formatter.printResponse(
+                    response,
+                    conversationId: app.getCurrentConversationId(),
+                    responseId: app.getLastResponseId(),
+                    debug: currentNoCustomInstructions ? false : enableDebug
+                )
             } catch {
                 formatter.printError("Error: \(error.localizedDescription)")
-                if enableDebug {
+                if currentNoCustomInstructions ? false : enableDebug {
                     print("Debug stack trace: \(error)")
                 }
             }
@@ -802,6 +862,10 @@ struct GrokCLI {
         
         let app = GrokCLIApp.shared
         app.setDebugMode(enableDebug)
+        
+        // For single message commands, always reset the conversation
+        app.resetConversation()
+        
         let formatter = OutputFormatter(useMarkdown: enableMarkdown)
         
         print("Sending: \(messageText)".cyan)
@@ -820,7 +884,12 @@ struct GrokCLI {
             )
             
             // Display response
-            formatter.printResponse(response)
+            formatter.printResponse(
+                response,
+                conversationId: app.getCurrentConversationId(),
+                responseId: app.getLastResponseId(),
+                debug: enableDebug
+            )
         } catch {
             if enableDebug {
                 print("Debug: Error: \(error)")
@@ -899,6 +968,20 @@ struct GrokCLI {
           --debug           - Show debug information
           --no-custom-instructions - Disable custom instructions for the assistant
         
+        Chat Commands:
+          exit, /exit       - Exit the chat session
+          help              - Show help information
+          reset conversation, /reset-conversation - Start a new conversation thread
+          reasoning on/off  - Toggle reasoning mode
+          search on/off     - Toggle deep search
+          custom on/off     - Toggle custom instructions
+          clear, cls        - Clear the screen
+        
+        Notes:
+          - In chat mode, conversation context is maintained between messages
+          - Use 'reset conversation' to start a new conversation thread
+          - The message command always starts a new conversation without context
+        
         Examples:
           grok              - Start interactive chat mode
           grok Hello        - Start chat with initial message "Hello"
@@ -919,7 +1002,7 @@ class OutputFormatter {
         self.useMarkdown = useMarkdown
     }
     
-    func printResponse(_ response: String) {
+    func printResponse(_ response: String, conversationId: String? = nil, responseId: String? = nil, debug: Bool = false) {
         print("\n" + "Grok:".green.bold)
         
         if useMarkdown {
@@ -927,6 +1010,13 @@ class OutputFormatter {
             printMarkdown(response)
         } else {
             print(response)
+        }
+        
+        // Print conversation and response IDs if in debug mode
+        if debug, let conversationId = conversationId, let responseId = responseId {
+            print("\n" + "Debug Info:".cyan)
+            print("Conversation ID: \(conversationId)".cyan)
+            print("Response ID: \(responseId)".cyan)
         }
         
         print("")  // Empty line after response
@@ -945,6 +1035,7 @@ class OutputFormatter {
         - \("reasoning on/off".yellow) or \("/reason".yellow): Toggle reasoning mode
         - \("search on/off".yellow) or \("/search".yellow): Toggle deep search
         - \("custom on/off".yellow) or \("/custom".yellow): Toggle custom instructions
+        - \("reset conversation".yellow) or \("/reset-conversation".yellow): Start a new conversation
         - \("/edit-instructions".yellow): Edit custom instructions
         - \("/reset-instructions".yellow): Reset custom instructions to defaults
         - \("clear".yellow): Clear the screen
@@ -954,6 +1045,7 @@ class OutputFormatter {
         - \("/reason".yellow): Toggle reasoning mode on/off
         - \("/search".yellow) or \("/deepsearch".yellow): Toggle deep search on/off
         - \("/custom".yellow): Toggle custom instructions on/off
+        - \("/reset-conversation".yellow): Start a new conversation
         - \("/edit-instructions".yellow): Edit custom instructions
         - \("/reset-instructions".yellow): Reset custom instructions to defaults
         
@@ -961,6 +1053,7 @@ class OutputFormatter {
         - \("Reasoning".yellow): Enables step-by-step explanations
         - \("Deep Search".yellow): Enables more comprehensive answers using web search
         - \("Custom Instructions".yellow): Enables/disables custom instructions for the assistant
+        - \("Conversation Threading".yellow): Messages maintain context within the current conversation
         
         """)
     }
@@ -1092,12 +1185,30 @@ class GrokCLIApp {
     private var client: GrokClient?
     private let configManager = ConfigManager()
     private var isDebug = false
+    private var currentConversationId: String?
+    private var lastResponseId: String?
     
     private init() {}
     
     // Enable debug mode
     func setDebugMode(_ enabled: Bool) {
         isDebug = enabled
+    }
+    
+    // Reset the current conversation ID
+    func resetConversation() {
+        currentConversationId = nil
+        lastResponseId = nil
+    }
+    
+    // Get the current conversation ID
+    func getCurrentConversationId() -> String? {
+        return currentConversationId
+    }
+    
+    // Get the last response ID
+    func getLastResponseId() -> String? {
+        return lastResponseId
     }
     
     // Load cookies directly from GrokCookies.swift file
@@ -1202,6 +1313,14 @@ class GrokCLIApp {
             print("Debug: - Reasoning: \(enableReasoning)")
             print("Debug: - Deep Search: \(enableDeepSearch)")
             print("Debug: - Custom Instructions: \(customInstructions.isEmpty ? "None" : "Enabled")")
+            if let conversationId = currentConversationId {
+                print("Debug: - Conversation ID: \(conversationId)")
+                if let responseId = lastResponseId {
+                    print("Debug: - Parent Response ID: \(responseId)")
+                }
+            } else {
+                print("Debug: - Starting new conversation")
+            }
         }
         
         let client = try initializeClient()
@@ -1211,18 +1330,47 @@ class GrokCLIApp {
         }
         
         do {
-            let response = try await client.sendMessage(
-                message: message,
-                enableReasoning: enableReasoning,
-                enableDeepSearch: enableDeepSearch,
-                customInstructions: customInstructions
-            )
-            
-            if isDebug {
-                print("Debug: Response received, length: \(response.count) characters")
+            if let conversationId = currentConversationId, let parentResponseId = lastResponseId {
+                // Continue existing conversation
+                let (responseMessage, newResponseId) = try await client.continueConversation(
+                    conversationId: conversationId,
+                    parentResponseId: parentResponseId,
+                    message: message,
+                    enableReasoning: enableReasoning,
+                    enableDeepSearch: enableDeepSearch,
+                    customInstructions: customInstructions
+                )
+                
+                // Save the latest response ID
+                self.lastResponseId = newResponseId
+                
+                if isDebug {
+                    print("Debug: Response received for conversation \(conversationId), length: \(responseMessage.count) characters")
+                    print("Debug: New Response ID: \(newResponseId)")
+                }
+                
+                return responseMessage
+            } else {
+                // Start new conversation
+                let conversationResponse = try await client.sendMessage(
+                    message: message,
+                    enableReasoning: enableReasoning,
+                    enableDeepSearch: enableDeepSearch,
+                    customInstructions: customInstructions
+                )
+                
+                // Save conversation ID and response ID for future messages
+                self.currentConversationId = conversationResponse.conversationId
+                self.lastResponseId = conversationResponse.responseId
+                
+                if isDebug {
+                    print("Debug: Response received, length: \(conversationResponse.message.count) characters")
+                    print("Debug: Conversation ID: \(conversationResponse.conversationId)")
+                    print("Debug: Response ID: \(conversationResponse.responseId)")
+                }
+                
+                return conversationResponse.message
             }
-            
-            return response
         } catch {
             if isDebug {
                 print("Debug: Error sending message: \(error.localizedDescription)")
