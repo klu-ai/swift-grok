@@ -15,6 +15,27 @@ struct ChatCommand: ParsableCommand {
     You are a highly capable, thoughtful, and precise assistant. Your goal is to deeply understand the user's intent, ask clarifying questions when needed, think step-by-step through complex problems, provide clear and accurate answers, and proactively anticipate helpful follow-up information. Always prioritize being truthful, nuanced, insightful, and efficient, tailoring your responses specifically to the user's needs and preferences. If conversational dialogue, be more human. when possible, use brevity.
     """
     
+    // User preferences key for custom instructions
+    private static let customInstructionsKey = "com.grok.cli.customInstructions"
+    
+    // Get custom instructions from user preferences or defaults
+    private static func getCustomInstructions() -> String {
+        if let saved = UserDefaults.standard.string(forKey: customInstructionsKey) {
+            return saved
+        }
+        return defaultCustomInstructions
+    }
+    
+    // Save custom instructions to user preferences
+    private static func saveCustomInstructions(_ instructions: String) {
+        UserDefaults.standard.set(instructions, forKey: customInstructionsKey)
+    }
+    
+    // Reset custom instructions to defaults
+    private static func resetCustomInstructions() {
+        UserDefaults.standard.removeObject(forKey: customInstructionsKey)
+    }
+    
     @Argument(parsing: .remaining, help: "Optional initial message to send to Grok")
     var initialMessage: [String] = []
     
@@ -69,7 +90,7 @@ struct ChatCommand: ParsableCommand {
                     message: message,
                     enableReasoning: reasoning,
                     enableDeepSearch: deepSearch,
-                    customInstructions: noCustomInstructions ? "" : Self.defaultCustomInstructions
+                    customInstructions: noCustomInstructions ? "" : Self.getCustomInstructions()
                 )
                 
                 // Format and display the response
@@ -122,6 +143,19 @@ struct ChatCommand: ParsableCommand {
             case _ where input.hasPrefix("/custom"):
                 currentNoCustomInstructions = !currentNoCustomInstructions  // Toggle current state
                 print(currentNoCustomInstructions ? "Custom instructions disabled".blue : "Custom instructions enabled".yellow)
+                continue
+                
+            case _ where input.hasPrefix("/edit-instructions"):
+                if currentNoCustomInstructions {
+                    print("Please enable custom instructions first using '/custom' or 'custom on'".yellow)
+                    continue
+                }
+                editCustomInstructions()
+                continue
+                
+            case _ where input.hasPrefix("/reset-instructions"):
+                Self.resetCustomInstructions()
+                print("Custom instructions reset to defaults".yellow)
                 continue
                 
             // Keep existing commands for backward compatibility
@@ -185,7 +219,7 @@ struct ChatCommand: ParsableCommand {
                     message: input,
                     enableReasoning: currentReasoning,
                     enableDeepSearch: currentDeepSearch,
-                    customInstructions: currentNoCustomInstructions ? "" : Self.defaultCustomInstructions
+                    customInstructions: currentNoCustomInstructions ? "" : Self.getCustomInstructions()
                 )
                 
                 // Format and display the response
@@ -196,6 +230,28 @@ struct ChatCommand: ParsableCommand {
                     print("Debug stack trace: \(error)")
                 }
             }
+        }
+    }
+    
+    // Edit custom instructions in an interactive mode
+    private func editCustomInstructions() {
+        print("\n\("Editing Custom Instructions".cyan.bold)")
+        print("Type your instructions below. Press Ctrl+D (Unix) or Ctrl+Z (Windows) followed by Enter to save.")
+        print("Press Ctrl+C to cancel.")
+        print("\n\(Self.getCustomInstructions().yellow)")
+        print("\nEnter new instructions:".cyan)
+        
+        var lines: [String] = []
+        while let line = readLine() {
+            lines.append(line)
+        }
+        
+        let newInstructions = lines.joined(separator: "\n")
+        if !newInstructions.isEmpty {
+            Self.saveCustomInstructions(newInstructions)
+            print("\nCustom instructions saved successfully!".green)
+        } else {
+            print("\nNo changes made.".yellow)
         }
     }
 }
@@ -572,6 +628,19 @@ struct GrokCLI {
                 print(currentNoCustomInstructions ? "Custom instructions disabled".blue : "Custom instructions enabled".yellow)
                 continue
                 
+            case _ where input.hasPrefix("/edit-instructions"):
+                if currentNoCustomInstructions {
+                    print("Please enable custom instructions first using '/custom' or 'custom on'".yellow)
+                    continue
+                }
+                editCustomInstructions()
+                continue
+                
+            case _ where input.hasPrefix("/reset-instructions"):
+                Self.resetCustomInstructions()
+                print("Custom instructions reset to defaults".yellow)
+                continue
+                
             // Keep existing commands for backward compatibility
             case "exit", "quit":
                 isRunning = false
@@ -833,6 +902,8 @@ class OutputFormatter {
         - \("reasoning on/off".yellow) or \("/reason".yellow): Toggle reasoning mode
         - \("search on/off".yellow) or \("/search".yellow): Toggle deep search
         - \("custom on/off".yellow) or \("/custom".yellow): Toggle custom instructions
+        - \("/edit-instructions".yellow): Edit custom instructions
+        - \("/reset-instructions".yellow): Reset custom instructions to defaults
         - \("clear".yellow): Clear the screen
         
         \("Slash Commands:".cyan.bold)
@@ -840,6 +911,8 @@ class OutputFormatter {
         - \("/reason".yellow): Toggle reasoning mode on/off
         - \("/search".yellow) or \("/deepsearch".yellow): Toggle deep search on/off
         - \("/custom".yellow): Toggle custom instructions on/off
+        - \("/edit-instructions".yellow): Edit custom instructions
+        - \("/reset-instructions".yellow): Reset custom instructions to defaults
         
         \("Modes:".cyan.bold)
         - \("Reasoning".yellow): Enables step-by-step explanations
