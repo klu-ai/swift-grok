@@ -15,6 +15,27 @@ struct ChatCommand: ParsableCommand {
     You are a highly capable, thoughtful, and precise assistant. Your goal is to deeply understand the user's intent, ask clarifying questions when needed, think step-by-step through complex problems, provide clear and accurate answers, and proactively anticipate helpful follow-up information. Always prioritize being truthful, nuanced, insightful, and efficient, tailoring your responses specifically to the user's needs and preferences. If conversational dialogue, be more human. when possible, use brevity.
     """
     
+    // User preferences key for custom instructions
+    private static let customInstructionsKey = "com.grok.cli.customInstructions"
+    
+    // Get custom instructions from user preferences or defaults
+    internal static func getCustomInstructions() -> String {
+        if let saved = UserDefaults.standard.string(forKey: customInstructionsKey) {
+            return saved
+        }
+        return defaultCustomInstructions
+    }
+    
+    // Save custom instructions to user preferences
+    internal static func saveCustomInstructions(_ instructions: String) {
+        UserDefaults.standard.set(instructions, forKey: customInstructionsKey)
+    }
+    
+    // Reset custom instructions to defaults
+    internal static func resetCustomInstructions() {
+        UserDefaults.standard.removeObject(forKey: customInstructionsKey)
+    }
+    
     @Argument(parsing: .remaining, help: "Optional initial message to send to Grok")
     var initialMessage: [String] = []
     
@@ -1028,8 +1049,8 @@ class OutputFormatter {
 
 // Input reading
 class InputReader {
-    private var history: [String] = []
-    private var historyIndex = 0
+    internal var history: [String] = []
+    internal var historyIndex = 0
     
     func readLine() -> String? {
         guard let input = Swift.readLine() else {
@@ -1275,25 +1296,33 @@ class ConfigManager {
         let executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
         let executableDir = executableURL.deletingLastPathComponent()
         
-        // Possible locations for cookie_extractor.py
-        let possiblePaths = [
-            executableDir.appendingPathComponent("cookie_extractor.py").path,
-            executableDir.appendingPathComponent("../Resources/cookie_extractor.py").path,
-            "./cookie_extractor.py"
-        ]
+        // Default location for cookie_extractor.py
+        let extractorPath = executableDir.appendingPathComponent("cookie_extractor.py").path
         
-        var extractorPath: String?
-        for path in possiblePaths {
-            if fileManager.fileExists(atPath: path) {
-                extractorPath = path
-                break
+        // If the extractor doesn't exist, download it
+        if !fileManager.fileExists(atPath: extractorPath) {
+            print("Downloading cookie extractor script...".cyan)
+            
+            // URL for the cookie extractor script
+            guard let url = URL(string: "https://raw.githubusercontent.com/klu-ai/swift-grok/refs/heads/main/Scripts/cookie_extractor.py") else {
+                throw NSError(domain: "GrokCLI", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "Invalid URL for cookie extractor script"
+                ])
             }
-        }
-        
-        guard let extractorPath = extractorPath else {
-            throw NSError(domain: "GrokCLI", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: "Could not find cookie_extractor.py. Make sure it's in the same directory."
-            ])
+            
+            // Download the script
+            let (data, response) = try URLSession.shared.synchronousDataTask(with: url)
+            
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                throw NSError(domain: "GrokCLI", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "Failed to download cookie extractor script"
+                ])
+            }
+            
+            // Save the script
+            try data.write(to: URL(fileURLWithPath: extractorPath))
+            print("Cookie extractor script downloaded successfully".green)
         }
         
         // Output path for the JSON credentials
