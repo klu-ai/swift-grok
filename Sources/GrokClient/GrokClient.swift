@@ -41,6 +41,20 @@ public struct MessageResponse: Codable {
     }
 }
 
+public struct ConversationResponse: Codable {
+    public let message: String
+    public let conversationId: String
+    public let responseId: String
+    public let timestamp: Date?
+    
+    public init(message: String, conversationId: String, responseId: String, timestamp: Date? = nil) {
+        self.message = message
+        self.conversationId = conversationId
+        self.responseId = responseId
+        self.timestamp = timestamp
+    }
+}
+
 public struct Conversation: Codable {
     public let id: String
     public let title: String
@@ -58,11 +72,17 @@ internal struct StreamingResponse: Codable {
 
 internal struct StreamingResult: Codable {
     let response: ResponseContent?
+    let conversation: ConversationData?
+}
+
+internal struct ConversationData: Codable {
+    let conversationId: String?
 }
 
 internal struct ResponseContent: Codable {
     let token: String?
     let modelResponse: ModelResponse?
+    let responseId: String?
 }
 
 internal struct ModelResponse: Codable {
@@ -161,9 +181,9 @@ public class GrokClient {
     ///   - enableReasoning: Whether to enable reasoning mode (cannot be used with deepSearch)
     ///   - enableDeepSearch: Whether to enable deep search (cannot be used with reasoning)
     ///   - customInstructions: Optional custom instructions, defaults to empty string (no instructions)
-    /// - Returns: The complete response from Grok
+    /// - Returns: A tuple with the complete response and conversationId from Grok
     /// - Throws: Network, decoding, or API errors
-    public func sendMessage(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, customInstructions: String = "") async throws -> String {
+    public func sendMessage(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, customInstructions: String = "") async throws -> ConversationResponse {
         let url = URL(string: "\(baseURL)/conversations/new")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -200,6 +220,8 @@ public class GrokClient {
         
         // Process the streaming response
         var fullResponse = ""
+        var conversationId = ""
+        var responseId = ""
         
         for try await line in bytes.lines {
             // Parse the JSON from each line
@@ -208,7 +230,24 @@ public class GrokClient {
                 
                 // Check for complete response
                 if let modelResponse = streamingResponse.result?.response?.modelResponse {
-                    return modelResponse.message
+                    return ConversationResponse(
+                        message: modelResponse.message,
+                        conversationId: conversationId,
+                        responseId: responseId,
+                        timestamp: Date()
+                    )
+                }
+                
+                // Capture the conversation ID if available
+                if let conversationData = streamingResponse.result?.conversation,
+                   let id = conversationData.conversationId {
+                    conversationId = id
+                }
+                
+                // Capture the response ID if available
+                if let content = streamingResponse.result?.response,
+                   let id = content.responseId {
+                    responseId = id
                 }
                 
                 // Accumulate token
@@ -219,7 +258,134 @@ public class GrokClient {
             // Continue to next line if this one can't be parsed
         }
         
-        return fullResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ConversationResponse(
+            message: fullResponse.trimmingCharacters(in: .whitespacesAndNewlines),
+            conversationId: conversationId,
+            responseId: responseId,
+            timestamp: Date()
+        )
+    }
+    
+    /// Sends a message to an existing conversation
+    /// - Parameters:
+    ///   - conversationId: The ID of the conversation to continue
+    ///   - parentResponseId: The ID of the response this message is replying to
+    ///   - message: The user's input message
+    ///   - enableReasoning: Whether to enable reasoning mode
+    ///   - enableDeepSearch: Whether to enable deep search
+    ///   - customInstructions: Optional custom instructions
+    /// - Returns: A tuple with the complete response and response ID
+    /// - Throws: Network, decoding, or API errors
+    public func continueConversation(
+        conversationId: String,
+        parentResponseId: String,
+        message: String,
+        enableReasoning: Bool = false,
+        enableDeepSearch: Bool = false,
+        customInstructions: String = ""
+    ) async throws -> (message: String, responseId: String) {
+        let url = URL(string: "\(baseURL)/conversations/\(conversationId)/responses")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        
+        // Add headers
+        for (key, value) in headers {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        
+        // Prepare payload with parent response ID
+        var payload = preparePayload(
+            message: message,
+            enableReasoning: enableReasoning,
+            enableDeepSearch: enableDeepSearch,
+            customInstructions: customInstructions
+        )
+        payload["parentResponseId"] = parentResponseId
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        
+        // Create a URLSession that can handle streams
+        let (bytes, response) = try await session.bytes(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw GrokError.networkError(URLError(.badServerResponse))
+        }
+        
+        // Handle HTTP errors
+        guard (200...299).contains(httpResponse.statusCode) else {
+            switch httpResponse.statusCode {
+            case 401: throw GrokError.unauthorized
+            case 404: throw GrokError.notFound
+            default: throw GrokError.apiError("HTTP Error: \(httpResponse.statusCode)")
+            }
+        }
+        
+        // Process the streaming response
+        var fullResponse = ""
+        var responseId = ""
+        var foundCompleteResponse = false
+        
+        for try await line in bytes.lines {
+            // Parse the JSON from each line
+            if let data = line.data(using: .utf8) {
+                // First attempt to parse as StreamingResponse
+                if let streamingResponse = try? JSONDecoder().decode(StreamingResponse.self, from: data) {
+                    // Check for complete response
+                    if let modelResponse = streamingResponse.result?.response?.modelResponse {
+                        foundCompleteResponse = true
+                        fullResponse = modelResponse.message
+                    }
+                    
+                    // Capture the response ID if available
+                    if let content = streamingResponse.result?.response,
+                       let id = content.responseId {
+                        responseId = id
+                    }
+                    
+                    // Accumulate token
+                    if let token = streamingResponse.result?.response?.token {
+                        fullResponse += token
+                    }
+                } else {
+                    // Try to parse as other possible response formats
+                    do {
+                        // This attempts to parse as a JSON object with a "responses" array
+                        if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                           let responses = json["responses"] as? [[String: Any]],
+                           !responses.isEmpty {
+                            
+                            // Find the assistant response (typically the last one)
+                            for response in responses.reversed() {
+                                if let sender = response["sender"] as? String,
+                                   sender == "ASSISTANT",
+                                   let message = response["message"] as? String,
+                                   let respId = response["responseId"] as? String {
+                                    
+                                    fullResponse = message
+                                    responseId = respId
+                                    foundCompleteResponse = true
+                                    break
+                                }
+                            }
+                        }
+                    } catch {
+                        // Continue to next line if we can't parse this format
+                        continue
+                    }
+                }
+            }
+        }
+        
+        // If we found a complete response, return it
+        if foundCompleteResponse && !fullResponse.isEmpty {
+            return (message: fullResponse, responseId: responseId)
+        }
+        
+        // Fallback to returning whatever we accumulated
+        return (
+            message: fullResponse.trimmingCharacters(in: .whitespacesAndNewlines),
+            responseId: responseId
+        )
     }
     
     /// Legacy method to start a new conversation (maintained for compatibility)
@@ -238,7 +404,8 @@ public class GrokClient {
     /// - Returns: A MessageResponse object with the API response
     /// - Throws: Network, decoding, or API errors
     public func sendMessage(conversationId: String, message: String) async throws -> MessageResponse {
+        // For backward compatibility, we'll just start a new conversation
         let response = try await sendMessage(message: message)
-        return MessageResponse(message: response, timestamp: Date())
+        return MessageResponse(message: response.message, timestamp: response.timestamp)
     }
 } 
