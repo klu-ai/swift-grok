@@ -52,20 +52,20 @@ public struct Conversation: Codable {
 }
 
 // MARK: - Streaming Response Models
-fileprivate struct StreamingResponse: Codable {
+internal struct StreamingResponse: Codable {
     let result: StreamingResult?
 }
 
-fileprivate struct StreamingResult: Codable {
+internal struct StreamingResult: Codable {
     let response: ResponseContent?
 }
 
-fileprivate struct ResponseContent: Codable {
+internal struct ResponseContent: Codable {
     let token: String?
     let modelResponse: ModelResponse?
 }
 
-fileprivate struct ModelResponse: Codable {
+internal struct ModelResponse: Codable {
     let message: String
 }
 
@@ -74,9 +74,7 @@ public class GrokClient {
     private let baseURL: String
     private let cookies: [String: String]
     private var session: URLSession
-    
-    // Default headers that match the Python implementation
-    private let headers: [String: String] = [
+    internal let headers: [String: String] = [
         "accept": "*/*",
         "accept-language": "en-GB,en;q=0.9",
         "content-type": "application/json",
@@ -129,7 +127,7 @@ public class GrokClient {
     ///   - enableDeepSearch: Whether to enable deep search (cannot be used with reasoning)
     ///   - customInstructions: Optional custom instructions for the model, empty string to disable
     /// - Returns: A dictionary representing the payload
-    private func preparePayload(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, customInstructions: String = "") -> [String: Any] {
+    internal func preparePayload(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, customInstructions: String = "") -> [String: Any] {
         if enableReasoning && enableDeepSearch {
             print("Warning: Both reasoning and deep search enabled. Deep search will be ignored.")
         }
