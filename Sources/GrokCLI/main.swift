@@ -100,7 +100,7 @@ struct ChatCommand: ParsableCommand {
                     enableReasoning: reasoning,
                     enableDeepSearch: deepSearch,
                     disableSearch: noSearch,
-                    customInstructions: noCustomInstructions ? "" : GrokCLI.getCustomInstructions(),
+                    customInstructions: noCustomInstructions ? ChatCommand.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
                     temporary: `private`
                 )
                 
@@ -125,7 +125,7 @@ struct ChatCommand: ParsableCommand {
         
         print("Connected to Grok! Type 'quit' to exit, 'new' to start a new thread, 'help' for commands.".green)
         print("Chat mode".cyan + " | " + 
-              (noCustomInstructions ? "Custom instruction: OFF".blue : "Custom instruction: ON".yellow) + " | " + 
+              (noCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom instruction: ON".yellow) + " | " + 
               (reasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + 
               (deepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue) + " | " + 
               (noSearch ? "Realtime: OFF".red : "Realtime: ON".green) + " | " + 
@@ -192,7 +192,7 @@ struct ChatCommand: ParsableCommand {
                 
             case _ where input.hasPrefix("/custom"):
                 currentNoCustomInstructions = !currentNoCustomInstructions  // Toggle current state
-                print(currentNoCustomInstructions ? "Custom instructions disabled".blue : "Custom instructions enabled".yellow)
+                print(currentNoCustomInstructions ? "Custom instructions disabled (using defaults)".blue : "Custom instructions enabled".yellow)
                 continue
                 
             case _ where input.hasPrefix("/private"):
@@ -296,7 +296,7 @@ struct ChatCommand: ParsableCommand {
                 
             case "custom off":
                 currentNoCustomInstructions = true
-                print("Custom instructions disabled".blue)
+                print("Custom instructions disabled (using defaults)".blue)
                 continue
                 
             case "private on":
@@ -337,7 +337,7 @@ struct ChatCommand: ParsableCommand {
                     enableReasoning: currentReasoning,
                     enableDeepSearch: currentDeepSearch,
                     disableSearch: currentNoSearch,
-                    customInstructions: currentNoCustomInstructions ? "" : GrokCLI.getCustomInstructions(),
+                    customInstructions: currentNoCustomInstructions ? ChatCommand.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
                     temporary: currentPrivate
                 )
                 
@@ -438,7 +438,7 @@ struct QueryCommand: ParsableCommand {
                 enableReasoning: reasoning,
                 enableDeepSearch: deepSearch,
                 disableSearch: noSearch,
-                customInstructions: noCustomInstructions ? "" : Self.defaultCustomInstructions,
+                customInstructions: noCustomInstructions ? Self.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
                 temporary: privateMode
             )
             
@@ -523,13 +523,16 @@ struct MessageCommand: ParsableCommand {
                 enableReasoning: reasoning,
                 enableDeepSearch: deepSearch,
                 disableSearch: noSearch,
-                customInstructions: noCustomInstructions ? "" : Self.defaultCustomInstructions,
+                customInstructions: noCustomInstructions ? Self.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
                 temporary: privateMode
             )
             
             // Display the response
             formatter.printResponse(
                 response,
+                conversationId: app.getCurrentConversationId(),
+                responseId: app.getLastResponseId(),
+                debug: debug,
                 webSearchResults: app.getLastWebSearchResults(),
                 xposts: app.getLastXPosts()
             )
@@ -772,7 +775,7 @@ struct GrokCLI {
                     enableReasoning: enableReasoning,
                     enableDeepSearch: enableDeepSearch,
                     disableSearch: enableNoSearch,
-                    customInstructions: "",
+                    customInstructions: enableNoCustomInstructions ? ChatCommand.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
                     temporary: enablePrivate
                 )
                 
@@ -796,7 +799,7 @@ struct GrokCLI {
         
         print("Connected to Grok! Type 'quit' to exit, 'new' to start a new thread, 'help' for commands.".green)
         print("Chat mode".cyan + " | " + 
-              (enableNoCustomInstructions ? "Custom instruction: OFF".blue : "Custom instruction: ON".yellow) + " | " + 
+              (enableNoCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom instruction: ON".yellow) + " | " + 
               (enableReasoning ? "Reasoning".green + " | " : "") + 
               (enableDeepSearch ? "Deep Search".green + " | " : "") +
               (enableNoSearch ? "No Realtime".red : "Realtime".green) + " | " +
@@ -863,7 +866,7 @@ struct GrokCLI {
                 
             case _ where input.hasPrefix("/custom"):
                 currentNoCustomInstructions = !currentNoCustomInstructions  // Toggle current state
-                print(currentNoCustomInstructions ? "Custom instructions disabled".blue : "Custom instructions enabled".yellow)
+                print(currentNoCustomInstructions ? "Custom instructions disabled (using defaults)".blue : "Custom instructions enabled".yellow)
                 continue
                 
             case _ where input.hasPrefix("/private"):
@@ -967,7 +970,7 @@ struct GrokCLI {
                 
             case "custom off":
                 currentNoCustomInstructions = true
-                print("Custom instructions disabled".blue)
+                print("Custom instructions disabled (using defaults)".blue)
                 continue
                 
             case "private on":
@@ -1008,7 +1011,7 @@ struct GrokCLI {
                     enableReasoning: currentReasoning,
                     enableDeepSearch: currentDeepSearch,
                     disableSearch: currentNoSearch,
-                    customInstructions: currentNoCustomInstructions ? "" : GrokCLI.getCustomInstructions(),
+                    customInstructions: currentNoCustomInstructions ? ChatCommand.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
                     temporary: currentPrivate
                 )
                 
@@ -1099,7 +1102,7 @@ struct GrokCLI {
                 enableReasoning: enableReasoning,
                 enableDeepSearch: enableDeepSearch,
                 disableSearch: enableNoSearch,
-                customInstructions: "",
+                customInstructions: ChatCommand.defaultCustomInstructions,
                 temporary: enablePrivate
             )
             
@@ -1272,13 +1275,10 @@ class OutputFormatter {
         - \("new".yellow): Start a new conversation thread
         - \("help".yellow): Show this help message
         - \("clear".yellow): Clear the screen
-        - \("exit".yellow): Exit the app
         - \("quit".yellow): Exit the app
         
         \("Slash Commands:".cyan.bold)
         - \("/new".yellow): Start a new conversation thread
-        - \("/exit".yellow): Exit the app
-        - \("/quit".yellow): Exit the app
         - \("/reason".yellow): Toggle reasoning mode on/off
         - \("/search".yellow) or \("/deepsearch".yellow): Toggle deep search on/off
         - \("/realtime".yellow): Toggle real-time data on/off
@@ -1286,6 +1286,7 @@ class OutputFormatter {
         - \("/private".yellow): Toggle private mode on/off (messages won't be saved)
         - \("/edit-instructions".yellow): Edit custom instructions
         - \("/reset-instructions".yellow): Reset custom instructions to defaults
+        - \("/quit".yellow): Exit the app
         
         \("Modes:".cyan.bold)
         - \("Reasoning".yellow): Enables step-by-step explanations
