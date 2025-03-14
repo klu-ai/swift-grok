@@ -127,8 +127,9 @@ public class GrokClient {
     ///   - message: The user's input message
     ///   - enableReasoning: Whether to enable reasoning mode (cannot be used with deepSearch)
     ///   - enableDeepSearch: Whether to enable deep search (cannot be used with reasoning)
+    ///   - customInstructions: Optional custom instructions for the model, empty string to disable
     /// - Returns: A dictionary representing the payload
-    private func preparePayload(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false) -> [String: Any] {
+    private func preparePayload(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, customInstructions: String = "") -> [String: Any] {
         if enableReasoning && enableDeepSearch {
             print("Warning: Both reasoning and deep search enabled. Deep search will be ignored.")
         }
@@ -150,7 +151,7 @@ public class GrokClient {
             "enableSideBySide": true,
             "isPreset": false,
             "sendFinalMetadata": true,
-            "customInstructions": "",
+            "customInstructions": customInstructions,
             "deepsearchPreset": enableDeepSearch ? "default" : "",
             "isReasoning": enableReasoning
         ]
@@ -161,9 +162,10 @@ public class GrokClient {
     ///   - message: The user's input message
     ///   - enableReasoning: Whether to enable reasoning mode (cannot be used with deepSearch)
     ///   - enableDeepSearch: Whether to enable deep search (cannot be used with reasoning)
+    ///   - customInstructions: Optional custom instructions, defaults to empty string (no instructions)
     /// - Returns: The complete response from Grok
     /// - Throws: Network, decoding, or API errors
-    public func sendMessage(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false) async throws -> String {
+    public func sendMessage(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, customInstructions: String = "") async throws -> String {
         let url = URL(string: "\(baseURL)/conversations/new")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -174,7 +176,12 @@ public class GrokClient {
         }
         
         // Prepare payload
-        let payload = preparePayload(message: message, enableReasoning: enableReasoning, enableDeepSearch: enableDeepSearch)
+        let payload = preparePayload(
+            message: message, 
+            enableReasoning: enableReasoning, 
+            enableDeepSearch: enableDeepSearch,
+            customInstructions: customInstructions
+        )
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         
         // Create a URLSession that can handle streams
