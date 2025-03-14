@@ -53,6 +53,46 @@ do {
 }
 ```
 
+### Conversation Threading
+
+The client supports multi-turn conversations, maintaining context between messages:
+
+```swift
+do {
+    let client = try GrokClient(cookies: cookies)
+    
+    // Start a new conversation
+    let initialResponse = try await client.sendMessage(message: "Tell me about Swift programming language")
+    print("Initial response: \(initialResponse.message)")
+    
+    // Save the conversation and response IDs to maintain context
+    let conversationId = initialResponse.conversationId
+    let responseId = initialResponse.responseId
+    
+    // Continue the conversation with follow-up questions
+    let followUp = try await client.continueConversation(
+        conversationId: conversationId,
+        parentResponseId: responseId,
+        message: "What are the key differences between Swift and Objective-C?"
+    )
+    
+    print("Follow-up response: \(followUp.message)")
+    
+    // Ask another follow-up question in the same conversation thread
+    let secondFollowUp = try await client.continueConversation(
+        conversationId: conversationId,
+        parentResponseId: followUp.responseId,
+        message: "How do optionals work in Swift?"
+    )
+    
+    print("Second follow-up response: \(secondFollowUp.message)")
+} catch {
+    print("Error: \(error)")
+}
+```
+
+The `continueConversation` method handles various API response formats to ensure reliable conversation threading across different Grok API endpoints. Use this approach when you need to maintain context across multiple interactions.
+
 ### Using Reasoning Mode
 
 Reasoning mode enables Grok to show its step-by-step thinking process.
@@ -236,7 +276,7 @@ The project is organized into the following components:
 
 ## GrokCLI
 
-The GrokCLI is a command-line interface for interacting with Grok AI directly from your terminal. It provides an interactive chat experience and supports all features of the GrokClient including reasoning mode and deep search.
+The GrokCLI is a command-line interface for interacting with Grok AI directly from your terminal. It provides an interactive chat experience and supports all features of the GrokClient including reasoning mode, deep search, and conversation threading.
 
 ### Features
 - Interactive chat session with command support
@@ -246,6 +286,7 @@ The GrokCLI is a command-line interface for interacting with Grok AI directly fr
 - Reasoning mode toggle
 - Deep search toggle
 - Session management
+- Conversation threading with context preservation
 
 ### Installation
 
@@ -295,8 +336,11 @@ In the chat session, you can use these commands:
 - `help`: Show available commands
 - `reasoning on/off`: Toggle reasoning mode
 - `search on/off`: Toggle deep search
+- `reset conversation` or `/reset-conversation`: Start a new conversation thread
 - `clear`: Clear the screen
 - `exit` or `quit`: End the session
+
+The CLI automatically maintains conversation context between messages, allowing you to have natural multi-turn conversations with Grok. Use the `reset conversation` command when you want to start a new conversation thread.
 
 #### One-off Query
 
