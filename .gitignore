@@ -1,2 +1,7 @@
 .build/
 GrokCookies.swift
+# Swift Package Manager
+.swiftpm/
+
+# Project specific
+.plan
