@@ -1106,7 +1106,6 @@ struct GrokCLI {
         
         Commands:
           message <text>    - Send a message to Grok and exit
-          chat [text]       - Start an interactive chat session (optional initial message)
           auth              - Authentication commands
           help              - Show help information
         
@@ -1119,11 +1118,10 @@ struct GrokCLI {
           --no-custom-instructions - Disable custom instructions for the assistant
         
         Chat Commands:
+          new, /new         - Start a new conversation thread
           exit, /exit       - Leave the current conversation and start a new thread
           quit, /quit       - Exit the chat session
-          new, /new         - Start a new conversation thread
           help              - Show help information
-          reset conversation, /reset-conversation - Start a new conversation thread
           reasoning on/off  - Toggle reasoning mode
           search on/off     - Toggle deep search
           realtime on/off   - Toggle real-time data on/off
@@ -1140,7 +1138,6 @@ struct GrokCLI {
           grok              - Start interactive chat mode
           grok Hello        - Start chat with initial message "Hello"
           grok message Hello, how are you today?
-          grok chat What is quantum computing? --reasoning
           grok auth generate
         """)
     }
@@ -1198,21 +1195,19 @@ class OutputFormatter {
         print("""
         
         \("Basic Commands:".cyan.bold)
-        - \("exit".yellow): Leave the current conversation and start a new thread
-        - \("quit".yellow): Exit the chat session
         - \("new".yellow): Start a new conversation thread
         - \("help".yellow): Show this help message
         - \("clear".yellow): Clear the screen
+        - \("exit".yellow): Leave the current conversation and start a new thread
         
         \("Slash Commands:".cyan.bold)
-        - \("/exit".yellow): Leave the current conversation and start a new thread
-        - \("/quit".yellow): Exit chat mode
         - \("/new".yellow): Start a new conversation thread
+        - \("/exit".yellow): Leave the current conversation and start a new thread
+        - \("/quit".yellow): Quit the app
         - \("/reason".yellow): Toggle reasoning mode on/off
         - \("/search".yellow) or \("/deepsearch".yellow): Toggle deep search on/off
         - \("/realtime".yellow): Toggle real-time data on/off
         - \("/custom".yellow): Toggle custom instructions on/off
-        - \("/reset-conversation".yellow): Start a new conversation
         - \("/edit-instructions".yellow): Edit custom instructions
         - \("/reset-instructions".yellow): Reset custom instructions to defaults
         
