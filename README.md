@@ -1,6 +1,8 @@
 # SwiftGrok
 
-A Swift client for interacting with the Grok AI API. This implementation matches the functionality of the Python client, including streaming responses, reasoning mode, and deep search capabilities.
+<img width="805" alt="image" src="https://github.com/user-attachments/assets/500ff992-24a3-4237-9bf4-1189610d9beb" />
+
+A Swift client for interacting with the Grok AI API. This includes a command line tool `grok` to chat with the Grok3 API, including streaming responses (coming soon), custom instructions, reasoning mode, and deep search capabilities.
 
 ## Installation
 
