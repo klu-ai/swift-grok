@@ -641,7 +641,7 @@ struct GrokCLI {
         let messageText = message.joined(separator: " ")
         
         // Execute the command
-        print("Initializing Grok CLI...".cyan)
+        print("Calling Grok API...".cyan)
         
         if enableDebug {
             print("Debug: Message = \"\(messageText)\"")
