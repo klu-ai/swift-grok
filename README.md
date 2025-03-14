@@ -10,7 +10,7 @@ Add the following to your `Package.swift` file:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/yourusername/swift-grok.git", from: "1.0.0"),
+    .package(url: "https://github.com/klu-ai/swift-grok", from: "1.0.0"),
 ]
 ```
 
@@ -210,9 +210,40 @@ print(deepSearchResponse)
 
 [MIT License](LICENSE)
 
+## Project Structure
+
+The project is organized into the following components:
+
+### Core Client (`Sources/GrokClient/`)
+- `GrokClient.swift`: Main client implementation for interacting with the Grok AI API
+- `GrokCookies.swift`: Cookie management and validation
+- `GrokCookieHelper.swift`: Helper utilities for cookie handling
+- `Examples.swift`: Example usage and implementation patterns
+
+### Command Line Interface (`Sources/GrokCLI/`)
+- `main.swift`: CLI implementation with interactive chat and command processing
+
+### Tests (`Tests/GrokClientTests/`)
+- `GrokClientTests.swift`: Core client functionality tests
+- `GrokCookieHelperTests.swift`: Cookie management tests
+
+### Scripts (`Scripts/`)
+- `install_cli.sh`: CLI installation script
+- `cookie_extractor.py`: Browser cookie extraction utility
+- `build.sh`: Build script for Swift Package
+
 ## GrokCLI
 
-The GrokCLI is a command-line interface for interacting with Grok AI directly from your terminal.
+The GrokCLI is a command-line interface for interacting with Grok AI directly from your terminal. It provides an interactive chat experience and supports all features of the GrokClient including reasoning mode and deep search.
+
+### Features
+- Interactive chat session with command support
+- One-off query execution
+- Markdown formatting support
+- Automatic cookie management
+- Reasoning mode toggle
+- Deep search toggle
+- Session management
 
 ### Installation
 
@@ -231,23 +262,7 @@ This script will:
 2. Build the CLI with the extracted cookies included
 3. Install the `grok` command and the necessary dependencies to your local bin directory
 
-If cookie extraction is successful during installation, you can start using GrokCLI immediately. Otherwise, you'll need to authenticate after installation.
-
-### Authentication
-
-If cookies weren't extracted during installation, you need to authenticate:
-
-```bash
-# Generate and save cookies from your browser
-grok auth generate
-
-# Or import from an existing JSON file
-grok auth import /path/to/cookies.json
-```
-
 ### Usage
-
-GrokCLI provides several commands:
 
 #### Interactive Chat
 
@@ -289,4 +304,19 @@ grok auth generate
 grok auth import /path/to/credentials.json
 ```
 
-Make sure you're logged in to Grok in your browser before running `grok auth generate`. 
+Make sure you're logged in to Grok in your browser before running `grok auth generate`.
+
+### Development
+
+To build and test the CLI locally:
+
+```bash
+# Build the CLI
+swift build
+
+# Run tests
+swift test
+
+# Build and run the CLI directly
+swift run GrokCLI
+``` 
