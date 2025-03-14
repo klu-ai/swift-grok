@@ -730,7 +730,7 @@ struct GrokCLI {
     // Show help information
     static func showHelp() {
         print("""
-        Grok CLI - Interact with Grok AI from your terminal
+        Grok3 up in your terminal
         
         Usage: grok [command] [options]
         
