@@ -101,7 +101,9 @@ struct ChatCommand: ParsableCommand {
                     response,
                     conversationId: app.getCurrentConversationId(),
                     responseId: app.getLastResponseId(),
-                    debug: debug
+                    debug: debug,
+                    webSearchResults: app.getLastWebSearchResults(),
+                    xposts: app.getLastXPosts()
                 )
                 return
             } catch {
@@ -252,7 +254,9 @@ struct ChatCommand: ParsableCommand {
                     response,
                     conversationId: app.getCurrentConversationId(),
                     responseId: app.getLastResponseId(),
-                    debug: debug
+                    debug: debug,
+                    webSearchResults: app.getLastWebSearchResults(),
+                    xposts: app.getLastXPosts()
                 )
             } catch {
                 formatter.printError("Error: \(error.localizedDescription)")
@@ -339,7 +343,11 @@ struct QueryCommand: ParsableCommand {
             )
             
             // Format and display the response
-            formatter.printResponse(response)
+            formatter.printResponse(
+                response,
+                webSearchResults: app.getLastWebSearchResults(),
+                xposts: app.getLastXPosts()
+            )
         } catch {
             formatter.printError("Error: \(error.localizedDescription)")
             if debug {
@@ -412,7 +420,11 @@ struct MessageCommand: ParsableCommand {
             )
             
             // Display the response
-            formatter.printResponse(response)
+            formatter.printResponse(
+                response,
+                webSearchResults: app.getLastWebSearchResults(),
+                xposts: app.getLastXPosts()
+            )
         } catch {
             formatter.printError("Error: \(error.localizedDescription)")
             if debug {
@@ -658,7 +670,9 @@ struct GrokCLI {
                     response,
                     conversationId: app.getCurrentConversationId(),
                     responseId: app.getLastResponseId(),
-                    debug: enableDebug
+                    debug: enableDebug,
+                    webSearchResults: app.getLastWebSearchResults(),
+                    xposts: app.getLastXPosts()
                 )
             } catch {
                 formatter.printError("Error sending message: \(error.localizedDescription)")
@@ -808,7 +822,9 @@ struct GrokCLI {
                     response,
                     conversationId: app.getCurrentConversationId(),
                     responseId: app.getLastResponseId(),
-                    debug: currentNoCustomInstructions ? false : enableDebug
+                    debug: currentNoCustomInstructions ? false : enableDebug,
+                    webSearchResults: app.getLastWebSearchResults(),
+                    xposts: app.getLastXPosts()
                 )
             } catch {
                 formatter.printError("Error: \(error.localizedDescription)")
@@ -888,7 +904,9 @@ struct GrokCLI {
                 response,
                 conversationId: app.getCurrentConversationId(),
                 responseId: app.getLastResponseId(),
-                debug: enableDebug
+                debug: enableDebug,
+                webSearchResults: app.getLastWebSearchResults(),
+                xposts: app.getLastXPosts()
             )
         } catch {
             if enableDebug {
@@ -1002,7 +1020,7 @@ class OutputFormatter {
         self.useMarkdown = useMarkdown
     }
     
-    func printResponse(_ response: String, conversationId: String? = nil, responseId: String? = nil, debug: Bool = false) {
+    func printResponse(_ response: String, conversationId: String? = nil, responseId: String? = nil, debug: Bool = false, webSearchResults: [WebSearchResult]? = nil, xposts: [XPost]? = nil) {
         print("\n" + "Grok:".green.bold)
         
         if useMarkdown {
@@ -1010,6 +1028,20 @@ class OutputFormatter {
             printMarkdown(response)
         } else {
             print(response)
+        }
+        
+        // Show sources information if available
+        let webSearchCount = webSearchResults?.count ?? 0
+        let xpostsCount = xposts?.count ?? 0
+        
+        if webSearchCount > 0 || xpostsCount > 0 {
+            print("\n" + "Sources:".cyan)
+            if webSearchCount > 0 {
+                print("Web search results: \(webSearchCount)".yellow)
+            }
+            if xpostsCount > 0 {
+                print("X posts: \(xpostsCount)".yellow)
+            }
         }
         
         // Print conversation and response IDs if in debug mode
@@ -1187,6 +1219,8 @@ class GrokCLIApp {
     private var isDebug = false
     private var currentConversationId: String?
     private var lastResponseId: String?
+    private var lastWebSearchResults: [WebSearchResult]?
+    private var lastXPosts: [XPost]?
     
     private init() {}
     
@@ -1199,6 +1233,8 @@ class GrokCLIApp {
     func resetConversation() {
         currentConversationId = nil
         lastResponseId = nil
+        lastWebSearchResults = nil
+        lastXPosts = nil
     }
     
     // Get the current conversation ID
@@ -1209,6 +1245,16 @@ class GrokCLIApp {
     // Get the last response ID
     func getLastResponseId() -> String? {
         return lastResponseId
+    }
+    
+    // Get the last web search results
+    func getLastWebSearchResults() -> [WebSearchResult]? {
+        return lastWebSearchResults
+    }
+    
+    // Get the last X posts
+    func getLastXPosts() -> [XPost]? {
+        return lastXPosts
     }
     
     // Load cookies directly from GrokCookies.swift file
@@ -1332,7 +1378,7 @@ class GrokCLIApp {
         do {
             if let conversationId = currentConversationId, let parentResponseId = lastResponseId {
                 // Continue existing conversation
-                let (responseMessage, newResponseId) = try await client.continueConversation(
+                let (responseMessage, newResponseId, webSearchResults, xposts) = try await client.continueConversation(
                     conversationId: conversationId,
                     parentResponseId: parentResponseId,
                     message: message,
@@ -1341,12 +1387,16 @@ class GrokCLIApp {
                     customInstructions: customInstructions
                 )
                 
-                // Save the latest response ID
+                // Save the latest response ID and additional data
                 self.lastResponseId = newResponseId
+                self.lastWebSearchResults = webSearchResults
+                self.lastXPosts = xposts
                 
                 if isDebug {
                     print("Debug: Response received for conversation \(conversationId), length: \(responseMessage.count) characters")
                     print("Debug: New Response ID: \(newResponseId)")
+                    print("Debug: Web Search Results: \(webSearchResults?.count ?? 0)")
+                    print("Debug: X Posts: \(xposts?.count ?? 0)")
                 }
                 
                 return responseMessage
@@ -1359,14 +1409,18 @@ class GrokCLIApp {
                     customInstructions: customInstructions
                 )
                 
-                // Save conversation ID and response ID for future messages
+                // Save conversation ID, response ID, and additional data
                 self.currentConversationId = conversationResponse.conversationId
                 self.lastResponseId = conversationResponse.responseId
+                self.lastWebSearchResults = conversationResponse.webSearchResults
+                self.lastXPosts = conversationResponse.xposts
                 
                 if isDebug {
                     print("Debug: Response received, length: \(conversationResponse.message.count) characters")
                     print("Debug: Conversation ID: \(conversationResponse.conversationId)")
                     print("Debug: Response ID: \(conversationResponse.responseId)")
+                    print("Debug: Web Search Results: \(conversationResponse.webSearchResults?.count ?? 0)")
+                    print("Debug: X Posts: \(conversationResponse.xposts?.count ?? 0)")
                 }
                 
                 return conversationResponse.message
