@@ -344,8 +344,8 @@ public class GrokClient {
         var fullResponse = ""
         var conversationId = ""
         var responseId = ""
-        var webSearchResults: [WebSearchResult]? = nil
-        var xposts: [XPost]? = nil
+        let webSearchResults: [WebSearchResult]? = nil
+        let xposts: [XPost]? = nil
         
         for try await line in bytes.lines {
             // Parse the JSON from each line
