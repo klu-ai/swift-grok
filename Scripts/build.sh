@@ -5,7 +5,7 @@
 set -e  # Exit on any error
 
 echo "==============================================="
-echo "Swift Grok Client - Setup Script"
+echo "Swift Grok Client - Build Script"
 echo "==============================================="
 
 # Check for Python 3
