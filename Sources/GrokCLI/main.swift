@@ -15,27 +15,6 @@ struct ChatCommand: ParsableCommand {
     You are a highly capable, thoughtful, and precise assistant. Your goal is to deeply understand the user's intent, ask clarifying questions when needed, think step-by-step through complex problems, provide clear and accurate answers, and proactively anticipate helpful follow-up information. Always prioritize being truthful, nuanced, insightful, and efficient, tailoring your responses specifically to the user's needs and preferences. If conversational dialogue, be more human. when possible, use brevity.
     """
     
-    // User preferences key for custom instructions
-    private static let customInstructionsKey = "com.grok.cli.customInstructions"
-    
-    // Get custom instructions from user preferences or defaults
-    private static func getCustomInstructions() -> String {
-        if let saved = UserDefaults.standard.string(forKey: customInstructionsKey) {
-            return saved
-        }
-        return defaultCustomInstructions
-    }
-    
-    // Save custom instructions to user preferences
-    private static func saveCustomInstructions(_ instructions: String) {
-        UserDefaults.standard.set(instructions, forKey: customInstructionsKey)
-    }
-    
-    // Reset custom instructions to defaults
-    private static func resetCustomInstructions() {
-        UserDefaults.standard.removeObject(forKey: customInstructionsKey)
-    }
-    
     @Argument(parsing: .remaining, help: "Optional initial message to send to Grok")
     var initialMessage: [String] = []
     
@@ -90,7 +69,7 @@ struct ChatCommand: ParsableCommand {
                     message: message,
                     enableReasoning: reasoning,
                     enableDeepSearch: deepSearch,
-                    customInstructions: noCustomInstructions ? "" : Self.getCustomInstructions()
+                    customInstructions: noCustomInstructions ? "" : GrokCLI.getCustomInstructions()
                 )
                 
                 // Format and display the response
@@ -150,11 +129,11 @@ struct ChatCommand: ParsableCommand {
                     print("Please enable custom instructions first using '/custom' or 'custom on'".yellow)
                     continue
                 }
-                editCustomInstructions()
+                GrokCLI.editCustomInstructions()
                 continue
                 
             case _ where input.hasPrefix("/reset-instructions"):
-                Self.resetCustomInstructions()
+                GrokCLI.resetCustomInstructions()
                 print("Custom instructions reset to defaults".yellow)
                 continue
                 
@@ -219,7 +198,7 @@ struct ChatCommand: ParsableCommand {
                     message: input,
                     enableReasoning: currentReasoning,
                     enableDeepSearch: currentDeepSearch,
-                    customInstructions: currentNoCustomInstructions ? "" : Self.getCustomInstructions()
+                    customInstructions: currentNoCustomInstructions ? "" : GrokCLI.getCustomInstructions()
                 )
                 
                 // Format and display the response
@@ -238,7 +217,7 @@ struct ChatCommand: ParsableCommand {
         print("\n\("Editing Custom Instructions".cyan.bold)")
         print("Type your instructions below. Press Ctrl+D (Unix) or Ctrl+Z (Windows) followed by Enter to save.")
         print("Press Ctrl+C to cancel.")
-        print("\n\(Self.getCustomInstructions().yellow)")
+        print("\n\(GrokCLI.getCustomInstructions().yellow)")
         print("\nEnter new instructions:".cyan)
         
         var lines: [String] = []
@@ -248,7 +227,7 @@ struct ChatCommand: ParsableCommand {
         
         let newInstructions = lines.joined(separator: "\n")
         if !newInstructions.isEmpty {
-            Self.saveCustomInstructions(newInstructions)
+            GrokCLI.saveCustomInstructions(newInstructions)
             print("\nCustom instructions saved successfully!".green)
         } else {
             print("\nNo changes made.".yellow)
@@ -471,6 +450,49 @@ struct TestCommand: ParsableCommand {
 // Main GrokCLI command
 @main
 struct GrokCLI {
+    // User preferences key for custom instructions
+    private static let customInstructionsKey = "com.grok.cli.customInstructions"
+    
+    // Get custom instructions from user preferences or defaults
+    static func getCustomInstructions() -> String {
+        if let saved = UserDefaults.standard.string(forKey: customInstructionsKey) {
+            return saved
+        }
+        return ChatCommand.defaultCustomInstructions
+    }
+    
+    // Save custom instructions to user preferences
+    static func saveCustomInstructions(_ instructions: String) {
+        UserDefaults.standard.set(instructions, forKey: customInstructionsKey)
+    }
+    
+    // Reset custom instructions to defaults
+    static func resetCustomInstructions() {
+        UserDefaults.standard.removeObject(forKey: customInstructionsKey)
+    }
+    
+    // Edit custom instructions in an interactive mode
+    static func editCustomInstructions() {
+        print("\n\("Editing Custom Instructions".cyan.bold)")
+        print("Type your instructions below. Press Ctrl+D (Unix) or Ctrl+Z (Windows) followed by Enter to save.")
+        print("Press Ctrl+C to cancel.")
+        print("\n\(getCustomInstructions().yellow)")
+        print("\nEnter new instructions:".cyan)
+        
+        var lines: [String] = []
+        while let line = readLine() {
+            lines.append(line)
+        }
+        
+        let newInstructions = lines.joined(separator: "\n")
+        if !newInstructions.isEmpty {
+            saveCustomInstructions(newInstructions)
+            print("\nCustom instructions saved successfully!".green)
+        } else {
+            print("\nNo changes made.".yellow)
+        }
+    }
+    
     static func main() async throws {
         // Simple command-line argument parsing
         let arguments = Array(CommandLine.arguments.dropFirst()) // Drop the executable name
@@ -633,11 +655,11 @@ struct GrokCLI {
                     print("Please enable custom instructions first using '/custom' or 'custom on'".yellow)
                     continue
                 }
-                editCustomInstructions()
+                GrokCLI.editCustomInstructions()
                 continue
                 
             case _ where input.hasPrefix("/reset-instructions"):
-                Self.resetCustomInstructions()
+                GrokCLI.resetCustomInstructions()
                 print("Custom instructions reset to defaults".yellow)
                 continue
                 
@@ -702,7 +724,7 @@ struct GrokCLI {
                     message: input,
                     enableReasoning: currentReasoning,
                     enableDeepSearch: currentDeepSearch,
-                    customInstructions: ""
+                    customInstructions: currentNoCustomInstructions ? "" : GrokCLI.getCustomInstructions()
                 )
                 
                 // Format and display the response
@@ -1058,7 +1080,7 @@ class GrokCLIApp {
     }
     
     // Load cookies directly from GrokCookies.swift file
-    private func getCookiesFromFile() throws -> [String: String] {
+    internal func getCookiesFromFile() throws -> [String: String] {
         // Try to find GrokCookies.swift in standard locations
         let potentialPaths = ["./GrokCookies.swift", "../GrokCookies.swift", "../../GrokCookies.swift"]
         
