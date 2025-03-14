@@ -1,7 +1,7 @@
+# Swift & Package Manager
 .build/
-GrokCookies.swift
-# Swift Package Manager
 .swiftpm/
 
 # Project specific
+GrokCookies.swift
 .plan
