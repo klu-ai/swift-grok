@@ -1,5 +1,6 @@
 import XCTest
 @testable import GrokClient
+@testable import GrokCLI
 
 final class GrokCookieHelperTests: XCTestCase {
     var tempDirectory: URL!

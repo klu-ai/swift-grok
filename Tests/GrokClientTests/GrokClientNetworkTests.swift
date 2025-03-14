@@ -1,5 +1,6 @@
 import XCTest
 @testable import GrokClient
+@testable import GrokCLI
 
 final class GrokClientNetworkTests: XCTestCase {
     var client: GrokClient!
