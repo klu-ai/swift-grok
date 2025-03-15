@@ -288,6 +288,44 @@ public class GrokClient {
         "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     ]
     
+    /// Available system prompt personalities for Grok
+    public enum PersonalityType: String, CaseIterable {
+        case romance = "grok3_personality_romance_me"
+        case medicalAdvisor = "grok3_personality_medical_advisor"
+        case latestNews = "grok3_personality_latest_news"
+        case unhingedComedian = "grok3_personality_unhinged_comedian"
+        case loyalFriend = "grok3_personality_loyal_friend"
+        case homeworkHelper = "grok3_personality_homework_helper"
+        case trustedTherapist = "grok3_personality_trusted_therapist"
+        case none = ""
+        
+        public var displayName: String {
+            switch self {
+            case .romance: return "Romance Me"
+            case .medicalAdvisor: return "Medical Advisor"
+            case .latestNews: return "Latest News"
+            case .unhingedComedian: return "Unhinged Comedian"
+            case .loyalFriend: return "Loyal Friend"
+            case .homeworkHelper: return "Homework Helper"
+            case .trustedTherapist: return "Trusted Therapist"
+            case .none: return "Default (No Personality)"
+            }
+        }
+        
+        public var description: String {
+            switch self {
+            case .romance: return "A flirty and romantic personality"
+            case .medicalAdvisor: return "A helpful medical information advisor"
+            case .latestNews: return "Focused on providing the latest news and current events"
+            case .unhingedComedian: return "A wild and unhinged comedian"
+            case .loyalFriend: return "A supportive and loyal friend"
+            case .homeworkHelper: return "A patient tutor focused on helping with homework"
+            case .trustedTherapist: return "A compassionate therapeutic personality"
+            case .none: return "Standard Grok personality"
+            }
+        }
+    }
+    
     /// Initializes the GrokClient with cookie credentials
     /// - Parameters:
     ///   - cookies: A dictionary of cookie name-value pairs for authentication
@@ -328,13 +366,22 @@ public class GrokClient {
     ///   - disableSearch: Whether to disable web search entirely (separate from deepSearch)
     ///   - customInstructions: Optional custom instructions for the model, empty string to disable
     ///   - temporary: Whether the message and thread should not be saved (private mode)
+    ///   - personalityType: Optional personality type for Grok, defaults to none
     /// - Returns: A dictionary representing the payload
-    internal func preparePayload(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, disableSearch: Bool = false, customInstructions: String = "", temporary: Bool = false) -> [String: Any] {
+    internal func preparePayload(
+        message: String,
+        enableReasoning: Bool = false,
+        enableDeepSearch: Bool = false,
+        disableSearch: Bool = false,
+        customInstructions: String = "",
+        temporary: Bool = false,
+        personalityType: PersonalityType = .none
+    ) -> [String: Any] {
         if enableReasoning && enableDeepSearch {
             print("Warning: Both reasoning and deep search enabled. Deep search will be ignored.")
         }
         
-        return [
+        var payload: [String: Any] = [
             "temporary": temporary,
             "modelName": "grok-3",
             "message": message,
@@ -355,6 +402,13 @@ public class GrokClient {
             "deepsearchPreset": enableDeepSearch ? "default" : "",
             "isReasoning": enableReasoning
         ]
+        
+        // Only add systemPromptName if it's not empty
+        if !personalityType.rawValue.isEmpty {
+            payload["systemPromptName"] = personalityType.rawValue
+        }
+        
+        return payload
     }
     
     /// Sends a message to Grok and returns the complete response
@@ -365,9 +419,18 @@ public class GrokClient {
     ///   - disableSearch: Whether to disable web search entirely (separate from deepSearch)
     ///   - customInstructions: Optional custom instructions, defaults to empty string (no instructions)
     ///   - temporary: Whether the message and thread should not be saved (private mode), defaults to false
+    ///   - personalityType: Optional personality type for Grok, defaults to none
     /// - Returns: A tuple with the complete response and conversationId from Grok
     /// - Throws: Network, decoding, or API errors
-    public func sendMessage(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, disableSearch: Bool = false, customInstructions: String = "", temporary: Bool = false) async throws -> ConversationResponse {
+    public func sendMessage(
+        message: String,
+        enableReasoning: Bool = false,
+        enableDeepSearch: Bool = false,
+        disableSearch: Bool = false,
+        customInstructions: String = "",
+        temporary: Bool = false,
+        personalityType: PersonalityType = .none
+    ) async throws -> ConversationResponse {
         let url = URL(string: "\(baseURL)/conversations/new")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -384,7 +447,8 @@ public class GrokClient {
             enableDeepSearch: enableDeepSearch,
             disableSearch: disableSearch,
             customInstructions: customInstructions,
-            temporary: temporary
+            temporary: temporary,
+            personalityType: personalityType
         )
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         
@@ -468,6 +532,7 @@ public class GrokClient {
     ///   - disableSearch: Whether to disable web search entirely (separate from deepSearch)
     ///   - customInstructions: Optional custom instructions
     ///   - temporary: Whether the message and thread should not be saved (private mode), defaults to false
+    ///   - personalityType: Optional personality type for Grok, defaults to none
     /// - Returns: A tuple with the complete response, response ID, web search results, and X posts
     /// - Throws: Network, decoding, or API errors
     public func continueConversation(
@@ -478,7 +543,8 @@ public class GrokClient {
         enableDeepSearch: Bool = false,
         disableSearch: Bool = false,
         customInstructions: String = "",
-        temporary: Bool = false
+        temporary: Bool = false,
+        personalityType: PersonalityType = .none
     ) async throws -> (message: String, responseId: String, webSearchResults: [WebSearchResult]?, xposts: [XPost]?) {
         let url = URL(string: "\(baseURL)/conversations/\(conversationId)/responses")!
         var request = URLRequest(url: url)
@@ -496,7 +562,8 @@ public class GrokClient {
             enableDeepSearch: enableDeepSearch,
             disableSearch: disableSearch,
             customInstructions: customInstructions,
-            temporary: temporary
+            temporary: temporary,
+            personalityType: personalityType
         )
         if let parentResponseId = parentResponseId {
             payload["parentResponseId"] = parentResponseId
