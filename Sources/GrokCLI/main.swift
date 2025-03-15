@@ -66,14 +66,31 @@ struct ChatCommand: ParsableCommand {
     var `private` = false
     
     // Print the current settings status line
+    static func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool) {
+        let personality = GrokCLIApp.shared.getCurrentPersonality()
+        let personalityText = personality == .none ? "" : personality.displayName.yellow + " | "
+        
+        print("Chat mode".cyan + " | " + 
+              (currentReasoning ? "Reasoning".green + " | " : "") + 
+              (currentDeepSearch ? "DeepSearch".green + " | " : "") + 
+              personalityText +
+              (currentNoSearch ? "No Search".red : "Realtime".green) + " | " + 
+              (currentPrivate ? "Private".red : "Saved".blue))
+    }
+    
+    // Print the current settings status line
     func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool) {
+        let personality = GrokCLIApp.shared.getCurrentPersonality()
+        let personalityText = personality == .none ? "" : personality.displayName.yellow + " | "
+        
         print("Chat mode".cyan + " | " + 
               // hidden for now due to API limitations that will likely be lifted soon
-              (currentNoCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom instruction: ON".yellow) + " | " + 
-              (currentReasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + 
-              (currentDeepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue) + " | " + 
-              (currentNoSearch ? "Realtime: OFF".red : "Realtime: ON".green) + " | " + 
-              (currentPrivate ? "Private: ON".yellow : "Private: OFF".blue))
+              // (currentNoCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom instruction: ON".yellow) + " | " + 
+              (currentReasoning ? "Reasoning".green + " | " : "") + 
+              (currentDeepSearch ? "DeepSearch".green + " | " : "") + 
+              personalityText +
+              (currentNoSearch ? "No Search".red : "Realtime".green) + " | " + 
+              (currentPrivate ? "Private".red : "Saved".blue))
     }
     
     func run() async throws {
@@ -198,8 +215,9 @@ struct ChatCommand: ParsableCommand {
                 continue
                 
             case _ where input.hasPrefix("/realtime"):
-                currentNoSearch = !currentNoSearch  // Toggle current state
-                print(currentNoSearch ? "Realtime disabled".red : "Realtime enabled".green)
+                currentNoSearch = !currentNoSearch
+                print("Real-time data: \(currentNoSearch ? "DISABLED".red : "ENABLED".green)")
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case _ where input.hasPrefix("/custom"):
@@ -208,19 +226,28 @@ struct ChatCommand: ParsableCommand {
                 continue
                 
             case _ where input.hasPrefix("/private"):
-                // If we have an existing conversation, start a new one when switching to private mode
-                if currentPrivate == false && app.getCurrentConversationId() != nil {
+                currentPrivate = !currentPrivate
+                print("Private mode: \(currentPrivate ? "ENABLED".green : "DISABLED".red)")
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
+                continue
+            
+            case _ where input.hasPrefix("/personality"):
+                // Display personality selection menu
+                let selectedPersonality = GrokCLI.showPersonalityMenu(app: app)
+                
+                // Reset conversation when changing personality
+                if selectedPersonality != app.getCurrentPersonality() {
+                    app.setPersonality(selectedPersonality)
                     app.resetConversation()
-                    print("Started a new private conversation thread.".yellow)
-                    currentPrivate = true
-                    printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
-                } else {
-                    currentPrivate = !currentPrivate  // Toggle current state
+                    print("Personality set to: \(selectedPersonality.displayName.green)")
+                    print("Started a new conversation with the selected personality.")
                 }
-                print(currentPrivate ? "Private mode enabled".yellow : "Private mode disabled".blue)
-                if currentPrivate {
-                    print("Your conversations will not be saved.".yellow)
-                }
+                
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
+                continue
+                
+            case _ where input.hasPrefix("/help"):
+                formatter.printHelp()
                 continue
                 
             case _ where input.hasPrefix("/list"):
@@ -522,6 +549,33 @@ struct ChatCommand: ParsableCommand {
             print("\nNo changes made.".yellow)
         }
     }
+    
+    // Show personality selection menu
+    private static func showPersonalityMenu(app: GrokCLIApp) -> GrokClient.PersonalityType {
+        let currentPersonality = app.getCurrentPersonality()
+        
+        print("\n\("Select a Personality:".cyan.bold)")
+        print("Current: \(currentPersonality.displayName.green)\n")
+        
+        // Display all personality options
+        for (index, personality) in GrokClient.PersonalityType.allCases.enumerated() {
+            let marker = personality == currentPersonality ? "● " : "  "
+            print("\(marker)\(index + 1). \(personality.displayName.yellow): \(personality.description)")
+        }
+        
+        print("\nEnter a number (1-\(GrokClient.PersonalityType.allCases.count)) or press Enter to keep current: ".cyan, terminator: "")
+        
+        // Get user selection
+        if let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines), 
+           !input.isEmpty,
+           let selection = Int(input),
+           selection >= 1 && selection <= GrokClient.PersonalityType.allCases.count {
+            return GrokClient.PersonalityType.allCases[selection - 1]
+        }
+        
+        // Return current personality if no valid selection
+        return currentPersonality
+    }
 }
 
 // QueryCommand: One-off query to Grok
@@ -811,11 +865,15 @@ struct GrokCLI {
     
     // Print the current settings status line
     static func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool) {
+        let personality = GrokCLIApp.shared.getCurrentPersonality()
+        let personalityText = personality == .none ? "" : personality.displayName.yellow + " | "
+        
         print("Chat mode".cyan + " | " + 
               // hidden for now due to API limitations that will likely be lifted soon
-              //(currentNoCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom instruction: ON".yellow) + " | " + 
+              //(currentNoCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom  instruction: ON".yellow) + " | " + 
               (currentReasoning ? "Reasoning".green + " | " : "") + 
               (currentDeepSearch ? "DeepSearch".green + " | " : "") + 
+              personalityText +
               (currentNoSearch ? "No Search".red : "Realtime".green) + " | " + 
               (currentPrivate ? "Private".red : "Saved".blue))
     }
@@ -1011,8 +1069,9 @@ struct GrokCLI {
                 continue
                 
             case _ where input.hasPrefix("/realtime"):
-                currentNoSearch = !currentNoSearch  // Toggle current state
-                print(currentNoSearch ? "Realtime disabled".red : "Realtime enabled".green)
+                currentNoSearch = !currentNoSearch
+                print("Real-time data: \(currentNoSearch ? "DISABLED".red : "ENABLED".green)")
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case _ where input.hasPrefix("/custom"):
@@ -1021,19 +1080,28 @@ struct GrokCLI {
                 continue
                 
             case _ where input.hasPrefix("/private"):
-                // If we have an existing conversation, start a new one when switching to private mode
-                if currentPrivate == false && app.getCurrentConversationId() != nil {
+                currentPrivate = !currentPrivate
+                print("Private mode: \(currentPrivate ? "ENABLED".green : "DISABLED".red)")
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
+                continue
+            
+            case _ where input.hasPrefix("/personality"):
+                // Display personality selection menu
+                let selectedPersonality = GrokCLI.showPersonalityMenu(app: app)
+                
+                // Reset conversation when changing personality
+                if selectedPersonality != app.getCurrentPersonality() {
+                    app.setPersonality(selectedPersonality)
                     app.resetConversation()
-                    print("Started a new private conversation thread.".yellow)
-                    currentPrivate = true
-                    printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
-                } else {
-                    currentPrivate = !currentPrivate  // Toggle current state
+                    print("Personality set to: \(selectedPersonality.displayName.green)")
+                    print("Started a new conversation with the selected personality.")
                 }
-                print(currentPrivate ? "Private mode enabled".yellow : "Private mode disabled".blue)
-                if currentPrivate {
-                    print("Your conversations will not be saved.".yellow)
-                }
+                
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
+                continue
+                
+            case _ where input.hasPrefix("/help"):
+                formatter.printHelp()
                 continue
                 
             case _ where input.hasPrefix("/list"):
@@ -1617,6 +1685,33 @@ struct GrokCLI {
             print("Please run 'grok auth' to set up your credentials.".yellow)
         }
     }
+    
+    // Show personality selection menu
+    static func showPersonalityMenu(app: GrokCLIApp) -> GrokClient.PersonalityType {
+        let currentPersonality = app.getCurrentPersonality()
+        
+        print("\n\("Select a Personality:".cyan.bold)")
+        print("Current: \(currentPersonality.displayName.green)\n")
+        
+        // Display all personality options
+        for (index, personality) in GrokClient.PersonalityType.allCases.enumerated() {
+            let marker = personality == currentPersonality ? "● " : "  "
+            print("\(marker)\(index + 1). \(personality.displayName.yellow): \(personality.description)")
+        }
+        
+        print("\nEnter a number (1-\(GrokClient.PersonalityType.allCases.count)) or press Enter to keep current: ".cyan, terminator: "")
+        
+        // Get user selection
+        if let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines), 
+           !input.isEmpty,
+           let selection = Int(input),
+           selection >= 1 && selection <= GrokClient.PersonalityType.allCases.count {
+            return GrokClient.PersonalityType.allCases[selection - 1]
+        }
+        
+        // Return current personality if no valid selection
+        return currentPersonality
+    }
 }
 
 // removed from app options for now
@@ -1689,7 +1784,7 @@ class OutputFormatter {
         - \("/search".yellow): Toggle deep search on/off
         - \("/realtime".yellow): Toggle real-time data on/off
         - \("/private".yellow): Toggle private mode on/off 
-        - \("/special".yellow): Activate special mode 
+        - \("/personality".yellow): Choose Grok personality
         - \("/clear".yellow): Clear the screen
         - \("/quit".yellow): Exit the app
         
@@ -1698,6 +1793,7 @@ class OutputFormatter {
         - \("DeepSearch".yellow): Conduct in-depth analysis with research agent
         - \("Realtime".yellow): Enables real-time data from web and X search
         - \("Private Mode".yellow): When enabled, conversations will not be saved
+        - \("Personality".yellow): Interact with different Grok personalities
         
         """)
     }
@@ -1844,6 +1940,7 @@ class GrokCLIApp {
     private var lastResponseId: String?
     private var lastWebSearchResults: [WebSearchResult]?
     private var lastXPosts: [XPost]?
+    private var currentPersonality: GrokClient.PersonalityType = .none
     
     private init() {}
     
@@ -1883,6 +1980,16 @@ class GrokCLIApp {
     // Get the last X posts
     func getLastXPosts() -> [XPost]? {
         return lastXPosts
+    }
+    
+    // Get current personality
+    func getCurrentPersonality() -> GrokClient.PersonalityType {
+        return currentPersonality
+    }
+    
+    // Set current personality
+    func setPersonality(_ personalityType: GrokClient.PersonalityType) {
+        self.currentPersonality = personalityType
     }
     
     // Load cookies directly from GrokCookies.swift file
@@ -1980,7 +2087,9 @@ class GrokCLIApp {
     }
     
     // Send a single message and get response
-    func query(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, disableSearch: Bool = false, customInstructions: String = "", temporary: Bool = false) async throws -> String {
+    func query(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, disableSearch: Bool = false, customInstructions: String = "", temporary: Bool = false, personalityType: GrokClient.PersonalityType? = nil) async throws -> String {
+        let personality = personalityType ?? currentPersonality
+        
         if isDebug {
             print("Debug: Sending message to Grok:")
             print("Debug: - Message: \(message)")
@@ -1989,6 +2098,7 @@ class GrokCLIApp {
             print("Debug: - Disable Search: \(disableSearch)")
             print("Debug: - Custom Instructions: \(customInstructions.isEmpty ? "None" : "Enabled")")
             print("Debug: - Private Mode: \(temporary ? "ON" : "OFF")")
+            print("Debug: - Personality: \(personality.displayName)")
             if let conversationId = currentConversationId {
                 print("Debug: - Conversation ID: \(conversationId)")
                 if let responseId = lastResponseId {
@@ -2016,7 +2126,8 @@ class GrokCLIApp {
                     enableDeepSearch: enableDeepSearch,
                     disableSearch: disableSearch,
                     customInstructions: customInstructions,
-                    temporary: temporary
+                    temporary: temporary,
+                    personalityType: personality
                 )
                 
                 // Save the latest response ID and additional data
@@ -2040,7 +2151,8 @@ class GrokCLIApp {
                     enableDeepSearch: enableDeepSearch,
                     disableSearch: disableSearch,
                     customInstructions: customInstructions,
-                    temporary: temporary
+                    temporary: temporary,
+                    personalityType: personality
                 )
                 
                 // Save conversation ID, response ID, and additional data
