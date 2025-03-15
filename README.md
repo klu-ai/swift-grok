@@ -1,39 +1,92 @@
 # SwiftGrok
 
-<img width="805" alt="image" src="https://github.com/user-attachments/assets/500ff992-24a3-4237-9bf4-1189610d9beb" />
+SwiftGrok is a Swift package that provides a client for interacting with the Grok AI API developed by xAI. It includes both a programmatic API through `GrokClient` and a command-line interface (CLI) tool named `grok` for terminal-based interactions with Grok. The package supports features such as multi-turn conversations, reasoning mode, deep search capabilities, and custom instructions, making it suitable for developers building AI-driven applications or users seeking direct command-line access to Grok.
 
-A Swift client for interacting with the Grok AI API. This includes a command line tool `grok` to chat with the Grok3 API, including streaming responses (coming soon), custom instructions, reasoning mode, and deep search capabilities.
+This README provides detailed instructions for installation, usage, and configuration, along with examples to help you get started. The package is designed to be extensible and integrates seamlessly into Swift projects via the Swift Package Manager.
+
+## Package Description
+
+SwiftGrok consists of two primary components:
+
+1. **GrokClient**: A Swift library for programmatic interaction with the Grok API, offering methods to send messages, continue conversations, list past conversations, and retrieve detailed responses. It supports advanced features like reasoning mode, deep search, and custom instructions.
+2. **GrokCLI**: A command-line tool built on top of `GrokClient`, providing an interactive chat interface, one-off query execution, and conversation management directly from the terminal.
+
+The package handles authentication via browser-extracted cookies, supports conversation threading for context preservation, and includes structured response models for handling text, web search results, and X posts.
+
+## Dependencies
+
+SwiftGrok relies on the following dependencies, which are included via the Swift Package Manager:
+
+- **Rainbow**: A Swift library for adding color to terminal output, used in the CLI for enhanced readability. It is automatically included when building the CLI target.
+
+No additional external dependencies are required beyond standard Swift and Foundation libraries. The package is compatible with Swift 6.0 and requires macOS 14.0 or later for CLI usage, with broader platform support (iOS 13.0+, tvOS 13.0+, watchOS 6.0+) for the `GrokClient` library.
 
 ## Installation
 
 ### Swift Package Manager
 
-Add the following to your `Package.swift` file:
+To integrate SwiftGrok into your Swift project, add it as a dependency in your `Package.swift` file:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/klu-ai/swift-grok", from: "1.0.0"),
+    .package(url: "https://github.com/klu-ai/swift-grok", from: "1.0.0")
 ]
 ```
 
-And then include it as a dependency in your target:
+Then, include it in your target:
 
 ```swift
 targets: [
     .target(
         name: "YourTarget",
-        dependencies: ["GrokClient"]),
+        dependencies: ["GrokClient"]
+    )
 ]
 ```
 
+Run `swift build` to fetch and compile the package.
+
+### CLI Installation
+
+To install the `grok` CLI tool, use the provided installation script:
+
+```bash
+git clone https://github.com/klu-ai/swift-grok.git
+cd swift-grok
+./Scripts/install_cli.sh
+```
+
+The script will:
+1. Attempt to extract Grok API cookies from your browser (requires Python 3 and the `browsercookie` package).
+2. Build the CLI with embedded credentials.
+3. Install the `grok` binary to your local bin directory (typically `/usr/local/bin`).
+
+If you prefer to skip automatic cookie extraction, use:
+
+```bash
+./Scripts/install_cli.sh -s
+```
+
+You will then need to manually configure authentication (see "Authentication" section below).
+
+#### Prerequisites for CLI Installation
+- Python 3 (for cookie extraction)
+- `pip install browsercookie` (for the cookie extractor script)
+- Swift 6.0 toolchain
+
 ## Usage
 
-### Basic Usage
+### Using GrokClient Programmatically
+
+The `GrokClient` class provides a programmatic interface to the Grok API. Below are examples of common use cases.
+
+#### Basic Message Sending
+
+Initialize the client with authentication cookies and send a message:
 
 ```swift
 import GrokClient
 
-// Initialize the client with your cookies from browser
 let cookies = [
     "x-anonuserid": "your_anon_user_id",
     "x-challenge": "your_challenge_value",
@@ -44,396 +97,223 @@ let cookies = [
 
 do {
     let client = try GrokClient(cookies: cookies)
-    
-    // Send a message and get the response
-    let response = try await client.sendMessage(message: "Hello Grok!")
-    print(response)
+    let response = try await client.sendMessage(message: "What is the capital of France?")
+    print(response.message)
 } catch {
-    print("Error: \(error)")
+    print("Error: \(error.localizedDescription)")
 }
 ```
 
-### API Documentation
+#### Multi-Turn Conversation
 
-#### Available APIs
-
-The `GrokClient` provides the following main methods:
-
-- `client.sendMessage(message:)` - Send a message to start a new conversation
-- `client.continueConversation(conversationId:parentResponseId:message:)` - Continue an existing conversation
-- `client.listConversations(pageSize:)` - Fetch a list of past conversations
-- `client.getResponseNodes(conversationId:)` - Get the response structure for a conversation
-- `client.getResponses(conversationId:responseIds:)` - Get specific responses from a conversation
-- `client.startNewConversation()` - Create a new empty conversation
-
-Both `sendMessage` and `continueConversation` methods support advanced options including:
-- `enableReasoning` - Enable step-by-step reasoning mode
-- `enableDeepSearch` - Enable comprehensive web search
-- `disableSearch` - Disable real-time data access
-- `customInstructions` - Provide custom instructions to guide the model
-- `temporary` - Make the conversation private (not saved)
-
-Each method returns structured response objects containing the model's reply and metadata such as conversation IDs, timestamps, and any web search results or X posts included in the response.
-
-### Conversation Threading
-
-The client supports multi-turn conversations, maintaining context between messages:
+Continue a conversation by maintaining context:
 
 ```swift
+import GrokClient
+
 do {
     let client = try GrokClient(cookies: cookies)
     
-    // Start a new conversation
-    let initialResponse = try await client.sendMessage(message: "Tell me about Swift programming language")
-    print("Initial response: \(initialResponse.message)")
+    // Start a conversation
+    let initialResponse = try await client.sendMessage(message: "Tell me about Swift programming")
+    print("Grok: \(initialResponse.message)")
     
-    // Save the conversation and response IDs to maintain context
-    let conversationId = initialResponse.conversationId
-    let responseId = initialResponse.responseId
-    
-    // Continue the conversation with follow-up questions
+    // Continue the conversation
     let followUp = try await client.continueConversation(
-        conversationId: conversationId,
-        parentResponseId: responseId,
-        message: "What are the key differences between Swift and Objective-C?"
+        conversationId: initialResponse.conversationId,
+        parentResponseId: initialResponse.responseId,
+        message: "How does it compare to Objective-C?"
     )
-    
-    print("Follow-up response: \(followUp.message)")
-    
-    // Ask another follow-up question in the same conversation thread
-    let secondFollowUp = try await client.continueConversation(
-        conversationId: conversationId,
-        parentResponseId: followUp.responseId,
-        message: "How do optionals work in Swift?"
-    )
-    
-    print("Second follow-up response: \(secondFollowUp.message)")
+    print("Grok: \(followUp.message)")
 } catch {
-    print("Error: \(error)")
+    print("Error: \(error.localizedDescription)")
 }
 ```
 
-The `continueConversation` method handles various API response formats to ensure reliable conversation threading across different Grok API endpoints. Use this approach when you need to maintain context across multiple interactions.
+#### Using Reasoning Mode
 
-### Using Reasoning Mode
-
-Reasoning mode enables Grok to show its step-by-step thinking process.
+Enable reasoning mode for step-by-step explanations:
 
 ```swift
 let response = try await client.sendMessage(
-    message: "Solve this math problem: If a train travels at 60 mph, how long will it take to travel 240 miles?",
+    message: "Solve: If a train travels at 60 mph, how long to go 240 miles?",
     enableReasoning: true
 )
+print(response.message)
 ```
 
-### Using Deep Search
+#### Using Deep Search
 
-Deep search provides more comprehensive results by performing more extensive research.
+Enable deep search for comprehensive answers:
 
 ```swift
 let response = try await client.sendMessage(
-    message: "What are the latest advancements in quantum computing?",
+    message: "Latest advancements in quantum computing?",
     enableDeepSearch: true
 )
-```
-
-## Cookie Authentication
-
-The GrokClient requires cookies from a logged-in browser session to authenticate with Grok's API. This package includes a cookie extraction script to help automate this process.
-
-### Using the Cookie Extractor
-
-The `cookie_extractor.py` script automatically extracts the necessary cookies from your Chrome or Firefox browser.
-
-#### Prerequisites:
-1. Python 3 installed
-2. Install the required package: `pip install browsercookie`
-
-#### Running the Extractor:
-
-```bash
-# Basic usage (extracts all grok.com cookies)
-python cookie_extractor.py
-
-# Check for the required GrokClient cookies
-python cookie_extractor.py --required
-
-# Save as JSON
-python cookie_extractor.py --format json --output grok_cookies.json
-
-# Output both Swift and JSON formats
-python cookie_extractor.py --format both
-```
-
-The script will:
-1. Extract cookies from Chrome and/or Firefox for grok.com
-2. Generate a Swift file named `GrokCookies.swift` with the cookies
-3. Print the cookies in Swift dictionary format and/or JSON
-
-### Using the Extracted Cookies
-
-#### Option 1: With the Generated Swift File
-
-1. Add `GrokCookies.swift` to your Swift project
-2. Initialize the client with:
-
-```swift
-import GrokClient
-
-do {
-    let client = try GrokClient.withAutoCookies()
-    // Use the client...
-    let response = try await client.sendMessage(message: "Hello Grok!")
-    print(response)
-} catch {
-    print("Error: \(error)")
-}
-```
-
-#### Option 2: From JSON
-
-```swift
-import GrokClient
-
-do {
-    let client = try GrokClient.fromJSONFile(at: "/path/to/grok_cookies.json")
-    // Use the client...
-} catch {
-    print("Error: \(error)")
-}
-```
-
-#### Option 3: Direct Initialization
-
-```swift
-import GrokClient
-
-let cookies = [
-    "x-anonuserid": "your-value-here",
-    "x-challenge": "your-value-here",
-    "x-signature": "your-value-here",
-    "sso": "your-value-here",
-    "sso-rw": "your-value-here"
-]
-
-do {
-    let client = try GrokClient(cookies: cookies)
-    // Use the client...
-} catch {
-    print("Error: \(error)")
-}
-```
-
-### Required Cookies
-
-The GrokClient needs the following cookies:
-- `x-anonuserid`
-- `x-challenge`
-- `x-signature`
-- `sso`
-- `sso-rw`
-
-To get these cookies, you need to log in to [grok.com](https://grok.com) in your browser before running the extractor.
-
-## Using the GrokClient
-
-Once initialized with cookies, you can use the client to interact with Grok:
-
-```swift
-// Send a message and get a response
-let response = try await client.sendMessage(message: "What's the capital of France?")
-print(response)
-
-// Use reasoning mode
-let reasoningResponse = try await client.sendMessage(
-    message: "Solve this step by step: If x+y=10 and x-y=4, what is x*y?", 
-    enableReasoning: true
-)
-print(reasoningResponse)
-
-// Use deep search
-let deepSearchResponse = try await client.sendMessage(
-    message: "What are the latest advancements in quantum computing?", 
-    enableDeepSearch: true
-)
-print(deepSearchResponse)
-
-// List all conversations
-let conversations = try await client.listConversations()
-for conversation in conversations {
-    print("\(conversation.title) (ID: \(conversation.conversationId), Created: \(conversation.createTime))")
-}
-
-// Load responses from a specific conversation
-if let conversation = conversations.first {
-    let responses = try await client.loadResponses(conversationId: conversation.conversationId)
-    for response in responses {
-        print("[\(response.sender)] \(response.message)")
+print(response.message)
+if let webResults = response.webSearchResults {
+    print("Web Search Results:")
+    for result in webResults {
+        print("- \(result.title): \(result.url)")
     }
 }
 ```
 
-## Troubleshooting
+#### Listing Conversations
 
-- **No Cookies Found**: Make sure you're logged in to [grok.com](https://grok.com) in Chrome or Firefox.
-- **Missing Required Cookies**: Try logging out and logging back in to refresh your session.
-- **Authentication Errors**: Your cookies may have expired. Log in again and re-run the extractor.
+Retrieve past conversations:
 
-## Requirements
-
-- iOS 13.0+ / macOS 14.0+ / tvOS 13.0+ / watchOS 6.0+
-- Swift 6.0+
-
-## License
-
-[MIT License](LICENSE)
-
-## Project Structure
-
-The project is organized into the following components:
-
-### Core Client (`Sources/GrokClient/`)
-- `GrokClient.swift`: Main client implementation for interacting with the Grok AI API
-- `GrokCookies.swift`: Cookie management and validation
-- `GrokCookieHelper.swift`: Helper utilities for cookie handling
-- `Examples.swift`: Example usage and implementation patterns
-
-### Command Line Interface (`Sources/GrokCLI/`)
-- `main.swift`: CLI implementation with interactive chat and command processing
-
-### Tests (`Tests/GrokClientTests/`)
-- `GrokClientTests.swift`: Core client functionality tests
-- `GrokCookieHelperTests.swift`: Cookie management tests
-
-### Scripts (`Scripts/`)
-- `install_cli.sh`: CLI installation script
-- `cookie_extractor.py`: Browser cookie extraction utility
-- `build.sh`: Build script for Swift Package
-
-## GrokCLI
-
-The GrokCLI is a command-line interface for interacting with Grok AI directly from your terminal. It provides an interactive chat experience and supports all features of the GrokClient including reasoning mode, deep search, and conversation threading.
-
-### Features
-- Interactive chat session with command support
-- List and load past conversations
-- One-off query execution
-- Markdown formatting support
-- Automatic cookie management
-- Reasoning mode toggle
-- Deep search toggle
-- Session management
-- Conversation threading with context preservation
-
-### Installation
-
-To install the GrokCLI, run:
-
-```bash
-# Standard installation (attempts to extract Grok cookies automatically)
-./Scripts/install_cli.sh
-
-# Installation without cookie extraction
-./Scripts/install_cli.sh -s
+```swift
+let conversations = try await client.listConversations()
+for conversation in conversations {
+    print("\(conversation.title) (ID: \(conversation.conversationId))")
+}
 ```
 
-This script will:
-1. Extract Grok cookies from your browser (if you're logged in and don't use `-s` flag)
-2. Build the CLI with the extracted cookies included
-3. Install the `grok` command and the necessary dependencies to your local bin directory
+### Using GrokCLI
 
-### Usage
+The `grok` CLI tool provides a terminal-based interface to Grok.
 
 #### Interactive Chat
 
-Start an interactive chat session with Grok:
+Start an interactive session:
 
 ```bash
-grok 
+grok
 ```
 
-or
+Or with an initial message:
 
 ```bash
-grok hello
+grok "Hello, Grok!"
 ```
 
-or
-
-```bash
-grok [--reasoning] [--deep-search] [-m/--markdown]
-```
-
-Options:
-- `--reasoning`: Enable step-by-step reasoning mode
-- `--deep-search`: Enable comprehensive deep search
-- `--markdown`: Format responses with markdown styling
-
-In the chat session, you can use these commands:
-- `/new`: Start a new conversation
-- `/list`: List and load past conversations
+Available commands in the chat:
+- `/new`: Start a new conversation thread
+- `/list`: View and load past conversations
 - `/reason`: Toggle reasoning mode
-- `/search`: Toggle deep search mode
-- `/realtime`: Toggle real-time data on/off
+- `/search`: Toggle deep search
+- `/realtime`: Toggle real-time data
 - `/private`: Toggle private mode (conversations not saved)
-- `/clear`: Clear the current screen
-- `/quit` or `/exit`: Exit the app
+- `/quit`: Exit the session
 
-The CLI automatically maintains conversation context between messages, allowing you to have natural multi-turn conversations with Grok. Use the `reset conversation` command when you want to start a new conversation thread.
+#### One-Off Query
 
-#### One-off Query
-
-Send a single query to Grok:
+Send a single query and exit:
 
 ```bash
-grok message [--reasoning] [--deep-search] [-m/--markdown] "Your question here"
+grok message "What is the meaning of life?"
+```
+
+With options:
+
+```bash
+grok message --reasoning --deep-search "Solve this math problem step-by-step"
 ```
 
 #### Managing Conversations
 
-View and interact with your saved conversations:
+List and resume past conversations:
 
 ```bash
-# List all saved conversations
 grok list
-
-# Select a conversation by number to continue it
-# After listing conversations, you'll be prompted to select one by number
 ```
 
-The `list` command allows you to:
+Follow the prompt to select a conversation by number and continue it with preserved context.
 
-1. View all your saved conversations with titles and creation dates
-2. Select a conversation to continue by entering its number
-3. Resume the conversation from where you left off, with full context preserved
+### Authentication
 
-When in a loaded conversation, all commands work as normal, and you can continue the conversation with full context. Use the `/new` command to start a new conversation at any point.
+The Grok API requires cookies from a logged-in browser session. SwiftGrok provides tools to extract and configure these credentials.
 
-#### Authentication
+#### Generating Credentials
 
-Before using GrokCLI, you need to set up authentication:
+Extract cookies from your browser (Chrome or Firefox):
 
 ```bash
-# Generate credentials by extracting cookies from your browser
 grok auth generate
-
-# Or import credentials from a JSON file
-grok auth import /path/to/credentials.json
 ```
 
-Make sure you're logged in to Grok in your browser before running `grok auth generate`.
+Ensure you are logged into [grok.com](https://grok.com) in your browser beforehand.
 
-### Development
+#### Importing Credentials
 
-To build and test the CLI locally:
+Import cookies from a JSON file:
 
 ```bash
-# Build the CLI
-swift build
+grok auth import /path/to/grok_cookies.json
+```
 
-# Run tests
-swift test
+The JSON file should contain a dictionary with the required cookies: `x-anonuserid`, `x-challenge`, `x-signature`, `sso`, and `sso-rw`.
 
-# Build and run the CLI directly
-swift run grok
-``` 
+#### Manual Configuration
+
+Alternatively, initialize `GrokClient` with cookies directly in code (see "Basic Message Sending" example above).
+
+## Configuration
+
+### Custom Instructions
+
+For CLI usage, customize Grok’s behavior with instructions:
+
+```bash
+grok /edit-instructions
+```
+
+Enter your instructions and save with Ctrl+D (Unix) or Ctrl+Z (Windows). Reset to defaults with:
+
+```bash
+grok /reset-instructions
+```
+
+In code, pass custom instructions to `sendMessage` or `continueConversation`:
+
+```swift
+let response = try await client.sendMessage(
+    message: "Explain AI",
+    customInstructions: "Provide a detailed technical explanation."
+)
+```
+
+### Debugging
+
+Enable debug output in the CLI:
+
+```bash
+grok --debug
+```
+
+Or in code:
+
+```swift
+let client = try GrokClient(cookies: cookies, isDebug: true)
+```
+
+## Troubleshooting
+
+- **Authentication Errors**: Ensure cookies are valid and not expired. Re-run `grok auth generate` after logging into [grok.com](https://grok.com).
+- **No Cookies Found**: Log into [grok.com](https://grok.com) in your browser before running the cookie extractor.
+- **CLI Not Found**: Verify the installation path (`/usr/local/bin`) is in your `$PATH`.
+
+## Requirements
+
+- **GrokClient**: iOS 13.0+, macOS 14.0+, tvOS 13.0+, watchOS 6.0+
+- **GrokCLI**: macOS 14.0+
+- Swift 6.0+
+
+## License
+
+SwiftGrok is released under the MIT License. See [LICENSE](LICENSE) for details.
+
+## Contributing
+
+Contributions are welcome! Please submit pull requests or open issues on the [GitHub repository](https://github.com/klu-ai/swift-grok).
+
+## Project Structure
+
+- **Sources/GrokClient/**: Core library with `GrokClient.swift` and supporting models.
+- **Sources/GrokCLI/**: CLI implementation in `main.swift`.
+- **Scripts/**: Installation and utility scripts, including `cookie_extractor.py`.
+- **Tests/**: Unit tests for `GrokClient` functionality.
+
+For further assistance, refer to the inline documentation in the source files or contact the maintainers via GitHub Issues.
