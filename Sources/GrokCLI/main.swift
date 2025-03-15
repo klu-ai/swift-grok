@@ -189,7 +189,7 @@ struct MessageCommand: ParsableCommand {
             _ = try app.initializeClient()
             
             // Send the message
-            let response = try await app.query(
+            let response = try await app.msg(
                 message: message,
                 enableReasoning: options.reasoning,
                 enableDeepSearch: options.deepSearch,
@@ -453,7 +453,7 @@ struct GrokCLI {
             
             do {
                 // Send the message to Grok
-                let response = try await app.query(
+                let response = try await app.msg(
                     message: message,
                     enableReasoning: enableReasoning,
                     enableDeepSearch: enableDeepSearch,
@@ -664,7 +664,7 @@ struct GrokCLI {
                 
                 do {
                     // Send the hidden mode message to Grok
-                    let response = try await app.query(
+                    let response = try await app.msg(
                         message: ChatCommand.hiddenMode,
                         enableReasoning: false,
                         enableDeepSearch: false,
@@ -795,7 +795,7 @@ struct GrokCLI {
             
             do {
                 // Send the message to Grok
-                let response = try await app.query(
+                let response = try await app.msg(
                     message: input,
                     enableReasoning: currentReasoning,
                     enableDeepSearch: currentDeepSearch,
@@ -884,7 +884,7 @@ struct GrokCLI {
             _ = try app.initializeClient()
             
             // Send message
-            let response = try await app.query(
+            let response = try await app.msg(
                 message: messageText,
                 enableReasoning: enableReasoning,
                 enableDeepSearch: enableDeepSearch,
@@ -1506,7 +1506,7 @@ class GrokCLIApp {
     }
     
     // Send a single message and get response
-    func query(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, disableSearch: Bool = false, customInstructions: String = "", temporary: Bool = false, personalityType: GrokClient.PersonalityType? = nil) async throws -> String {
+    func msg(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, disableSearch: Bool = false, customInstructions: String = "", temporary: Bool = false, personalityType: GrokClient.PersonalityType? = nil) async throws -> String {
         let personality = personalityType ?? currentPersonality
         
         if isDebug {
