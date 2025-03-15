@@ -88,8 +88,7 @@ struct ChatCommand: ParsableCommand {
         let personalityText = personality == .none ? "" : personality.displayName.yellow + " | "
         
         print("Chat mode".cyan + " | " + 
-              // hidden for now due to API limitations that will likely be lifted soon
-              // (currentNoCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom instruction: ON".yellow) + " | " + 
+              (currentNoCustomInstructions ? "Default Personality".blue : "Custom Instructions".green) + " | " + 
               (currentReasoning ? "Reasoning".green + " | " : "") + 
               (currentDeepSearch ? "DeepSearch".green + " | " : "") + 
               personalityText +
@@ -340,8 +339,7 @@ struct GrokCLI {
         let personalityText = personality == .none ? "" : personality.displayName.yellow + " | "
         
         print("Chat mode".cyan + " | " + 
-              // hidden for now due to API limitations that will likely be lifted soon
-              //(currentNoCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom  instruction: ON".yellow) + " | " + 
+              (currentNoCustomInstructions ? "Default Personality".blue : "Custom Instructions".green) + " | " + 
               (currentReasoning ? "Reasoning".green + " | " : "") + 
               (currentDeepSearch ? "DeepSearch".green + " | " : "") + 
               personalityText +
@@ -1192,6 +1190,9 @@ class OutputFormatter {
         - \("/realtime".yellow): Toggle real-time data on/off
         - \("/private".yellow): Toggle private mode on/off 
         - \("/personality".yellow): Choose Grok personality
+        - \("/custom-instructions".yellow): Toggle custom instructions 
+        - \("/edit-instructions".yellow): Edit custom instructions
+        - \("/reset-instructions".yellow): Reset custom instructions to defaults
         - \("/clear".yellow): Clear the screen
         - \("/quit".yellow): Exit the app
         
@@ -1201,6 +1202,7 @@ class OutputFormatter {
         - \("Realtime".yellow): Enables real-time data from web and X search
         - \("Private Mode".yellow): When enabled, conversations will not be saved
         - \("Personality".yellow): Interact with different Grok personalities
+        - \("Custom Instructions".yellow): Enables/disables custom personality for the assistant
         
         """)
     }
@@ -1208,13 +1210,13 @@ class OutputFormatter {
     // temporarily hidden from slash commands 
     
     // - \("/custom".yellow): Toggle custom instructions
-    // - \("/edit-instructions".yellow): Edit custom instructions
-    // - \("/reset-instructions".yellow): Reset custom instructions to defaults
+    // 
+    // 
 
     // temporarily hidden from modes
 
     //- \("Conversation Threading".yellow): Messages maintain context within the current conversation
-    // - \("Custom Instructions".yellow): Enables/disables custom instructions for the assistant
+    // 
     
     func clearScreen() {
         print("\u{001B}[2J\u{001B}[H", terminator: "")
