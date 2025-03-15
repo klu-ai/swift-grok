@@ -130,7 +130,8 @@ struct ChatCommand: ParsableCommand {
         
         print("Connected to Grok! Type 'quit' to exit, 'new' to start a new thread, 'help' for commands.".green)
         print("Chat mode".cyan + " | " + 
-              (noCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom instruction: ON".yellow) + " | " + 
+              // hidden for now due to API limitations that will likely be lifted soon
+              // (noCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom instruction: ON".yellow) + " | " + 
               (reasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + 
               (deepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue) + " | " + 
               (noSearch ? "Realtime: OFF".red : "Realtime: ON".green) + " | " + 
@@ -838,7 +839,8 @@ struct GrokCLI {
         
         print("Connected to Grok! Type 'quit' to exit, 'new' to start a new thread, 'help' for commands.".green)
         print("Chat mode".cyan + " | " + 
-              (enableNoCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom instruction: ON".yellow) + " | " + 
+              // hidden for now due to API limitations that will likely be lifted soon
+              // (enableNoCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom instruction: ON".yellow) + " | " + 
               (enableReasoning ? "Reasoning".green + " | " : "") + 
               (enableDeepSearch ? "Deep Search".green + " | " : "") +
               (enableNoSearch ? "No Realtime".red : "Realtime".green) + " | " +
