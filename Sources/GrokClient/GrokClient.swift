@@ -100,12 +100,67 @@ public struct ConversationResponse: Codable {
 }
 
 public struct Conversation: Codable {
-    public let id: String
+    public let conversationId: String
     public let title: String
+    public let starred: Bool
+    public let createTime: String
+    public let modifyTime: String
+    public let systemPromptName: String
+    public let temporary: Bool
+    public let mediaTypes: [String]
     
-    public init(id: String, title: String) {
-        self.id = id
+    public init(conversationId: String, title: String, starred: Bool = false, createTime: String = "", modifyTime: String = "", systemPromptName: String = "", temporary: Bool = false, mediaTypes: [String] = []) {
+        self.conversationId = conversationId
         self.title = title
+        self.starred = starred
+        self.createTime = createTime
+        self.modifyTime = modifyTime
+        self.systemPromptName = systemPromptName
+        self.temporary = temporary
+        self.mediaTypes = mediaTypes
+    }
+}
+
+// Response Node struct for conversation threading
+public struct ResponseNode: Codable {
+    public let responseId: String
+    public let sender: String
+    public let parentResponseId: String?
+    
+    public init(responseId: String, sender: String, parentResponseId: String? = nil) {
+        self.responseId = responseId
+        self.sender = sender
+        self.parentResponseId = parentResponseId
+    }
+}
+
+// Response struct for conversation messages
+public struct Response: Codable {
+    public let responseId: String
+    public let message: String
+    public let sender: String
+    public let createTime: String
+    public let parentResponseId: String?
+    
+    public init(responseId: String, message: String, sender: String, createTime: String, parentResponseId: String? = nil) {
+        self.responseId = responseId
+        self.message = message
+        self.sender = sender
+        self.createTime = createTime
+        self.parentResponseId = parentResponseId
+    }
+}
+
+// Wrapper structure for conversations API response
+public struct ConversationsResponse: Codable {
+    public let conversations: [Conversation]
+    public let nextPageToken: String?
+    public let textSearchMatches: [String]
+    
+    public init(conversations: [Conversation], nextPageToken: String? = nil, textSearchMatches: [String] = []) {
+        self.conversations = conversations
+        self.nextPageToken = nextPageToken
+        self.textSearchMatches = textSearchMatches
     }
 }
 
@@ -216,6 +271,7 @@ public class GrokClient {
     private let baseURL: String
     private let cookies: [String: String]
     private var session: URLSession
+    public var isDebug: Bool = false
     internal let headers: [String: String] = [
         "accept": "*/*",
         "accept-language": "en-GB,en;q=0.9",
@@ -236,14 +292,16 @@ public class GrokClient {
     /// - Parameters:
     ///   - cookies: A dictionary of cookie name-value pairs for authentication
     ///              Required cookies: x-anonuserid, x-challenge, x-signature, sso, sso-rw
+    ///   - isDebug: Whether to print debug information (default: false)
     /// - Throws: GrokError.invalidCredentials if credentials are empty
-    public init(cookies: [String: String]) throws {
+    public init(cookies: [String: String], isDebug: Bool = false) throws {
         guard !cookies.isEmpty else {
             throw GrokError.invalidCredentials
         }
         
         self.baseURL = "https://grok.com/rest/app-chat"
         self.cookies = cookies
+        self.isDebug = isDebug
         
         // Configure URLSession with cookies
         let configuration = URLSessionConfiguration.default
@@ -403,7 +461,7 @@ public class GrokClient {
     /// Sends a message to an existing conversation
     /// - Parameters:
     ///   - conversationId: The ID of the conversation to continue
-    ///   - parentResponseId: The ID of the response this message is replying to
+    ///   - parentResponseId: The ID of the response this message is replying to (optional)
     ///   - message: The user's input message
     ///   - enableReasoning: Whether to enable reasoning mode
     ///   - enableDeepSearch: Whether to enable deep search
@@ -414,7 +472,7 @@ public class GrokClient {
     /// - Throws: Network, decoding, or API errors
     public func continueConversation(
         conversationId: String,
-        parentResponseId: String,
+        parentResponseId: String? = nil,
         message: String,
         enableReasoning: Bool = false,
         enableDeepSearch: Bool = false,
@@ -440,7 +498,9 @@ public class GrokClient {
             customInstructions: customInstructions,
             temporary: temporary
         )
-        payload["parentResponseId"] = parentResponseId
+        if let parentResponseId = parentResponseId {
+            payload["parentResponseId"] = parentResponseId
+        }
         
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         
@@ -693,7 +753,7 @@ public class GrokClient {
     public func startNewConversation() async throws -> Conversation {
         // In the new API structure, conversations are created when sending a message
         // This is a compatibility method that returns a placeholder conversation
-        return Conversation(id: "new_conversation", title: "New Conversation")
+        return Conversation(conversationId: "new_conversation", title: "New Conversation", starred: false, createTime: "", modifyTime: "", systemPromptName: "", temporary: false, mediaTypes: [])
     }
     
     /// Legacy method to send a message to a specific conversation (maintained for compatibility)
@@ -706,5 +766,329 @@ public class GrokClient {
         // For backward compatibility, we'll just start a new conversation
         let response = try await sendMessage(message: message)
         return MessageResponse(message: response.message, timestamp: response.timestamp)
+    }
+    
+    /// Fetch a list of past conversations
+    /// - Parameter pageSize: The number of conversations to fetch (default 100)
+    /// - Returns: An array of Conversation objects
+    /// - Throws: Network, decoding, or API errors
+    public func listConversations(pageSize: Int = 100) async throws -> [Conversation] {
+        let url = URL(string: "\(baseURL)/conversations?pageSize=\(pageSize)&useNewImplementation=true")!
+        
+        // Print debug information
+        if isDebug {
+            print("Debug URL: \(url.absoluteString)")
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        
+        // Add headers
+        for (key, value) in headers {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        
+        let (data, response) = try await session.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw GrokError.networkError(URLError(.badServerResponse))
+        }
+        
+        // Handle HTTP errors
+        guard (200...299).contains(httpResponse.statusCode) else {
+            switch httpResponse.statusCode {
+            case 401: throw GrokError.unauthorized
+            case 404: throw GrokError.notFound
+            default: throw GrokError.apiError("HTTP Error: \(httpResponse.statusCode)")
+            }
+        }
+        
+        // Print raw response for debugging
+        if isDebug {
+            if let jsonString = String(data: data, encoding: .utf8) {
+                print("Debug: Raw JSON response:")
+                print(jsonString)
+                
+                // Also try to print as a dictionary
+                if let jsonDict = try? JSONSerialization.jsonObject(with: data, options: []) {
+                    print("Debug: JSON as Dictionary/Array:")
+                    print(jsonDict)
+                }
+            }
+        }
+        
+        // Decode the response
+        do {
+            let decoder = JSONDecoder()
+            
+            // Try to decode as a ConversationsResponse first (new API format)
+            do {
+                let conversationsResponse = try decoder.decode(ConversationsResponse.self, from: data)
+                return conversationsResponse.conversations
+            } catch {
+                // If that fails, try to decode as an array directly (old API format)
+                return try decoder.decode([Conversation].self, from: data)
+            }
+        } catch {
+            throw GrokError.decodingError(error)
+        }
+    }
+    
+    /// Get the response nodes for a conversation
+    /// - Parameter conversationId: The ID of the conversation
+    /// - Returns: An array of ResponseNode objects
+    /// - Throws: Network, decoding, or API errors
+    public func getResponseNodes(conversationId: String) async throws -> [ResponseNode] {
+        let url = URL(string: "\(baseURL)/conversations/\(conversationId)/response-node")!
+        
+        // Print debug information
+        if isDebug {
+            print("Debug URL: \(url.absoluteString)")
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        
+        // Add headers
+        for (key, value) in headers {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        
+        let (data, response) = try await session.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw GrokError.networkError(URLError(.badServerResponse))
+        }
+        
+        // Handle HTTP errors
+        guard (200...299).contains(httpResponse.statusCode) else {
+            switch httpResponse.statusCode {
+            case 401: throw GrokError.unauthorized
+            case 404: throw GrokError.notFound
+            default: throw GrokError.apiError("HTTP Error: \(httpResponse.statusCode)")
+            }
+        }
+        
+        // Print response data for debugging
+        if isDebug {
+            if let jsonString = String(data: data, encoding: .utf8) {
+                print("Debug: Response JSON from response-node:")
+                print(jsonString)
+            }
+        }
+        
+        // Decode the response
+        do {
+            let decoder = JSONDecoder()
+            
+            // First try to decode as a dictionary with common wrapper keys
+            do {
+                // Try "responseNodes" key
+                struct ResponseNodesWrapper: Codable {
+                    let responseNodes: [ResponseNode]
+                }
+                
+                do {
+                    let wrapper = try decoder.decode(ResponseNodesWrapper.self, from: data)
+                    return wrapper.responseNodes
+                } catch {
+                    // Try "nodes" key
+                    struct NodesWrapper: Codable {
+                        let nodes: [ResponseNode]
+                    }
+                    
+                    do {
+                        let wrapper = try decoder.decode(NodesWrapper.self, from: data)
+                        return wrapper.nodes
+                    } catch {
+                        // Try "responses" key
+                        struct ResponsesWrapper: Codable {
+                            let responses: [ResponseNode]
+                        }
+                        
+                        do {
+                            let wrapper = try decoder.decode(ResponsesWrapper.self, from: data)
+                            return wrapper.responses
+                        } catch {
+                            // If no known wrapper key works, try manual parsing
+                            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                                // Find a key that contains an array of dictionaries
+                                for (key, value) in json {
+                                    if let nodesArray = value as? [[String: Any]] {
+                                        if isDebug {
+                                            print("Debug: Found array in key '\(key)' with \(nodesArray.count) items")
+                                        }
+                                        
+                                        var nodes = [ResponseNode]()
+                                        for nodeDict in nodesArray {
+                                            if let responseId = nodeDict["responseId"] as? String,
+                                               let sender = nodeDict["sender"] as? String {
+                                                let parentResponseId = nodeDict["parentResponseId"] as? String
+                                                nodes.append(ResponseNode(
+                                                    responseId: responseId,
+                                                    sender: sender,
+                                                    parentResponseId: parentResponseId
+                                                ))
+                                            }
+                                        }
+                                        
+                                        if !nodes.isEmpty {
+                                            return nodes
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // As a last resort, try direct array decode
+                            return try decoder.decode([ResponseNode].self, from: data)
+                        }
+                    }
+                }
+            } catch {
+                if isDebug {
+                    print("Debug: Failed to decode response-node: \(error)")
+                }
+                throw GrokError.decodingError(error)
+            }
+        } catch {
+            throw GrokError.decodingError(error)
+        }
+    }
+    
+    /// Load the detailed responses for a conversation
+    /// - Parameter conversationId: The ID of the conversation
+    /// - Parameter specificResponseIds: Optional array of specific response IDs to load, if nil will fetch all
+    /// - Returns: An array of Response objects
+    /// - Throws: Network, decoding, or API errors
+    public func loadResponses(conversationId: String, specificResponseIds: [String]? = nil) async throws -> [Response] {
+        // The URL is correct - keep using "/load-responses"
+        let url = URL(string: "\(baseURL)/conversations/\(conversationId)/load-responses")!
+        
+        // Print debug information
+        if isDebug {
+            print("Debug URL: \(url.absoluteString)")
+        }
+        
+        var request = URLRequest(url: url)
+        // Change to POST method
+        request.httpMethod = "POST"
+        
+        // Add headers
+        for (key, value) in headers {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        
+        // Use provided response IDs or get all of them
+        var responseIds: [String] = []
+        
+        if let specificIds = specificResponseIds, !specificIds.isEmpty {
+            responseIds = specificIds
+        } else {
+            // First, we need to get the response IDs for this conversation
+            do {
+                let responseNodes = try await getResponseNodes(conversationId: conversationId)
+                responseIds = responseNodes.map { $0.responseId }
+                
+                if isDebug {
+                    print("Debug: Found \(responseIds.count) response IDs for this conversation")
+                }
+            } catch {
+                if isDebug {
+                    print("Debug: Failed to get response nodes, trying to load all responses: \(error)")
+                }
+                // Continue with an empty array - some API implementations allow this to fetch all responses
+            }
+        }
+        
+        // Create request body, either with responseIds or empty
+        var requestBody: [String: Any] = [:]
+        if !responseIds.isEmpty {
+            requestBody["responseIds"] = responseIds
+        }
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        
+        let (data, response) = try await session.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw GrokError.networkError(URLError(.badServerResponse))
+        }
+        
+        // Handle HTTP errors
+        guard (200...299).contains(httpResponse.statusCode) else {
+            switch httpResponse.statusCode {
+            case 401: throw GrokError.unauthorized
+            case 404: throw GrokError.notFound
+            default: throw GrokError.apiError("HTTP Error: \(httpResponse.statusCode)")
+            }
+        }
+        
+        // Print response data for debugging
+        if isDebug {
+            if let jsonString = String(data: data, encoding: .utf8) {
+                print("Debug: Response JSON:")
+                print(jsonString)
+            }
+        }
+        
+        // Try to decode using different approaches
+        do {
+            let decoder = JSONDecoder()
+            
+            // Primary approach: decode as a wrapper with responses array
+            struct ResponsesWrapper: Codable {
+                let responses: [Response]
+            }
+            
+            do {
+                let wrapper = try decoder.decode(ResponsesWrapper.self, from: data)
+                return wrapper.responses
+            } catch {
+                if isDebug {
+                    print("Debug: Failed to decode as ResponsesWrapper: \(error)")
+                }
+                
+                // Fallback 1: Try to decode directly as an array of Response
+                do {
+                    let responses = try decoder.decode([Response].self, from: data)
+                    return responses
+                } catch {
+                    if isDebug {
+                        print("Debug: Failed to decode as [Response]: \(error)")
+                    }
+                    
+                    // Fallback 2: Try to parse manually using JSONSerialization
+                    if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let responsesArray = json["responses"] as? [[String: Any]] {
+                        var responses: [Response] = []
+                        
+                        for item in responsesArray {
+                            if let responseId = item["responseId"] as? String,
+                               let message = item["message"] as? String,
+                               let sender = item["sender"] as? String,
+                               let createTime = item["createTime"] as? String {
+                                let parentResponseId = item["parentResponseId"] as? String
+                                responses.append(Response(
+                                    responseId: responseId,
+                                    message: message,
+                                    sender: sender,
+                                    createTime: createTime,
+                                    parentResponseId: parentResponseId
+                                ))
+                            }
+                        }
+                        
+                        if !responses.isEmpty {
+                            return responses
+                        }
+                    }
+                    
+                    // If we got this far, all decode attempts failed
+                    throw GrokError.decodingError(error)
+                }
+            }
+        } catch {
+            throw GrokError.decodingError(error)
+        }
     }
 } 
