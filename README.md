@@ -211,7 +211,7 @@ grok message "What is the meaning of life?"
 With options:
 
 ```bash
-grok message --reasoning "Solve this math problem: Convert the point $(0,3)$ in rectangular coordinates to polar coordinates.  Enter your answer in the form $(r,\theta),$ where $r > 0$ and $0 \le \theta < 2 \pi.$"
+grok message --reasoning "Solve this math problem: Convert the point $(0,3)$ in rectangular coordinates to polar coordinates."
 ```
 
 #### Managing Conversations
