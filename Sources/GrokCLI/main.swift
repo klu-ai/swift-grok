@@ -848,6 +848,8 @@ struct GrokCLI {
             try await handleMessageCommand(args: remainingArgs)
         case "auth":
             try await handleAuthCommand(args: remainingArgs)
+        case "list":
+            try await handleListCommand(args: remainingArgs)
         case "help":
             showHelp()
         default:
@@ -1470,6 +1472,7 @@ struct GrokCLI {
         Commands:
           message <text>    - Send a message to Grok and exit
           auth              - Authentication commands
+          list              - List and manage saved conversations
           help              - Show help information
         
         App Options:
@@ -1501,7 +1504,118 @@ struct GrokCLI {
           grok Hello                                - Start chat with initial message "Hello"
           grok message Hello, how are you today?    - Send a message and exit
           grok auth generate                        - Generate new credentials from browser cookies
+          grok list                                 - List and select from saved conversations
         """.green.bold)
+    }
+
+    // Handle the list command
+    static func handleListCommand(args: [String]) async throws {
+        let app = GrokCLIApp.shared
+        let formatter = OutputFormatter(useMarkdown: false)
+        
+        // Parse options
+        var enableDebug = false
+        
+        for arg in args {
+            if arg == "--debug" {
+                enableDebug = true
+            }
+        }
+        
+        app.setDebugMode(enableDebug)
+        
+        print("Fetching your saved conversations...".cyan)
+        
+        do {
+            if enableDebug {
+                print("Debug: Attempting to list conversations...")
+            }
+            
+            let client = try app.initializeClient()
+            
+            if enableDebug {
+                print("Debug: Client initialized successfully")
+                print("Debug: Calling listConversations API endpoint...")
+            }
+            
+            let conversations = try await client.listConversations()
+            
+            if enableDebug {
+                print("Debug: Retrieved \(conversations.count) conversations")
+            }
+            
+            if conversations.isEmpty {
+                print("No conversations found.".yellow)
+                return
+            }
+            
+            print("Available conversations:".cyan)
+            for (index, conversation) in conversations.enumerated() {
+                print("\(index + 1). \(conversation.title)")
+            }
+            
+            print("Select a conversation by number (or press Enter to exit): ", terminator: "")
+            if let selection = readLine(), !selection.isEmpty, let number = Int(selection), number > 0, number <= conversations.count {
+                let selected = conversations[number - 1]
+                
+                if enableDebug {
+                    print("Debug: Selected conversation ID: \(selected.conversationId)")
+                    print("Debug: Selected conversation title: \(selected.title)")
+                    print("Debug: Loading conversation responses...")
+                }
+                
+                print("Loading conversation \"\(selected.title)\"...".green)
+                let responses = try await app.loadConversation(conversationId: selected.conversationId)
+                
+                if enableDebug {
+                    print("Debug: Loaded \(responses.count) responses")
+                }
+                
+                print("Loaded conversation: \(selected.title)".green)
+                if responses.isEmpty {
+                    print("This conversation has no messages yet.".yellow)
+                } else {
+                    print("Conversation history:".cyan)
+                    for response in responses {
+                        let sender = response.sender == "human" ? "User".magenta : "Grok".cyan
+                        print("\(sender): \(response.message)")
+                    }
+                }
+            } else {
+                if enableDebug {
+                    print("Debug: User exited selection or provided invalid input")
+                }
+            }
+        } catch let error as GrokError {
+            if enableDebug {
+                print("Debug: GrokError encountered: \(error)")
+                switch error {
+                case .invalidCredentials:
+                    print("Debug: Error - Invalid credentials")
+                case .unauthorized:
+                    print("Debug: Error - Unauthorized access")
+                case .notFound:
+                    print("Debug: Error - Resource not found")
+                case .networkError(let err):
+                    print("Debug: Network error: \(err)")
+                case .decodingError(let err):
+                    print("Debug: Decoding error: \(err)")
+                case .apiError(let message):
+                    print("Debug: API error: \(message)")
+                case .streamingError:
+                    print("Debug: Streaming error")
+                }
+            }
+            print("Error: \(error.localizedDescription)".red)
+            print("Please run 'grok auth' to set up your credentials.".yellow)
+        } catch {
+            if enableDebug {
+                print("Debug: Unexpected error: \(error)")
+                print("Debug: Error type: \(type(of: error))")
+            }
+            print("Error: \(error.localizedDescription)".red)
+            print("Please run 'grok auth' to set up your credentials.".yellow)
+        }
     }
 }
 
