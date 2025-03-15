@@ -235,6 +235,20 @@ let deepSearchResponse = try await client.sendMessage(
     enableDeepSearch: true
 )
 print(deepSearchResponse)
+
+// List all conversations
+let conversations = try await client.listConversations()
+for conversation in conversations {
+    print("\(conversation.title) (ID: \(conversation.conversationId), Created: \(conversation.createTime))")
+}
+
+// Load responses from a specific conversation
+if let conversation = conversations.first {
+    let responses = try await client.loadResponses(conversationId: conversation.conversationId)
+    for response in responses {
+        print("[\(response.sender)] \(response.message)")
+    }
+}
 ```
 
 ## Troubleshooting
@@ -280,6 +294,7 @@ The GrokCLI is a command-line interface for interacting with Grok AI directly fr
 
 ### Features
 - Interactive chat session with command support
+- List and load past conversations
 - One-off query execution
 - Markdown formatting support
 - Automatic cookie management
@@ -333,12 +348,14 @@ Options:
 - `--markdown`: Format responses with markdown styling
 
 In the chat session, you can use these commands:
-- `help`: Show available commands
-- `reasoning on/off`: Toggle reasoning mode
-- `search on/off`: Toggle deep search
-- `reset conversation` or `/reset-conversation`: Start a new conversation thread
-- `clear`: Clear the screen
-- `exit` or `quit`: End the session
+- `/new`: Start a new conversation
+- `/list`: List and load past conversations
+- `/reason`: Toggle reasoning mode
+- `/search`: Toggle deep search mode
+- `/realtime`: Toggle real-time data on/off
+- `/private`: Toggle private mode (conversations not saved)
+- `/clear`: Clear the current screen
+- `/quit` or `/exit`: Exit the app
 
 The CLI automatically maintains conversation context between messages, allowing you to have natural multi-turn conversations with Grok. Use the `reset conversation` command when you want to start a new conversation thread.
 
@@ -349,6 +366,26 @@ Send a single query to Grok:
 ```bash
 grok message [--reasoning] [--deep-search] [-m/--markdown] "Your question here"
 ```
+
+#### Managing Conversations
+
+View and interact with your saved conversations:
+
+```bash
+# List all saved conversations
+grok list
+
+# Select a conversation by number to continue it
+# After listing conversations, you'll be prompted to select one by number
+```
+
+The `list` command allows you to:
+
+1. View all your saved conversations with titles and creation dates
+2. Select a conversation to continue by entering its number
+3. Resume the conversation from where you left off, with full context preserved
+
+When in a loaded conversation, all commands work as normal, and you can continue the conversation with full context. Use the `/new` command to start a new conversation at any point.
 
 #### Authentication
 
