@@ -398,7 +398,8 @@ public class GrokClient {
             "enableSideBySide": true,
             "isPreset": false,
             "sendFinalMetadata": true,
-            "customInstructions": customInstructions,
+            // 03152025 customInstructions -> customPersonality
+            "customPersonality": customInstructions,          
             "deepsearchPreset": enableDeepSearch ? "default" : "",
             "isReasoning": enableReasoning
         ]
