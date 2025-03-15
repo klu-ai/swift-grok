@@ -3,6 +3,30 @@ import Foundation
 import GrokClient
 import Rainbow
 
+// Shared options for Grok commands
+struct GrokCommandOptions: ParsableArguments {
+    @Flag(name: .long, help: "Enable reasoning mode for step-by-step explanations")
+    var reasoning: Bool = false
+    
+    @Flag(name: .long, help: "Enable deep search for more comprehensive answers")
+    var deepSearch: Bool = false
+    
+    @Flag(name: .long, help: "Disable real-time data (no web or x search)")
+    var noSearch: Bool = false
+    
+    @Flag(name: .shortAndLong, help: "Use markdown formatting in output")
+    var markdown: Bool = false
+    
+    @Flag(name: .long, help: "Show debug information")
+    var debug: Bool = false
+    
+    @Flag(name: .long, help: "Disable custom instructions for the assistant")
+    var noCustomInstructions: Bool = false
+    
+    @Flag(name: .customLong("private"), help: "Enable private mode (conversations will not be saved)")
+    var privateMode: Bool = false
+}
+
 // ChatCommand: Interactive chat session with Grok
 struct ChatCommand: ParsableCommand {
     static var configuration = CommandConfiguration(
@@ -17,7 +41,6 @@ struct ChatCommand: ParsableCommand {
 
     static let hiddenMode = """
     You are a highly capable, thoughtful, and precise assistant. Your goal is to deeply understand the user's intent, ask clarifying questions when needed, think step-by-step through complex problems, provide clear and accurate answers, and proactively anticipate helpful follow-up information. Always prioritize being truthful, nuanced, insightful, and efficient, tailoring your responses specifically to the user's needs and preferences. If conversational dialogue, be more human. when possible, use brevity.
-    
     """
     
     // User preferences key for custom instructions
@@ -41,29 +64,10 @@ struct ChatCommand: ParsableCommand {
         UserDefaults.standard.removeObject(forKey: customInstructionsKey)
     }
     
+    @OptionGroup var options: GrokCommandOptions
+    
     @Argument(parsing: .remaining, help: "Optional initial message to send to Grok")
     var initialMessage: [String] = []
-    
-    @Flag(name: .long, help: "Enable reasoning mode for step-by-step explanations")
-    var reasoning = false
-    
-    @Flag(name: .long, help: "Enable deep search for more comprehensive answers")
-    var deepSearch = false
-    
-    @Flag(name: .long, help: "Disable real-time data (no web or x search)")
-    var noSearch = false
-    
-    @Flag(name: .shortAndLong, help: "Use markdown formatting in output")
-    var markdown = false
-    
-    @Flag(name: .long, help: "Show debug information")
-    var debug = false
-    
-    @Flag(name: .long, help: "Disable custom instructions for the assistant")
-    var noCustomInstructions = false
-    
-    @Flag(name: .long, help: "Enable private mode (conversations will not be saved)")
-    var `private` = false
     
     // Print the current settings status line
     static func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool) {
@@ -95,18 +99,18 @@ struct ChatCommand: ParsableCommand {
     
     func run() async throws {
         let app = GrokCLIApp.shared
-        app.setDebugMode(debug)
+        app.setDebugMode(options.debug)
         
         // Reset conversation ID when starting a new chat session
         app.resetConversation()
         
-        let formatter = OutputFormatter(useMarkdown: markdown)
+        let formatter = OutputFormatter(useMarkdown: options.markdown)
         let inputReader = InputReader()
         
         // Initialization message
         print("Calling Grok API...".cyan)
         
-        if debug {
+        if options.debug {
             print("Debug: initialMessage = \(initialMessage)")
         }
         
@@ -130,11 +134,11 @@ struct ChatCommand: ParsableCommand {
                 // Send the message to Grok
                 let response = try await app.query(
                     message: message,
-                    enableReasoning: reasoning,
-                    enableDeepSearch: deepSearch,
-                    disableSearch: noSearch,
-                    customInstructions: noCustomInstructions ? ChatCommand.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
-                    temporary: `private`
+                    enableReasoning: options.reasoning,
+                    enableDeepSearch: options.deepSearch,
+                    disableSearch: options.noSearch,
+                    customInstructions: options.noCustomInstructions ? ChatCommand.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
+                    temporary: options.privateMode
                 )
                 
                 // Format and display the response
@@ -142,14 +146,14 @@ struct ChatCommand: ParsableCommand {
                     response,
                     conversationId: app.getCurrentConversationId(),
                     responseId: app.getLastResponseId(),
-                    debug: debug,
+                    debug: options.debug,
                     webSearchResults: app.getLastWebSearchResults(),
                     xposts: app.getLastXPosts()
                 )
                 return
             } catch {
                 formatter.printError("Error: \(error.localizedDescription)")
-                if debug {
+                if options.debug {
                     print("Debug stack trace: \(error)")
                 }
                 return
@@ -157,7 +161,7 @@ struct ChatCommand: ParsableCommand {
         }
         
         print("Connected to Grok! Type 'quit' to exit, 'new' to start a new thread, 'help' for commands.".green)
-        printSettingsStatus(currentReasoning: reasoning, currentDeepSearch: deepSearch, currentNoCustomInstructions: noCustomInstructions, currentNoSearch: noSearch, currentPrivate: `private`)
+        printSettingsStatus(currentReasoning: options.reasoning, currentDeepSearch: options.deepSearch, currentNoCustomInstructions: options.noCustomInstructions, currentNoSearch: options.noSearch, currentPrivate: options.privateMode)
         if let conversationId = app.getCurrentConversationId() {
             print("Conversation ID: \(conversationId)".cyan)
         }
@@ -165,11 +169,11 @@ struct ChatCommand: ParsableCommand {
         
         // Main chat loop
         var isRunning = true
-        var currentReasoning = reasoning
-        var currentDeepSearch = deepSearch
-        var currentNoCustomInstructions = noCustomInstructions
-        var currentNoSearch = noSearch
-        var currentPrivate = `private`
+        var currentReasoning = options.reasoning
+        var currentDeepSearch = options.deepSearch
+        var currentNoCustomInstructions = options.noCustomInstructions
+        var currentNoSearch = options.noSearch
+        var currentPrivate = options.privateMode
         
         while isRunning {
             // Display prompt
@@ -515,13 +519,13 @@ struct ChatCommand: ParsableCommand {
                     response,
                     conversationId: app.getCurrentConversationId(),
                     responseId: app.getLastResponseId(),
-                    debug: currentNoCustomInstructions ? false : debug,
+                    debug: currentNoCustomInstructions ? false : options.debug,
                     webSearchResults: app.getLastWebSearchResults(),
                     xposts: app.getLastXPosts()
                 )
             } catch {
                 formatter.printError("Error: \(error.localizedDescription)")
-                if currentNoCustomInstructions ? false : debug {
+                if currentNoCustomInstructions ? false : options.debug {
                     print("Debug stack trace: \(error)")
                 }
             }
@@ -588,34 +592,15 @@ struct MessageCommand: ParsableCommand {
     // Default custom instructions for the assistant
     static let defaultCustomInstructions = ChatCommand.defaultCustomInstructions
     
+    @OptionGroup var options: GrokCommandOptions
+    
     @Argument(parsing: .remaining, help: "The message to send")
     var messageWords: [String]
     
-    @Flag(name: .long, help: "Enable reasoning mode for step-by-step explanations")
-    var reasoning = false
-    
-    @Flag(name: .long, help: "Enable deep search for more comprehensive answers")
-    var deepSearch = false
-    
-    @Flag(name: .long, help: "Disable real-time data (no web or x search)")
-    var noSearch = false
-    
-    @Flag(name: .shortAndLong, help: "Use markdown formatting in output")
-    var markdown = false
-    
-    @Flag(name: .long, help: "Show debug information")
-    var debug = false
-    
-    @Flag(name: .long, help: "Disable custom instructions for the assistant")
-    var noCustomInstructions = false
-    
-    @Flag(name: .long, help: "Enable private mode (conversations will not be saved)")
-    var privateMode = false
-    
     func run() async throws {
         let app = GrokCLIApp.shared
-        app.setDebugMode(debug)
-        let formatter = OutputFormatter(useMarkdown: markdown)
+        app.setDebugMode(options.debug)
+        let formatter = OutputFormatter(useMarkdown: options.markdown)
         
         guard !messageWords.isEmpty else {
             print("Error: Please provide a message to send".red)
@@ -625,7 +610,7 @@ struct MessageCommand: ParsableCommand {
         let message = messageWords.joined(separator: " ")
         
         // Debug output
-        if debug {
+        if options.debug {
             print("Debug: Sending message: \"\(message)\"")
         }
         
@@ -641,11 +626,11 @@ struct MessageCommand: ParsableCommand {
             // Send the message
             let response = try await app.query(
                 message: message,
-                enableReasoning: reasoning,
-                enableDeepSearch: deepSearch,
-                disableSearch: noSearch,
-                customInstructions: noCustomInstructions ? Self.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
-                temporary: privateMode
+                enableReasoning: options.reasoning,
+                enableDeepSearch: options.deepSearch,
+                disableSearch: options.noSearch,
+                customInstructions: options.noCustomInstructions ? Self.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
+                temporary: options.privateMode
             )
             
             // Display the response
@@ -653,13 +638,13 @@ struct MessageCommand: ParsableCommand {
                 response,
                 conversationId: app.getCurrentConversationId(),
                 responseId: app.getLastResponseId(),
-                debug: debug,
+                debug: options.debug,
                 webSearchResults: app.getLastWebSearchResults(),
                 xposts: app.getLastXPosts()
             )
         } catch {
             formatter.printError("Error: \(error.localizedDescription)")
-            if debug {
+            if options.debug {
                 print("Debug stack trace: \(error)")
             }
             formatter.printError("Please run 'grok auth' to set up your credentials.")
