@@ -267,11 +267,11 @@ struct ChatCommand: ParsableCommand {
                             print("Debug: Loaded \(responses.count) responses")
                         }
                         
-                        print("Loaded conversation: \(selected.title)".green)
+                        print("\n\n\(selected.title)\n".green)
                         if responses.isEmpty {
                             print("This conversation has no messages yet.".yellow)
                         } else {
-                            print("Conversation history:".cyan)
+                            //print("Conversation history:".cyan)
                             for response in responses {
                                 let sender = response.sender == "human" ? "User".magenta : "Grok".cyan
                                 print("\(sender): \(response.message)")
@@ -1080,11 +1080,11 @@ struct GrokCLI {
                             print("Debug: Loaded \(responses.count) responses")
                         }
                         
-                        print("Loaded conversation: \(selected.title)".green)
+                        print("\n\n\(selected.title)\n".green)
                         if responses.isEmpty {
                             print("This conversation has no messages yet.".yellow)
                         } else {
-                            print("Conversation history:".cyan)
+                            //print("Conversation history:".cyan)
                             for response in responses {
                                 let sender = response.sender == "human" ? "User".magenta : "Grok".cyan
                                 print("\(sender): \(response.message)")
@@ -1571,11 +1571,11 @@ struct GrokCLI {
                     print("Debug: Loaded \(responses.count) responses")
                 }
                 
-                print("Loaded conversation: \(selected.title)".green)
+                print("\n\n\(selected.title)\n".green)
                 if responses.isEmpty {
                     print("This conversation has no messages yet.".yellow)
                 } else {
-                    print("Conversation history:".cyan)
+                    //print("Conversation history:".cyan)
                     for response in responses {
                         let sender = response.sender == "human" ? "User".magenta : "Grok".cyan
                         print("\(sender): \(response.message)")
