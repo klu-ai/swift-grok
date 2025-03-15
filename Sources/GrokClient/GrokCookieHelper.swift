@@ -4,22 +4,24 @@ import Foundation
 public extension GrokClient {
     /// Creates a GrokClient instance using cookies loaded from a JSON file
     /// - Parameter jsonPath: Path to the JSON file containing cookies
+    /// - Parameter isDebug: Whether to enable debug output (default: false)
     /// - Returns: Initialized GrokClient or nil if loading fails
-    static func fromJSONFile(at jsonPath: String) throws -> GrokClient {
+    static func fromJSONFile(at jsonPath: String, isDebug: Bool = false) throws -> GrokClient {
         let fileURL = URL(fileURLWithPath: jsonPath)
         let data = try Data(contentsOf: fileURL)
         let cookies = try JSONDecoder().decode([String: String].self, from: data)
-        return try GrokClient(cookies: cookies)
+        return try GrokClient(cookies: cookies, isDebug: isDebug)
     }
     
     /// Creates a GrokClient instance using the generated GrokCookies class
+    /// - Parameter isDebug: Whether to enable debug output (default: false)
     /// - Returns: Initialized GrokClient
-    static func withAutoCookies() throws -> GrokClient {
+    static func withAutoCookies(isDebug: Bool = false) throws -> GrokClient {
         // For this to work, you must add the generated GrokCookies.swift file to your project
         // We'll check for it at runtime to avoid compile-time issues
         if let cookiesClass = NSClassFromString("GrokCookies"),
            let method = cookiesClass.value(forKey: "cookies") as? [String: String] {
-            return try GrokClient(cookies: method)
+            return try GrokClient(cookies: method, isDebug: isDebug)
         } else {
             // Fallback to check for a GrokCookies.swift file in standard locations
             for path in ["./GrokCookies.swift", "./Sources/GrokCookies.swift"] {
@@ -35,8 +37,9 @@ public extension GrokClient {
     
     /// Loads cookies from a Swift dictionary literal string
     /// - Parameter swiftDictString: Swift dictionary literal as string
+    /// - Parameter isDebug: Whether to enable debug output (default: false)
     /// - Returns: Initialized GrokClient or nil if parsing fails
-    static func fromSwiftDictString(_ swiftDictString: String) throws -> GrokClient {
+    static func fromSwiftDictString(_ swiftDictString: String, isDebug: Bool = false) throws -> GrokClient {
         // Very simple parser for Swift dictionary literals, for demo purposes
         // In production, you would want a more robust solution
         let cookieRegex = try NSRegularExpression(pattern: #""([^"]+)":\s*"([^"]+)""#)
@@ -52,6 +55,6 @@ public extension GrokClient {
             throw GrokError.invalidCredentials
         }
         
-        return try GrokClient(cookies: cookies)
+        return try GrokClient(cookies: cookies, isDebug: isDebug)
     }
 } 
