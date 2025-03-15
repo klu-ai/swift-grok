@@ -53,6 +53,28 @@ do {
 }
 ```
 
+### API Documentation
+
+#### Available APIs
+
+The `GrokClient` provides the following main methods:
+
+- `client.sendMessage(message:)` - Send a message to start a new conversation
+- `client.continueConversation(conversationId:parentResponseId:message:)` - Continue an existing conversation
+- `client.listConversations(pageSize:)` - Fetch a list of past conversations
+- `client.getResponseNodes(conversationId:)` - Get the response structure for a conversation
+- `client.getResponses(conversationId:responseIds:)` - Get specific responses from a conversation
+- `client.startNewConversation()` - Create a new empty conversation
+
+Both `sendMessage` and `continueConversation` methods support advanced options including:
+- `enableReasoning` - Enable step-by-step reasoning mode
+- `enableDeepSearch` - Enable comprehensive web search
+- `disableSearch` - Disable real-time data access
+- `customInstructions` - Provide custom instructions to guide the model
+- `temporary` - Make the conversation private (not saved)
+
+Each method returns structured response objects containing the model's reply and metadata such as conversation IDs, timestamps, and any web search results or X posts included in the response.
+
 ### Conversation Threading
 
 The client supports multi-turn conversations, maintaining context between messages:
