@@ -1481,14 +1481,14 @@ struct GrokCLI {
           --private         - Enable private mode (conversations will not be saved)
         
         Chat Commands:
-          /exit, /quit      - Exit the chat session
           /new              - Start a new conversation
           /list             - List and load past conversations
           /reason           - Toggle reasoning mode
           /search           - Toggle deep search mode
-          /realtime         - Toggle real-time web search
+          /realtime         - Toggle real-time data on/off
           /private          - Toggle private mode (conversations not saved)
           /clear            - Clear the current screen 
+          /quit             - Exit the app
         
         Notes:
           - In chat mode, conversation context is maintained between messages
