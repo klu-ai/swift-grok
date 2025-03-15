@@ -1488,7 +1488,7 @@ struct GrokCLI {
           /search           - Toggle deep search mode
           /realtime         - Toggle real-time web search
           /private          - Toggle private mode (conversations not saved)
-          /reset-conversation - Clear the current conversation context
+          /clear            - Clear the current screen 
         
         Notes:
           - In chat mode, conversation context is maintained between messages
@@ -1509,6 +1509,7 @@ struct GrokCLI {
 // --no-custom-instructions - Disable custom instructions
 
 //  removed from slash commands
+// /reset-conversation - Clear the current conversation context
 //  /custom           - Toggle custom instructions
 
 // Utilities
@@ -1569,6 +1570,7 @@ class OutputFormatter {
         
         \("Slash Commands:".cyan.bold)
         - \("/new".yellow): Start a new conversation thread
+        - \("/list".yellow): List and load past conversations
         - \("/reason".yellow): Toggle reasoning mode on/off
         - \("/search".yellow): Toggle deep search on/off
         - \("/realtime".yellow): Toggle real-time data on/off
