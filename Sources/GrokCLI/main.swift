@@ -65,6 +65,17 @@ struct ChatCommand: ParsableCommand {
     @Flag(name: .long, help: "Enable private mode (conversations will not be saved)")
     var `private` = false
     
+    // Print the current settings status line
+    func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool) {
+        print("Chat mode".cyan + " | " + 
+              // hidden for now due to API limitations that will likely be lifted soon
+              (currentNoCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom instruction: ON".yellow) + " | " + 
+              (currentReasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + 
+              (currentDeepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue) + " | " + 
+              (currentNoSearch ? "Realtime: OFF".red : "Realtime: ON".green) + " | " + 
+              (currentPrivate ? "Private: ON".yellow : "Private: OFF".blue))
+    }
+    
     func run() async throws {
         let app = GrokCLIApp.shared
         app.setDebugMode(debug)
@@ -129,13 +140,7 @@ struct ChatCommand: ParsableCommand {
         }
         
         print("Connected to Grok! Type 'quit' to exit, 'new' to start a new thread, 'help' for commands.".green)
-        print("Chat mode".cyan + " | " + 
-              // hidden for now due to API limitations that will likely be lifted soon
-              // (noCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom instruction: ON".yellow) + " | " + 
-              (reasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + 
-              (deepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue) + " | " + 
-              (noSearch ? "Realtime: OFF".red : "Realtime: ON".green) + " | " + 
-              (`private` ? "Private: ON".yellow : "Private: OFF".blue))
+        printSettingsStatus(currentReasoning: reasoning, currentDeepSearch: deepSearch, currentNoCustomInstructions: noCustomInstructions, currentNoSearch: noSearch, currentPrivate: `private`)
         if let conversationId = app.getCurrentConversationId() {
             print("Conversation ID: \(conversationId)".cyan)
         }
@@ -172,6 +177,7 @@ struct ChatCommand: ParsableCommand {
                 if let conversationId = app.getCurrentConversationId() {
                     print("Conversation ID: \(conversationId)".cyan)
                 }
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case _ where input.hasPrefix("/quit"):
@@ -206,6 +212,8 @@ struct ChatCommand: ParsableCommand {
                 if currentPrivate == false && app.getCurrentConversationId() != nil {
                     app.resetConversation()
                     print("Started a new private conversation thread.".yellow)
+                    currentPrivate = true
+                    printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 } else {
                     currentPrivate = !currentPrivate  // Toggle current state
                 }
@@ -218,6 +226,7 @@ struct ChatCommand: ParsableCommand {
             case _ where input.hasPrefix("/reset-conversation"):
                 app.resetConversation()
                 print("Conversation reset. Starting a new conversation.".yellow)
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case _ where input.hasPrefix("/edit-instructions"):
@@ -239,6 +248,7 @@ struct ChatCommand: ParsableCommand {
                 print("Started a new special mode conversation thread.".red.bold)
                 print("Special mode activated.".red.bold)
                 currentPrivate = true
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 
                 print("Thinking...".blue)
                 
@@ -289,6 +299,7 @@ struct ChatCommand: ParsableCommand {
             case "new conversation", "new-conversation", "reset conversation", "reset-conversation":
                 app.resetConversation()
                 print("Conversation reset. Starting a new conversation.".yellow)
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case "new":
@@ -297,6 +308,7 @@ struct ChatCommand: ParsableCommand {
                 if let conversationId = app.getCurrentConversationId() {
                     print("Conversation ID: \(conversationId)".cyan)
                 }
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case "reasoning on", "reason on":
@@ -344,6 +356,8 @@ struct ChatCommand: ParsableCommand {
                 if currentPrivate == false && app.getCurrentConversationId() != nil {
                     app.resetConversation()
                     print("Started a new private conversation thread.".yellow)
+                    currentPrivate = true
+                    printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 }
                 currentPrivate = true
                 print("Private mode enabled".yellow)
@@ -357,6 +371,7 @@ struct ChatCommand: ParsableCommand {
                 
             case "/clear", "/cls":
                 formatter.clearScreen()
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case "":
@@ -707,6 +722,17 @@ struct GrokCLI {
         }
     }
     
+    // Print the current settings status line
+    static func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool) {
+        print("Chat mode".cyan + " | " + 
+              // hidden for now due to API limitations that will likely be lifted soon
+              //(currentNoCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom instruction: ON".yellow) + " | " + 
+              (currentReasoning ? "Reasoning".green + " | " : "") + 
+              (currentDeepSearch ? "DeepSearch".green + " | " : "") + 
+              (currentNoSearch ? "No Search".red : "Realtime".green) + " | " + 
+              (currentPrivate ? "Private".red : "Saved".blue))
+    }
+    
     static func main() async throws {
         // Simple command-line argument parsing
         let arguments = Array(CommandLine.arguments.dropFirst()) // Drop the executable name
@@ -838,13 +864,7 @@ struct GrokCLI {
         }
         
         print("Connected to Grok! Type 'quit' to exit, 'new' to start a new thread, 'help' for commands.".green)
-        print("Chat mode".cyan + " | " + 
-              // hidden for now due to API limitations that will likely be lifted soon
-              // (enableNoCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom instruction: ON".yellow) + " | " + 
-              (enableReasoning ? "Reasoning".green + " | " : "") + 
-              (enableDeepSearch ? "Deep Search".green + " | " : "") +
-              (enableNoSearch ? "No Realtime".red : "Realtime".green) + " | " +
-              (enablePrivate ? "Private".red : "Saved".blue))
+        printSettingsStatus(currentReasoning: enableReasoning, currentDeepSearch: enableDeepSearch, currentNoCustomInstructions: enableNoCustomInstructions, currentNoSearch: enableNoSearch, currentPrivate: enablePrivate)
         if let conversationId = app.getCurrentConversationId() {
             print("Conversation ID: \(conversationId)".cyan)
         }
@@ -881,6 +901,7 @@ struct GrokCLI {
                 if let conversationId = app.getCurrentConversationId() {
                     print("Conversation ID: \(conversationId)".cyan)
                 }
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case _ where input.hasPrefix("/quit"):
@@ -915,6 +936,8 @@ struct GrokCLI {
                 if currentPrivate == false && app.getCurrentConversationId() != nil {
                     app.resetConversation()
                     print("Started a new private conversation thread.".yellow)
+                    currentPrivate = true
+                    printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 } else {
                     currentPrivate = !currentPrivate  // Toggle current state
                 }
@@ -927,6 +950,7 @@ struct GrokCLI {
             case _ where input.hasPrefix("/reset-conversation"):
                 app.resetConversation()
                 print("Conversation reset. Starting a new conversation.".yellow)
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case _ where input.hasPrefix("/edit-instructions"):
@@ -948,6 +972,7 @@ struct GrokCLI {
                 print("Started a new special mode conversation thread.".red.bold)
                 print("Special mode activated.".red.bold)
                 currentPrivate = true
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 
                 print("Thinking...".blue)
                 
@@ -998,6 +1023,7 @@ struct GrokCLI {
             case "new conversation", "new-conversation", "reset conversation", "reset-conversation":
                 app.resetConversation()
                 print("Conversation reset. Starting a new conversation.".yellow)
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case "new":
@@ -1006,6 +1032,7 @@ struct GrokCLI {
                 if let conversationId = app.getCurrentConversationId() {
                     print("Conversation ID: \(conversationId)".cyan)
                 }
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case "reasoning on", "reason on":
@@ -1053,6 +1080,8 @@ struct GrokCLI {
                 if currentPrivate == false && app.getCurrentConversationId() != nil {
                     app.resetConversation()
                     print("Started a new private conversation thread.".yellow)
+                    currentPrivate = true
+                    printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 }
                 currentPrivate = true
                 print("Private mode enabled".yellow)
@@ -1066,6 +1095,7 @@ struct GrokCLI {
                 
             case "/clear", "/cls":
                 formatter.clearScreen()
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case "":
