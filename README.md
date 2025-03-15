@@ -1,5 +1,7 @@
 # SwiftGrok
 
+<img width="805" alt="image" src="https://github.com/user-attachments/assets/500ff992-24a3-4237-9bf4-1189610d9beb" />
+
 SwiftGrok is a Swift package that provides a client for interacting with the Grok AI API developed by xAI. It includes both a programmatic API through `GrokClient` and a command-line interface (CLI) tool named `grok` for terminal-based interactions with Grok. The package supports features such as multi-turn conversations, reasoning mode, deep search capabilities, and custom instructions, making it suitable for developers building AI-driven applications or users seeking direct command-line access to Grok.
 
 This README provides detailed instructions for installation, usage, and configuration, along with examples to help you get started. The package is designed to be extensible and integrates seamlessly into Swift projects via the Swift Package Manager.
@@ -9,7 +11,7 @@ This README provides detailed instructions for installation, usage, and configur
 SwiftGrok consists of two primary components:
 
 1. **GrokClient**: A Swift library for programmatic interaction with the Grok API, offering methods to send messages, continue conversations, list past conversations, and retrieve detailed responses. It supports advanced features like reasoning mode, deep search, and custom instructions.
-2. **GrokCLI**: A command-line tool built on top of `GrokClient`, providing an interactive chat interface, one-off query execution, and conversation management directly from the terminal.
+2. **Grok**: A command-line tool built on top of `GrokClient`, providing an interactive chat interface, one-off query execution, and conversation management directly from the terminal.
 
 The package handles authentication via browser-extracted cookies, supports conversation threading for context preservation, and includes structured response models for handling text, web search results, and X posts.
 
@@ -209,7 +211,7 @@ grok message "What is the meaning of life?"
 With options:
 
 ```bash
-grok message --reasoning --deep-search "Solve this math problem step-by-step"
+grok message --reasoning "Solve this math problem: Convert the point $(0,3)$ in rectangular coordinates to polar coordinates.  Enter your answer in the form $(r,\theta),$ where $r > 0$ and $0 \le \theta < 2 \pi.$"
 ```
 
 #### Managing Conversations
