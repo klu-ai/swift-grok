@@ -750,11 +750,11 @@ public class GrokClient {
     /// Legacy method to start a new conversation (maintained for compatibility)
     /// - Returns: A Conversation object representing the new conversation
     /// - Throws: Network, decoding, or API errors
-    public func startNewConversation() async throws -> Conversation {
-        // In the new API structure, conversations are created when sending a message
-        // This is a compatibility method that returns a placeholder conversation
-        return Conversation(conversationId: "new_conversation", title: "New Conversation", starred: false, createTime: "", modifyTime: "", systemPromptName: "", temporary: false, mediaTypes: [])
-    }
+    // public func startNewConversation() async throws -> Conversation {
+    //     // In the new API structure, conversations are created when sending a message
+    //     // This is a compatibility method that returns a placeholder conversation
+    //     return Conversation(conversationId: "new_conversation", title: "New Conversation", starred: false, createTime: "", modifyTime: "", systemPromptName: "", temporary: false, mediaTypes: [])
+    // }
     
     /// Legacy method to send a message to a specific conversation (maintained for compatibility)
     /// - Parameters:
@@ -762,11 +762,11 @@ public class GrokClient {
     ///   - message: The message content to send
     /// - Returns: A MessageResponse object with the API response
     /// - Throws: Network, decoding, or API errors
-    public func sendMessage(conversationId: String, message: String) async throws -> MessageResponse {
-        // For backward compatibility, we'll just start a new conversation
-        let response = try await sendMessage(message: message)
-        return MessageResponse(message: response.message, timestamp: response.timestamp)
-    }
+    // public func sendMessage(conversationId: String, message: String) async throws -> MessageResponse {
+    //     // For backward compatibility, we'll just start a new conversation
+    //     let response = try await sendMessage(message: message)
+    //     return MessageResponse(message: response.message, timestamp: response.timestamp)
+    // }
     
     /// Fetch a list of past conversations
     /// - Parameter pageSize: The number of conversations to fetch (default 100)
