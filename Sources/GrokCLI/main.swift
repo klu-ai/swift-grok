@@ -65,6 +65,17 @@ struct ChatCommand: ParsableCommand {
     @Flag(name: .long, help: "Enable private mode (conversations will not be saved)")
     var `private` = false
     
+    // Print the current settings status line
+    func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool) {
+        print("Chat mode".cyan + " | " + 
+              // hidden for now due to API limitations that will likely be lifted soon
+              (currentNoCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom instruction: ON".yellow) + " | " + 
+              (currentReasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + 
+              (currentDeepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue) + " | " + 
+              (currentNoSearch ? "Realtime: OFF".red : "Realtime: ON".green) + " | " + 
+              (currentPrivate ? "Private: ON".yellow : "Private: OFF".blue))
+    }
+    
     func run() async throws {
         let app = GrokCLIApp.shared
         app.setDebugMode(debug)
@@ -129,12 +140,7 @@ struct ChatCommand: ParsableCommand {
         }
         
         print("Connected to Grok! Type 'quit' to exit, 'new' to start a new thread, 'help' for commands.".green)
-        print("Chat mode".cyan + " | " + 
-              (noCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom instruction: ON".yellow) + " | " + 
-              (reasoning ? "Reasoning: ON".yellow : "Reasoning: OFF".blue) + " | " + 
-              (deepSearch ? "Deep Search: ON".yellow : "Deep Search: OFF".blue) + " | " + 
-              (noSearch ? "Realtime: OFF".red : "Realtime: ON".green) + " | " + 
-              (`private` ? "Private: ON".yellow : "Private: OFF".blue))
+        printSettingsStatus(currentReasoning: reasoning, currentDeepSearch: deepSearch, currentNoCustomInstructions: noCustomInstructions, currentNoSearch: noSearch, currentPrivate: `private`)
         if let conversationId = app.getCurrentConversationId() {
             print("Conversation ID: \(conversationId)".cyan)
         }
@@ -171,6 +177,7 @@ struct ChatCommand: ParsableCommand {
                 if let conversationId = app.getCurrentConversationId() {
                     print("Conversation ID: \(conversationId)".cyan)
                 }
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case _ where input.hasPrefix("/quit"):
@@ -205,6 +212,8 @@ struct ChatCommand: ParsableCommand {
                 if currentPrivate == false && app.getCurrentConversationId() != nil {
                     app.resetConversation()
                     print("Started a new private conversation thread.".yellow)
+                    currentPrivate = true
+                    printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 } else {
                     currentPrivate = !currentPrivate  // Toggle current state
                 }
@@ -214,9 +223,97 @@ struct ChatCommand: ParsableCommand {
                 }
                 continue
                 
+            case _ where input.hasPrefix("/list"):
+                do {
+                    if app.getDebugMode() {
+                        print("Debug: Attempting to list conversations...")
+                    }
+                    
+                    let client = try app.initializeClient()
+                    
+                    if app.getDebugMode() {
+                        print("Debug: Client initialized successfully")
+                        print("Debug: Calling listConversations API endpoint...")
+                    }
+                    
+                    let conversations = try await client.listConversations()
+                    
+                    if app.getDebugMode() {
+                        print("Debug: Retrieved \(conversations.count) conversations")
+                    }
+                    
+                    if conversations.isEmpty {
+                        print("No conversations found.".yellow)
+                        continue
+                    }
+                    print("Available conversations:".cyan)
+                    for (index, conversation) in conversations.enumerated() {
+                        print("\(index + 1). \(conversation.title)")
+                    }
+                    print("Select a conversation by number: ", terminator: "")
+                    if let selection = readLine(), let number = Int(selection), number > 0, number <= conversations.count {
+                        let selected = conversations[number - 1]
+                        
+                        if app.getDebugMode() {
+                            print("Debug: Selected conversation ID: \(selected.conversationId)")
+                            print("Debug: Selected conversation title: \(selected.title)")
+                            print("Debug: Loading conversation responses...")
+                        }
+                        
+                        print("\nLoading conversation \"\(selected.title)\"...".green)
+                        let responses = try await app.loadConversation(conversationId: selected.conversationId)
+                        
+                        if app.getDebugMode() {
+                            print("Debug: Loaded \(responses.count) responses")
+                        }
+                        
+                        print("\n\(selected.title)\n".green)
+                        if responses.isEmpty {
+                            print("This conversation has no messages yet.".yellow)
+                        } else {
+                            //print("Conversation history:".cyan)
+                            for response in responses {
+                                let sender = response.sender == "human" ? "User".magenta : "Grok".cyan
+                                print("\(sender)\n\(response.message)\n")
+                            }
+                        }
+                    } else {
+                        print("Invalid selection.".red)
+                    }
+                } catch let error as GrokError {
+                    if app.getDebugMode() {
+                        print("Debug: GrokError encountered: \(error)")
+                        switch error {
+                        case .invalidCredentials:
+                            print("Debug: Error - Invalid credentials")
+                        case .unauthorized:
+                            print("Debug: Error - Unauthorized access")
+                        case .notFound:
+                            print("Debug: Error - Resource not found")
+                        case .networkError(let err):
+                            print("Debug: Network error: \(err)")
+                        case .decodingError(let err):
+                            print("Debug: Decoding error: \(err)")
+                        case .apiError(let message):
+                            print("Debug: API error: \(message)")
+                        case .streamingError:
+                            print("Debug: Streaming error")
+                        }
+                    }
+                    print("Error: \(error.localizedDescription)".red)
+                } catch {
+                    if app.getDebugMode() {
+                        print("Debug: Unexpected error: \(error)")
+                        print("Debug: Error type: \(type(of: error))")
+                    }
+                    print("Error: \(error.localizedDescription)".red)
+                }
+                continue
+                
             case _ where input.hasPrefix("/reset-conversation"):
                 app.resetConversation()
                 print("Conversation reset. Starting a new conversation.".yellow)
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case _ where input.hasPrefix("/edit-instructions"):
@@ -238,6 +335,7 @@ struct ChatCommand: ParsableCommand {
                 print("Started a new special mode conversation thread.".red.bold)
                 print("Special mode activated.".red.bold)
                 currentPrivate = true
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 
                 print("Thinking...".blue)
                 
@@ -288,6 +386,7 @@ struct ChatCommand: ParsableCommand {
             case "new conversation", "new-conversation", "reset conversation", "reset-conversation":
                 app.resetConversation()
                 print("Conversation reset. Starting a new conversation.".yellow)
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case "new":
@@ -296,6 +395,7 @@ struct ChatCommand: ParsableCommand {
                 if let conversationId = app.getCurrentConversationId() {
                     print("Conversation ID: \(conversationId)".cyan)
                 }
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case "reasoning on", "reason on":
@@ -343,6 +443,8 @@ struct ChatCommand: ParsableCommand {
                 if currentPrivate == false && app.getCurrentConversationId() != nil {
                     app.resetConversation()
                     print("Started a new private conversation thread.".yellow)
+                    currentPrivate = true
+                    printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 }
                 currentPrivate = true
                 print("Private mode enabled".yellow)
@@ -356,6 +458,7 @@ struct ChatCommand: ParsableCommand {
                 
             case "/clear", "/cls":
                 formatter.clearScreen()
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case "":
@@ -706,6 +809,17 @@ struct GrokCLI {
         }
     }
     
+    // Print the current settings status line
+    static func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool) {
+        print("Chat mode".cyan + " | " + 
+              // hidden for now due to API limitations that will likely be lifted soon
+              //(currentNoCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom instruction: ON".yellow) + " | " + 
+              (currentReasoning ? "Reasoning".green + " | " : "") + 
+              (currentDeepSearch ? "DeepSearch".green + " | " : "") + 
+              (currentNoSearch ? "No Search".red : "Realtime".green) + " | " + 
+              (currentPrivate ? "Private".red : "Saved".blue))
+    }
+    
     static func main() async throws {
         // Simple command-line argument parsing
         let arguments = Array(CommandLine.arguments.dropFirst()) // Drop the executable name
@@ -720,7 +834,7 @@ struct GrokCLI {
         let remainingArgs = Array(arguments.dropFirst())
         
         // Check if first argument is a recognized command
-        let recognizedCommands = ["message", "auth", "help"]
+        let recognizedCommands = ["message", "auth", "help", "list"]
         
         // If not a recognized command, treat all arguments as an initial message for chat
         if !recognizedCommands.contains(command) {
@@ -734,6 +848,8 @@ struct GrokCLI {
             try await handleMessageCommand(args: remainingArgs)
         case "auth":
             try await handleAuthCommand(args: remainingArgs)
+        case "list":
+            try await handleListCommand(args: remainingArgs)
         case "help":
             showHelp()
         default:
@@ -837,12 +953,7 @@ struct GrokCLI {
         }
         
         print("Connected to Grok! Type 'quit' to exit, 'new' to start a new thread, 'help' for commands.".green)
-        print("Chat mode".cyan + " | " + 
-              (enableNoCustomInstructions ? "Custom instruction: OFF (using defaults)".blue : "Custom instruction: ON".yellow) + " | " + 
-              (enableReasoning ? "Reasoning".green + " | " : "") + 
-              (enableDeepSearch ? "Deep Search".green + " | " : "") +
-              (enableNoSearch ? "No Realtime".red : "Realtime".green) + " | " +
-              (enablePrivate ? "Private".red : "Saved".blue))
+        printSettingsStatus(currentReasoning: enableReasoning, currentDeepSearch: enableDeepSearch, currentNoCustomInstructions: enableNoCustomInstructions, currentNoSearch: enableNoSearch, currentPrivate: enablePrivate)
         if let conversationId = app.getCurrentConversationId() {
             print("Conversation ID: \(conversationId)".cyan)
         }
@@ -879,6 +990,7 @@ struct GrokCLI {
                 if let conversationId = app.getCurrentConversationId() {
                     print("Conversation ID: \(conversationId)".cyan)
                 }
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case _ where input.hasPrefix("/quit"):
@@ -913,6 +1025,8 @@ struct GrokCLI {
                 if currentPrivate == false && app.getCurrentConversationId() != nil {
                     app.resetConversation()
                     print("Started a new private conversation thread.".yellow)
+                    currentPrivate = true
+                    printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 } else {
                     currentPrivate = !currentPrivate  // Toggle current state
                 }
@@ -922,9 +1036,97 @@ struct GrokCLI {
                 }
                 continue
                 
+            case _ where input.hasPrefix("/list"):
+                do {
+                    if app.getDebugMode() {
+                        print("Debug: Attempting to list conversations...")
+                    }
+                    
+                    let client = try app.initializeClient()
+                    
+                    if app.getDebugMode() {
+                        print("Debug: Client initialized successfully")
+                        print("Debug: Calling listConversations API endpoint...")
+                    }
+                    
+                    let conversations = try await client.listConversations()
+                    
+                    if app.getDebugMode() {
+                        print("Debug: Retrieved \(conversations.count) conversations")
+                    }
+                    
+                    if conversations.isEmpty {
+                        print("No conversations found.".yellow)
+                        continue
+                    }
+                    print("Available conversations:".cyan)
+                    for (index, conversation) in conversations.enumerated() {
+                        print("\(index + 1). \(conversation.title)")
+                    }
+                    print("Select a conversation by number: ", terminator: "")
+                    if let selection = readLine(), let number = Int(selection), number > 0, number <= conversations.count {
+                        let selected = conversations[number - 1]
+                        
+                        if app.getDebugMode() {
+                            print("Debug: Selected conversation ID: \(selected.conversationId)")
+                            print("Debug: Selected conversation title: \(selected.title)")
+                            print("Debug: Loading conversation responses...")
+                        }
+                        
+                        print("\nLoading conversation \"\(selected.title)\"...".green)
+                        let responses = try await app.loadConversation(conversationId: selected.conversationId)
+                        
+                        if app.getDebugMode() {
+                            print("Debug: Loaded \(responses.count) responses")
+                        }
+                        
+                        print("\n\(selected.title)\n".green)
+                        if responses.isEmpty {
+                            print("This conversation has no messages yet.".yellow)
+                        } else {
+                            //print("Conversation history:".cyan)
+                            for response in responses {
+                                let sender = response.sender == "human" ? "User".magenta : "Grok".cyan
+                                print("\(sender)\n\(response.message)\n")
+                            }
+                        }
+                    } else {
+                        print("Invalid selection.".red)
+                    }
+                } catch let error as GrokError {
+                    if app.getDebugMode() {
+                        print("Debug: GrokError encountered: \(error)")
+                        switch error {
+                        case .invalidCredentials:
+                            print("Debug: Error - Invalid credentials")
+                        case .unauthorized:
+                            print("Debug: Error - Unauthorized access")
+                        case .notFound:
+                            print("Debug: Error - Resource not found")
+                        case .networkError(let err):
+                            print("Debug: Network error: \(err)")
+                        case .decodingError(let err):
+                            print("Debug: Decoding error: \(err)")
+                        case .apiError(let message):
+                            print("Debug: API error: \(message)")
+                        case .streamingError:
+                            print("Debug: Streaming error")
+                        }
+                    }
+                    print("Error: \(error.localizedDescription)".red)
+                } catch {
+                    if app.getDebugMode() {
+                        print("Debug: Unexpected error: \(error)")
+                        print("Debug: Error type: \(type(of: error))")
+                    }
+                    print("Error: \(error.localizedDescription)".red)
+                }
+                continue
+                
             case _ where input.hasPrefix("/reset-conversation"):
                 app.resetConversation()
                 print("Conversation reset. Starting a new conversation.".yellow)
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case _ where input.hasPrefix("/edit-instructions"):
@@ -946,6 +1148,7 @@ struct GrokCLI {
                 print("Started a new special mode conversation thread.".red.bold)
                 print("Special mode activated.".red.bold)
                 currentPrivate = true
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 
                 print("Thinking...".blue)
                 
@@ -996,6 +1199,7 @@ struct GrokCLI {
             case "new conversation", "new-conversation", "reset conversation", "reset-conversation":
                 app.resetConversation()
                 print("Conversation reset. Starting a new conversation.".yellow)
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case "new":
@@ -1004,6 +1208,7 @@ struct GrokCLI {
                 if let conversationId = app.getCurrentConversationId() {
                     print("Conversation ID: \(conversationId)".cyan)
                 }
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case "reasoning on", "reason on":
@@ -1051,6 +1256,8 @@ struct GrokCLI {
                 if currentPrivate == false && app.getCurrentConversationId() != nil {
                     app.resetConversation()
                     print("Started a new private conversation thread.".yellow)
+                    currentPrivate = true
+                    printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 }
                 currentPrivate = true
                 print("Private mode enabled".yellow)
@@ -1064,6 +1271,7 @@ struct GrokCLI {
                 
             case "/clear", "/cls":
                 formatter.clearScreen()
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
                 
             case "":
@@ -1264,6 +1472,7 @@ struct GrokCLI {
         Commands:
           message <text>    - Send a message to Grok and exit
           auth              - Authentication commands
+          list              - List and manage saved conversations
           help              - Show help information
         
         App Options:
@@ -1275,14 +1484,14 @@ struct GrokCLI {
           --private         - Enable private mode (conversations will not be saved)
         
         Chat Commands:
-          /new              - Start a new conversation thread
+          /new              - Start a new conversation
+          /list             - List and load past conversations
           /reason           - Toggle reasoning mode
-          /search           - Toggle deep search
+          /search           - Toggle deep search mode
           /realtime         - Toggle real-time data on/off
-          /private          - Toggle private mode 
-          /special          - Activate special mode 
-          /clear            - Clear the screen
-          /exit             - Quit the app
+          /private          - Toggle private mode (conversations not saved)
+          /clear            - Clear the current screen 
+          /quit             - Exit the app
         
         Notes:
           - In chat mode, conversation context is maintained between messages
@@ -1295,14 +1504,126 @@ struct GrokCLI {
           grok Hello                                - Start chat with initial message "Hello"
           grok message Hello, how are you today?    - Send a message and exit
           grok auth generate                        - Generate new credentials from browser cookies
+          grok list                                 - List and select from saved conversations
         """.green.bold)
+    }
+
+    // Handle the list command
+    static func handleListCommand(args: [String]) async throws {
+        let app = GrokCLIApp.shared
+        // let formatter = OutputFormatter(useMarkdown: false)
+        
+        // Parse options
+        var enableDebug = false
+        
+        for arg in args {
+            if arg == "--debug" {
+                enableDebug = true
+            }
+        }
+        
+        app.setDebugMode(enableDebug)
+        
+        print("Fetching your saved conversations...".cyan)
+        
+        do {
+            if enableDebug {
+                print("Debug: Attempting to list conversations...")
+            }
+            
+            let client = try app.initializeClient()
+            
+            if enableDebug {
+                print("Debug: Client initialized successfully")
+                print("Debug: Calling listConversations API endpoint...")
+            }
+            
+            let conversations = try await client.listConversations()
+            
+            if enableDebug {
+                print("Debug: Retrieved \(conversations.count) conversations")
+            }
+            
+            if conversations.isEmpty {
+                print("No conversations found.".yellow)
+                return
+            }
+            
+            print("Available conversations:".cyan)
+            for (index, conversation) in conversations.enumerated() {
+                print("\(index + 1). \(conversation.title)")
+            }
+            
+            print("Select a conversation by number (or press Enter to exit): ", terminator: "")
+            if let selection = readLine(), !selection.isEmpty, let number = Int(selection), number > 0, number <= conversations.count {
+                let selected = conversations[number - 1]
+                
+                if enableDebug {
+                    print("Debug: Selected conversation ID: \(selected.conversationId)")
+                    print("Debug: Selected conversation title: \(selected.title)")
+                    print("Debug: Loading conversation responses...")
+                }
+                
+                print("\nLoading conversation \"\(selected.title)\"...".green)
+                let responses = try await app.loadConversation(conversationId: selected.conversationId)
+                
+                if enableDebug {
+                    print("Debug: Loaded \(responses.count) responses")
+                }
+                
+                print("\n\(selected.title)\n".green)
+                if responses.isEmpty {
+                    print("This conversation has no messages yet.".yellow)
+                } else {
+                    //print("Conversation history:".cyan)
+                    for response in responses {
+                        let sender = response.sender == "human" ? "User".magenta : "Grok".cyan
+                        print("\(sender)\n\(response.message)\n")
+                    }
+                }
+            } else {
+                if enableDebug {
+                    print("Debug: User exited selection or provided invalid input")
+                }
+            }
+        } catch let error as GrokError {
+            if enableDebug {
+                print("Debug: GrokError encountered: \(error)")
+                switch error {
+                case .invalidCredentials:
+                    print("Debug: Error - Invalid credentials")
+                case .unauthorized:
+                    print("Debug: Error - Unauthorized access")
+                case .notFound:
+                    print("Debug: Error - Resource not found")
+                case .networkError(let err):
+                    print("Debug: Network error: \(err)")
+                case .decodingError(let err):
+                    print("Debug: Decoding error: \(err)")
+                case .apiError(let message):
+                    print("Debug: API error: \(message)")
+                case .streamingError:
+                    print("Debug: Streaming error")
+                }
+            }
+            print("Error: \(error.localizedDescription)".red)
+            print("Please run 'grok auth' to set up your credentials.".yellow)
+        } catch {
+            if enableDebug {
+                print("Debug: Unexpected error: \(error)")
+                print("Debug: Error type: \(type(of: error))")
+            }
+            print("Error: \(error.localizedDescription)".red)
+            print("Please run 'grok auth' to set up your credentials.".yellow)
+        }
     }
 }
 
 // removed from app options for now
-// --no-custom-instructions - Disable custom instructions for the assistant
+// --no-custom-instructions - Disable custom instructions
 
 //  removed from slash commands
+// /reset-conversation - Clear the current conversation context
 //  /custom           - Toggle custom instructions
 
 // Utilities
@@ -1363,6 +1684,7 @@ class OutputFormatter {
         
         \("Slash Commands:".cyan.bold)
         - \("/new".yellow): Start a new conversation thread
+        - \("/list".yellow): List and load past conversations
         - \("/reason".yellow): Toggle reasoning mode on/off
         - \("/search".yellow): Toggle deep search on/off
         - \("/realtime".yellow): Toggle real-time data on/off
@@ -1382,7 +1704,7 @@ class OutputFormatter {
 
     // temporarily hidden from slash commands 
     
-    // - \("/custom".yellow): Toggle custom instructions on/off
+    // - \("/custom".yellow): Toggle custom instructions
     // - \("/edit-instructions".yellow): Edit custom instructions
     // - \("/reset-instructions".yellow): Reset custom instructions to defaults
 
@@ -1530,6 +1852,11 @@ class GrokCLIApp {
         isDebug = enabled
     }
     
+    // Get current debug mode state
+    func getDebugMode() -> Bool {
+        return isDebug
+    }
+    
     // Reset the current conversation ID
     func resetConversation() {
         currentConversationId = nil
@@ -1612,7 +1939,7 @@ class GrokCLIApp {
             }
             
             let cookies = try getCookiesFromFile()
-            client = try GrokClient(cookies: cookies)
+            client = try GrokClient(cookies: cookies, isDebug: isDebug)
             return client!
         } catch {
             if isDebug {
@@ -1625,7 +1952,7 @@ class GrokCLIApp {
             }
             
             do {
-                client = try GrokClient.withAutoCookies()
+                client = try GrokClient.withAutoCookies(isDebug: isDebug)
                 return client!
             } catch {
                 if isDebug {
@@ -1638,7 +1965,7 @@ class GrokCLIApp {
                     if isDebug {
                         print("Debug: Found saved credentials at \(savedCredentialsPath)")
                     }
-                    client = try GrokClient.fromJSONFile(at: savedCredentialsPath)
+                    client = try GrokClient.fromJSONFile(at: savedCredentialsPath, isDebug: isDebug)
                     return client!
                 }
                 
@@ -1679,11 +2006,11 @@ class GrokCLIApp {
         }
         
         do {
-            if let conversationId = currentConversationId, let parentResponseId = lastResponseId {
+            if let conversationId = currentConversationId {
                 // Continue existing conversation
                 let (responseMessage, newResponseId, webSearchResults, xposts) = try await client.continueConversation(
                     conversationId: conversationId,
-                    parentResponseId: parentResponseId,
+                    parentResponseId: lastResponseId,
                     message: message,
                     enableReasoning: enableReasoning,
                     enableDeepSearch: enableDeepSearch,
@@ -1738,6 +2065,30 @@ class GrokCLIApp {
             }
             throw error
         }
+    }
+    
+    /// Loads a conversation by its ID and sets up context for continuing it
+    /// - Parameter conversationId: The ID of the conversation to load
+    /// - Returns: An array of Response objects containing the conversation history
+    /// - Throws: Network, decoding, or API errors
+    func loadConversation(conversationId: String) async throws -> [Response] {
+        let client = try initializeClient()
+        let responses = try await client.loadResponses(conversationId: conversationId)
+        
+        // Set conversation context
+        self.currentConversationId = conversationId
+        self.lastResponseId = responses.last?.responseId
+        
+        if isDebug {
+            print("Debug: Loaded conversation \(conversationId) with \(responses.count) responses")
+            if let lastId = lastResponseId {
+                print("Debug: Last response ID: \(lastId)")
+            } else {
+                print("Debug: No responses in conversation")
+            }
+        }
+        
+        return responses
     }
     
     // Save credentials for future use
