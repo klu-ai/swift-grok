@@ -260,21 +260,21 @@ struct ChatCommand: ParsableCommand {
                             print("Debug: Loading conversation responses...")
                         }
                         
-                        print("Loading conversation \"\(selected.title)\"...".green)
+                        print("\nLoading conversation \"\(selected.title)\"...".green)
                         let responses = try await app.loadConversation(conversationId: selected.conversationId)
                         
                         if app.getDebugMode() {
                             print("Debug: Loaded \(responses.count) responses")
                         }
                         
-                        print("\n\n\(selected.title)\n".green)
+                        print("\n\(selected.title)\n".green)
                         if responses.isEmpty {
                             print("This conversation has no messages yet.".yellow)
                         } else {
                             //print("Conversation history:".cyan)
                             for response in responses {
                                 let sender = response.sender == "human" ? "User".magenta : "Grok".cyan
-                                print("\(sender): \(response.message)")
+                                print("\(sender)\n\(response.message)\n")
                             }
                         }
                     } else {
@@ -1073,21 +1073,21 @@ struct GrokCLI {
                             print("Debug: Loading conversation responses...")
                         }
                         
-                        print("Loading conversation \"\(selected.title)\"...".green)
+                        print("\nLoading conversation \"\(selected.title)\"...".green)
                         let responses = try await app.loadConversation(conversationId: selected.conversationId)
                         
                         if app.getDebugMode() {
                             print("Debug: Loaded \(responses.count) responses")
                         }
                         
-                        print("\n\n\(selected.title)\n".green)
+                        print("\n\(selected.title)\n".green)
                         if responses.isEmpty {
                             print("This conversation has no messages yet.".yellow)
                         } else {
                             //print("Conversation history:".cyan)
                             for response in responses {
                                 let sender = response.sender == "human" ? "User".magenta : "Grok".cyan
-                                print("\(sender): \(response.message)")
+                                print("\(sender)\n\(response.message)\n")
                             }
                         }
                     } else {
@@ -1511,7 +1511,7 @@ struct GrokCLI {
     // Handle the list command
     static func handleListCommand(args: [String]) async throws {
         let app = GrokCLIApp.shared
-        let formatter = OutputFormatter(useMarkdown: false)
+        // let formatter = OutputFormatter(useMarkdown: false)
         
         // Parse options
         var enableDebug = false
@@ -1564,21 +1564,21 @@ struct GrokCLI {
                     print("Debug: Loading conversation responses...")
                 }
                 
-                print("Loading conversation \"\(selected.title)\"...".green)
+                print("\nLoading conversation \"\(selected.title)\"...".green)
                 let responses = try await app.loadConversation(conversationId: selected.conversationId)
                 
                 if enableDebug {
                     print("Debug: Loaded \(responses.count) responses")
                 }
                 
-                print("\n\n\(selected.title)\n".green)
+                print("\n\(selected.title)\n".green)
                 if responses.isEmpty {
                     print("This conversation has no messages yet.".yellow)
                 } else {
                     //print("Conversation history:".cyan)
                     for response in responses {
                         let sender = response.sender == "human" ? "User".magenta : "Grok".cyan
-                        print("\(sender): \(response.message)")
+                        print("\(sender)\n\(response.message)\n")
                     }
                 }
             } else {
