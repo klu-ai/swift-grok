@@ -396,14 +396,7 @@ struct ChatCommand: ParsableCommand {
                 continue
                 
             // Keep existing commands for backward compatibility
-            case "exit":
-                isRunning = false
-                // Reset conversation ID when exiting
-                app.resetConversation()
-                print("Goodbye!".cyan)
-                continue
-                
-            case "quit":
+            case "exit", "quit":
                 isRunning = false
                 // Reset conversation ID when exiting
                 app.resetConversation()
@@ -414,6 +407,10 @@ struct ChatCommand: ParsableCommand {
                 formatter.printHelp()
                 continue
                 
+            /* 
+
+            fairly certain these are not needed
+
             case "new conversation", "new-conversation", "reset conversation", "reset-conversation":
                 app.resetConversation()
                 print("Conversation reset. Starting a new conversation.".yellow)
@@ -486,7 +483,7 @@ struct ChatCommand: ParsableCommand {
                 currentPrivate = false
                 print("Private mode disabled".blue)
                 continue
-                
+            */    
             case "/clear", "/cls":
                 formatter.clearScreen()
                 printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
@@ -1155,15 +1152,8 @@ struct GrokCLI {
                 }
                 continue
                 
-            // Keep existing commands for backward compatibility
-            case "exit":
-                isRunning = false
-                // Reset conversation ID when exiting
-                app.resetConversation()
-                print("Goodbye!".cyan)
-                continue
-                
-            case "quit":
+            
+            case "exit", "quit":
                 isRunning = false
                 // Reset conversation ID when exiting
                 app.resetConversation()
@@ -1173,7 +1163,10 @@ struct GrokCLI {
             case "help":
                 formatter.printHelp()
                 continue
-                
+
+            /* 
+            fairly certain these are not needed
+
             case "new conversation", "new-conversation", "reset conversation", "reset-conversation":
                 app.resetConversation()
                 print("Conversation reset. Starting a new conversation.".yellow)
@@ -1246,6 +1239,8 @@ struct GrokCLI {
                 currentPrivate = false
                 print("Private mode disabled".blue)
                 continue
+
+            */
                 
             case "/clear", "/cls":
                 formatter.clearScreen()
