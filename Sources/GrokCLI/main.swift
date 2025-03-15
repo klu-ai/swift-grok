@@ -14,6 +14,11 @@ struct ChatCommand: ParsableCommand {
     static let defaultCustomInstructions = """
     You are a highly capable, thoughtful, and precise assistant. Your goal is to deeply understand the user's intent, ask clarifying questions when needed, think step-by-step through complex problems, provide clear and accurate answers, and proactively anticipate helpful follow-up information. Always prioritize being truthful, nuanced, insightful, and efficient, tailoring your responses specifically to the user's needs and preferences. If conversational dialogue, be more human. when possible, use brevity.
     """
+
+    static let hiddenMode = """
+    You are a highly capable, thoughtful, and precise assistant. Your goal is to deeply understand the user's intent, ask clarifying questions when needed, think step-by-step through complex problems, provide clear and accurate answers, and proactively anticipate helpful follow-up information. Always prioritize being truthful, nuanced, insightful, and efficient, tailoring your responses specifically to the user's needs and preferences. If conversational dialogue, be more human. when possible, use brevity.
+    
+    """
     
     // User preferences key for custom instructions
     private static let customInstructionsKey = "com.grok.cli.customInstructions"
@@ -227,6 +232,40 @@ struct ChatCommand: ParsableCommand {
                 print("Custom instructions reset to defaults".yellow)
                 continue
                 
+            case _ where input.hasPrefix("/special"):
+                // Start a new private thread
+                app.resetConversation()
+                print("Started a new special mode conversation thread.".red.bold)
+                print("Special mode activated.".red.bold)
+                currentPrivate = true
+                
+                print("Thinking...".blue)
+                
+                do {
+                    // Send the hidden mode message to Grok
+                    let response = try await app.query(
+                        message: ChatCommand.hiddenMode,
+                        enableReasoning: false,
+                        enableDeepSearch: false,
+                        disableSearch: false,
+                        customInstructions: "",
+                        temporary: true
+                    )
+                    
+                    // Format and display the response
+                    formatter.printResponse(
+                        response,
+                        conversationId: app.getCurrentConversationId(),
+                        responseId: app.getLastResponseId(),
+                        debug: false,
+                        webSearchResults: app.getLastWebSearchResults(),
+                        xposts: app.getLastXPosts()
+                    )
+                } catch {
+                    formatter.printError("Error: \(error.localizedDescription)")
+                }
+                continue
+                
             // Keep existing commands for backward compatibility
             case "exit":
                 isRunning = false
@@ -315,7 +354,7 @@ struct ChatCommand: ParsableCommand {
                 print("Private mode disabled".blue)
                 continue
                 
-            case "clear", "cls":
+            case "/clear", "/cls":
                 formatter.clearScreen()
                 continue
                 
@@ -901,6 +940,40 @@ struct GrokCLI {
                 print("Custom instructions reset to defaults".yellow)
                 continue
                 
+            case _ where input.hasPrefix("/special"):
+                // Start a new private thread
+                app.resetConversation()
+                print("Started a new special mode conversation thread.".red.bold)
+                print("Special mode activated.".red.bold)
+                currentPrivate = true
+                
+                print("Thinking...".blue)
+                
+                do {
+                    // Send the hidden mode message to Grok
+                    let response = try await app.query(
+                        message: ChatCommand.hiddenMode,
+                        enableReasoning: false,
+                        enableDeepSearch: false,
+                        disableSearch: false,
+                        customInstructions: "",
+                        temporary: true
+                    )
+                    
+                    // Format and display the response
+                    formatter.printResponse(
+                        response,
+                        conversationId: app.getCurrentConversationId(),
+                        responseId: app.getLastResponseId(),
+                        debug: false,
+                        webSearchResults: app.getLastWebSearchResults(),
+                        xposts: app.getLastXPosts()
+                    )
+                } catch {
+                    formatter.printError("Error: \(error.localizedDescription)")
+                }
+                continue
+                
             // Keep existing commands for backward compatibility
             case "exit":
                 isRunning = false
@@ -989,7 +1062,7 @@ struct GrokCLI {
                 print("Private mode disabled".blue)
                 continue
                 
-            case "clear", "cls":
+            case "/clear", "/cls":
                 formatter.clearScreen()
                 continue
                 
@@ -1174,6 +1247,14 @@ struct GrokCLI {
     // Show help information
     static func showHelp() {
         print("""
+        
+         ██████╗ ██████╗  ██████╗ ██╗  ██╗
+        ██╔════╝ ██╔══██╗██╔═══██╗██║ ██╔╝
+        ██║  ███╗██████╔╝██║   ██║█████╔╝ 
+        ██║   ██║██╔══██╗██║   ██║██╔═██╗ 
+        ╚██████╔╝██║  ██║╚██████╔╝██║  ██╗
+         ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝
+        
         Grok3 up in your terminal
         
         Usage: grok [command] [options]
@@ -1185,40 +1266,44 @@ struct GrokCLI {
           auth              - Authentication commands
           help              - Show help information
         
-        Message/Chat Options:
+        App Options:
           --reasoning       - Enable reasoning mode for step-by-step explanations
           --deep-search     - Enable deep search for more comprehensive answers
           --no-search       - Disable real-time data (no web or x search)
-          -m, --markdown    - Use markdown formatting in output
+          --markdown        - Use markdown formatting in output
           --debug           - Show debug information
-          --no-custom-instructions - Disable custom instructions for the assistant
           --private         - Enable private mode (conversations will not be saved)
         
         Chat Commands:
-          new, /new         - Start a new conversation thread
-          help              - Show help information
-          reasoning on/off  - Toggle reasoning mode
-          search on/off     - Toggle deep search
-          realtime on/off   - Toggle real-time data on/off
-          custom on/off     - Toggle custom instructions
-          private on/off    - Toggle private mode (messages won't be saved)
-          clear, cls        - Clear the screen
-          exit, /exit       - Quit the app
+          /new              - Start a new conversation thread
+          /reason           - Toggle reasoning mode
+          /search           - Toggle deep search
+          /realtime         - Toggle real-time data on/off
+          /private          - Toggle private mode 
+          /special          - Activate special mode 
+          /clear            - Clear the screen
+          /exit             - Quit the app
         
         Notes:
           - In chat mode, conversation context is maintained between messages
-          - Use 'new', '/new' to start a new conversation thread
+          - Use '/new' to start a new conversation thread
           - Use 'exit', '/exit', 'quit', '/quit' to exit the app
           - The message command always starts a new conversation without context
         
         Examples:
-          grok              - Start interactive chat mode
-          grok Hello        - Start chat with initial message "Hello"
-          grok message Hello, how are you today?
-          grok auth generate
-        """)
+          grok                                      - Start interactive chat mode
+          grok Hello                                - Start chat with initial message "Hello"
+          grok message Hello, how are you today?    - Send a message and exit
+          grok auth generate                        - Generate new credentials from browser cookies
+        """.green.bold)
     }
 }
+
+// removed from app options for now
+// --no-custom-instructions - Disable custom instructions for the assistant
+
+//  removed from slash commands
+//  /custom           - Toggle custom instructions
 
 // Utilities
 
@@ -1274,30 +1359,37 @@ class OutputFormatter {
         \("Basic Commands:".cyan.bold)
         - \("new".yellow): Start a new conversation thread
         - \("help".yellow): Show this help message
-        - \("clear".yellow): Clear the screen
         - \("quit".yellow): Exit the app
         
         \("Slash Commands:".cyan.bold)
         - \("/new".yellow): Start a new conversation thread
         - \("/reason".yellow): Toggle reasoning mode on/off
-        - \("/search".yellow) or \("/deepsearch".yellow): Toggle deep search on/off
+        - \("/search".yellow): Toggle deep search on/off
         - \("/realtime".yellow): Toggle real-time data on/off
-        - \("/custom".yellow): Toggle custom instructions on/off
-        - \("/private".yellow): Toggle private mode on/off (messages won't be saved)
-        - \("/edit-instructions".yellow): Edit custom instructions
-        - \("/reset-instructions".yellow): Reset custom instructions to defaults
+        - \("/private".yellow): Toggle private mode on/off 
+        - \("/special".yellow): Activate special mode 
+        - \("/clear".yellow): Clear the screen
         - \("/quit".yellow): Exit the app
         
         \("Modes:".cyan.bold)
-        - \("Reasoning".yellow): Enables step-by-step explanations
-        - \("Deep Search".yellow): Enables more comprehensive answers using web search
-        - \("Realtime".yellow): Enables real-time data from web search and X
-        - \("Custom Instructions".yellow): Enables/disables custom instructions for the assistant
-        - \("Conversation Threading".yellow): Messages maintain context within the current conversation
+        - \("Reasoning".yellow): Enables Grok reasoning model for hard problems
+        - \("DeepSearch".yellow): Conduct in-depth analysis with research agent
+        - \("Realtime".yellow): Enables real-time data from web and X search
         - \("Private Mode".yellow): When enabled, conversations will not be saved
         
         """)
     }
+
+    // temporarily hidden from slash commands 
+    
+    // - \("/custom".yellow): Toggle custom instructions on/off
+    // - \("/edit-instructions".yellow): Edit custom instructions
+    // - \("/reset-instructions".yellow): Reset custom instructions to defaults
+
+    // temporarily hidden from modes
+
+    //- \("Conversation Threading".yellow): Messages maintain context within the current conversation
+    // - \("Custom Instructions".yellow): Enables/disables custom instructions for the assistant
     
     func clearScreen() {
         print("\u{001B}[2J\u{001B}[H", terminator: "")
