@@ -119,8 +119,7 @@ struct ChatCommand: ParsableCommand {
             _ = try app.initializeClient()
             print("Authentication successful".green)
         } catch {
-            print("Authentication Error: \(error.localizedDescription)".red)
-            print("Please run 'grok auth' to set up your credentials.".yellow)
+            app.handleError(error, debug: options.debug)
             return
         }
         
@@ -150,12 +149,8 @@ struct ChatCommand: ParsableCommand {
                     webSearchResults: app.getLastWebSearchResults(),
                     xposts: app.getLastXPosts()
                 )
-                return
             } catch {
-                formatter.printError("Error: \(error.localizedDescription)")
-                if options.debug {
-                    print("Debug stack trace: \(error)")
-                }
+                app.handleError(error, debug: options.debug)
                 return
             }
         }
@@ -311,35 +306,10 @@ struct ChatCommand: ParsableCommand {
                     } else {
                         print("Invalid selection.".red)
                     }
-                } catch let error as GrokError {
-                    if app.getDebugMode() {
-                        print("Debug: GrokError encountered: \(error)")
-                        switch error {
-                        case .invalidCredentials:
-                            print("Debug: Error - Invalid credentials")
-                        case .unauthorized:
-                            print("Debug: Error - Unauthorized access")
-                        case .notFound:
-                            print("Debug: Error - Resource not found")
-                        case .networkError(let err):
-                            print("Debug: Network error: \(err)")
-                        case .decodingError(let err):
-                            print("Debug: Decoding error: \(err)")
-                        case .apiError(let message):
-                            print("Debug: API error: \(message)")
-                        case .streamingError:
-                            print("Debug: Streaming error")
-                        }
-                    }
-                    print("Error: \(error.localizedDescription)".red)
                 } catch {
-                    if app.getDebugMode() {
-                        print("Debug: Unexpected error: \(error)")
-                        print("Debug: Error type: \(type(of: error))")
-                    }
-                    print("Error: \(error.localizedDescription)".red)
+                    app.handleError(error, debug: options.debug)
+                    continue
                 }
-                continue
                 
             case _ where input.hasPrefix("/reset-conversation"):
                 app.resetConversation()
@@ -391,9 +361,9 @@ struct ChatCommand: ParsableCommand {
                         xposts: app.getLastXPosts()
                     )
                 } catch {
-                    formatter.printError("Error: \(error.localizedDescription)")
+                    app.handleError(error, debug: options.debug)
+                    continue
                 }
-                continue
                 
             // Keep existing commands for backward compatibility
             case "exit", "quit":
@@ -521,10 +491,7 @@ struct ChatCommand: ParsableCommand {
                     xposts: app.getLastXPosts()
                 )
             } catch {
-                formatter.printError("Error: \(error.localizedDescription)")
-                if currentNoCustomInstructions ? false : options.debug {
-                    print("Debug stack trace: \(error)")
-                }
+                app.handleError(error, debug: options.debug)
             }
         }
     }
@@ -640,11 +607,7 @@ struct MessageCommand: ParsableCommand {
                 xposts: app.getLastXPosts()
             )
         } catch {
-            formatter.printError("Error: \(error.localizedDescription)")
-            if options.debug {
-                print("Debug stack trace: \(error)")
-            }
-            formatter.printError("Please run 'grok auth' to set up your credentials.")
+            app.handleError(error, debug: options.debug)
         }
     }
 }
@@ -877,8 +840,7 @@ struct GrokCLI {
             _ = try app.initializeClient()
             print("Authentication successful".green)
         } catch {
-            print("Authentication Error: \(error.localizedDescription)".red)
-            print("Please run 'grok auth' to set up your credentials.".yellow)
+            app.handleError(error, debug: enableDebug)
             return
         }
         
@@ -909,10 +871,7 @@ struct GrokCLI {
                     xposts: app.getLastXPosts()
                 )
             } catch {
-                formatter.printError("Error sending message: \(error.localizedDescription)")
-                if enableDebug {
-                    print("Debug stack trace: \(error)")
-                }
+                app.handleError(error, debug: enableDebug)
                 return
             }
         }
@@ -1068,35 +1027,10 @@ struct GrokCLI {
                     } else {
                         print("Invalid selection.".red)
                     }
-                } catch let error as GrokError {
-                    if app.getDebugMode() {
-                        print("Debug: GrokError encountered: \(error)")
-                        switch error {
-                        case .invalidCredentials:
-                            print("Debug: Error - Invalid credentials")
-                        case .unauthorized:
-                            print("Debug: Error - Unauthorized access")
-                        case .notFound:
-                            print("Debug: Error - Resource not found")
-                        case .networkError(let err):
-                            print("Debug: Network error: \(err)")
-                        case .decodingError(let err):
-                            print("Debug: Decoding error: \(err)")
-                        case .apiError(let message):
-                            print("Debug: API error: \(message)")
-                        case .streamingError:
-                            print("Debug: Streaming error")
-                        }
-                    }
-                    print("Error: \(error.localizedDescription)".red)
                 } catch {
-                    if app.getDebugMode() {
-                        print("Debug: Unexpected error: \(error)")
-                        print("Debug: Error type: \(type(of: error))")
-                    }
-                    print("Error: \(error.localizedDescription)".red)
+                    app.handleError(error, debug: enableDebug)
+                    continue
                 }
-                continue
                 
             case _ where input.hasPrefix("/reset-conversation"):
                 app.resetConversation()
@@ -1148,9 +1082,9 @@ struct GrokCLI {
                         xposts: app.getLastXPosts()
                     )
                 } catch {
-                    formatter.printError("Error: \(error.localizedDescription)")
+                    app.handleError(error, debug: enableDebug)
+                    continue
                 }
-                continue
                 
             
             case "exit", "quit":
@@ -1279,10 +1213,7 @@ struct GrokCLI {
                     xposts: app.getLastXPosts()
                 )
             } catch {
-                formatter.printError("Error: \(error.localizedDescription)")
-                if currentNoCustomInstructions ? false : enableDebug {
-                    print("Debug stack trace: \(error)")
-                }
+                app.handleError(error, debug: enableDebug)
             }
         }
     }
@@ -1370,11 +1301,7 @@ struct GrokCLI {
                 xposts: app.getLastXPosts()
             )
         } catch {
-            if enableDebug {
-                print("Debug: Error: \(error)")
-            }
-            print("Error: \(error.localizedDescription)".red)
-            print("Please run 'grok auth' to set up your credentials.".yellow)
+            app.handleError(error, debug: enableDebug)
         }
     }
     
@@ -1559,35 +1486,8 @@ struct GrokCLI {
                     print("Debug: User exited selection or provided invalid input")
                 }
             }
-        } catch let error as GrokError {
-            if enableDebug {
-                print("Debug: GrokError encountered: \(error)")
-                switch error {
-                case .invalidCredentials:
-                    print("Debug: Error - Invalid credentials")
-                case .unauthorized:
-                    print("Debug: Error - Unauthorized access")
-                case .notFound:
-                    print("Debug: Error - Resource not found")
-                case .networkError(let err):
-                    print("Debug: Network error: \(err)")
-                case .decodingError(let err):
-                    print("Debug: Decoding error: \(err)")
-                case .apiError(let message):
-                    print("Debug: API error: \(message)")
-                case .streamingError:
-                    print("Debug: Streaming error")
-                }
-            }
-            print("Error: \(error.localizedDescription)".red)
-            print("Please run 'grok auth' to set up your credentials.".yellow)
         } catch {
-            if enableDebug {
-                print("Debug: Unexpected error: \(error)")
-                print("Debug: Error type: \(type(of: error))")
-            }
-            print("Error: \(error.localizedDescription)".red)
-            print("Please run 'grok auth' to set up your credentials.".yellow)
+            app.handleError(error, debug: enableDebug)
         }
     }
     
@@ -1895,6 +1795,18 @@ class GrokCLIApp {
     // Set current personality
     func setPersonality(_ personalityType: GrokClient.PersonalityType) {
         self.currentPersonality = personalityType
+    }
+    
+    // Centralized error handling method
+    func handleError(_ error: Error, debug: Bool) {
+        print("Error: \(error.localizedDescription)".red)
+        if debug {
+            print("Debug: Error details: \(error)".cyan)
+            print("Debug: Error type: \(type(of: error))".cyan)
+        }
+        if case .invalidCredentials = error as? GrokError {
+            print("Please run 'grok auth' to set up your credentials.".yellow)
+        }
     }
     
     // Load cookies directly from GrokCookies.swift file
