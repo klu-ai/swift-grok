@@ -16,7 +16,7 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "App",
+            name: "GrokProxy",
             dependencies: [
                 .product(name: "Vapor", package: "vapor"),
                 .product(name: "NIOCore", package: "swift-nio"),
@@ -26,9 +26,9 @@ let package = Package(
             swiftSettings: swiftSettings
         ),
         .testTarget(
-            name: "AppTests",
+            name: "GrokProxyTests",
             dependencies: [
-                .target(name: "App"),
+                .target(name: "GrokProxy"),
                 .product(name: "VaporTesting", package: "vapor"),
             ],
             swiftSettings: swiftSettings
