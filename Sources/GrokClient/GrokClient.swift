@@ -423,6 +423,109 @@ public class GrokClient {
     ///   - personalityType: Optional personality type for Grok, defaults to none
     /// - Returns: A tuple with the complete response and conversationId from Grok
     /// - Throws: Network, decoding, or API errors
+    public func streamMessage(
+        message: String,
+        enableReasoning: Bool = false,
+        enableDeepSearch: Bool = false,
+        disableSearch: Bool = false,
+        customInstructions: String = "",
+        temporary: Bool = false,
+        personalityType: PersonalityType = .none
+    ) async throws -> AsyncThrowingStream<ConversationResponse, Error> {
+        let url = URL(string: "\(baseURL)/conversations/new")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        
+        // Add headers
+        for (key, value) in headers {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        
+        // Prepare payload
+        let payload = preparePayload(
+            message: message,
+            enableReasoning: enableReasoning,
+            enableDeepSearch: enableDeepSearch,
+            disableSearch: disableSearch,
+            customInstructions: customInstructions,
+            temporary: temporary,
+            personalityType: personalityType
+        )
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        
+        // Create a URLSession that can handle streams
+        let (bytes, response) = try await session.bytes(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw GrokError.networkError(URLError(.badServerResponse))
+        }
+        
+        // Handle HTTP errors
+        guard (200...299).contains(httpResponse.statusCode) else {
+            switch httpResponse.statusCode {
+            case 401: throw GrokError.unauthorized
+            case 404: throw GrokError.notFound
+            default: throw GrokError.apiError("HTTP Error: \(httpResponse.statusCode)")
+            }
+        }
+        
+        return AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    var conversationId = ""
+                    var responseId = ""
+                    
+                    for try await line in bytes.lines {
+                        if let data = line.data(using: .utf8),
+                           let streamingResponse = try? JSONDecoder().decode(StreamingResponse.self, from: data) {
+                            
+                            // Capture conversation ID
+                            if let conversationData = streamingResponse.result?.conversation,
+                               let id = conversationData.conversationId {
+                                conversationId = id
+                            }
+                            
+                            // Capture response ID
+                            if let content = streamingResponse.result?.response,
+                               let id = content.responseId {
+                                responseId = id
+                            }
+                            
+                            // Yield token if present
+                            if let token = streamingResponse.result?.response?.token {
+                                continuation.yield(ConversationResponse(
+                                    message: token,
+                                    conversationId: conversationId,
+                                    responseId: responseId,
+                                    timestamp: Date(),
+                                    webSearchResults: nil,
+                                    xposts: nil
+                                ))
+                            }
+                            
+                            // Yield complete response if present
+                            if let modelResponse = streamingResponse.result?.response?.modelResponse {
+                                continuation.yield(ConversationResponse(
+                                    message: modelResponse.message,
+                                    conversationId: conversationId,
+                                    responseId: responseId,
+                                    timestamp: Date(),
+                                    webSearchResults: modelResponse.extractWebSearchResults(),
+                                    xposts: modelResponse.extractXPosts()
+                                ))
+                                continuation.finish()
+                                return
+                            }
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+    
     public func sendMessage(
         message: String,
         enableReasoning: Bool = false,
