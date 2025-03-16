@@ -71,4 +71,38 @@ struct ChatCompletionResponse: Content {
             )
         )
     }
+}
+
+// MARK: - Models Response
+
+struct ModelsResponse: Content {
+    let object: String
+    let data: [Model]
+    
+    struct Model: Content {
+        let id: String
+        let object: String
+        let created: Int
+        let owned_by: String
+        
+        init(id: String, owned_by: String = "grok") {
+            self.id = id
+            self.object = "model"
+            self.created = Int(Date().timeIntervalSince1970) - 86400 // Yesterday
+            self.owned_by = owned_by
+        }
+    }
+    
+    static func defaultResponse() -> ModelsResponse {
+        let grokModels = [
+            Model(id: "gpt-3.5-turbo"), // Standard model name used by OpenAI clients
+            Model(id: "gpt-4"),         // More advanced model name used by OpenAI clients 
+            Model(id: "grok-3")         // Actual Grok model name
+        ]
+        
+        return ModelsResponse(
+            object: "list",
+            data: grokModels
+        )
+    }
 } 
