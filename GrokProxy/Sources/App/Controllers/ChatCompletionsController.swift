@@ -17,6 +17,16 @@ struct ChatCompletionsController: RouteCollection {
         v1.post("chat", "completions") { [grokClient] req in
             try await self.chatCompletions(req: req, grokClient: grokClient)
         }
+        
+        // OpenAI compatibility endpoint for models
+        v1.get("models") { req in
+            return ModelsResponse.defaultResponse()
+        }
+        
+        // Alternative endpoint without the v1 prefix
+        routes.get("models") { req in
+            return ModelsResponse.defaultResponse()
+        }
     }
     
     // Using a separate function that takes grokClient as a parameter to avoid 
