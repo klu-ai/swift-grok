@@ -8,10 +8,11 @@ This README provides detailed instructions for installation, usage, and configur
 
 ## Package Description
 
-SwiftGrok consists of two primary components:
+SwiftGrok consists of three primary components:
 
 1. **GrokClient**: A Swift library for programmatic interaction with the Grok API, offering methods to send messages, continue conversations, list past conversations, and retrieve detailed responses. It supports advanced features like reasoning mode, deep search, and custom instructions.
-2. **Grok**: A command-line tool built on top of `GrokClient`, providing an interactive chat interface, one-off query execution, and conversation management directly from the terminal.
+2. **GrokProxy**: An OpenAI-compatible proxy server that routes requests through the Grok API, enabling integration with tools expecting OpenAI's API format.
+3. **Grok**: A command-line tool built on top of `GrokClient`, providing an interactive chat interface, one-off query execution, and conversation management directly from the terminal.
 
 The package handles authentication via browser-extracted cookies, supports conversation threading for context preservation, and includes structured response models for handling text, web search results, and X posts.
 
@@ -75,6 +76,9 @@ You will then need to manually configure authentication (see "Authentication" se
 - Python 3 (for cookie extraction)
 - `pip install browsercookie` (for the cookie extractor script)
 - Swift 6.0 toolchain
+
+#### Proxy Installation
+To install and run the GrokProxy server, which provides an OpenAI-compatible API endpoint for Grok, use the Docker setup detailed in [DOCKER.md](DOCKER.md). This requires Docker and valid Grok credentials, with options for local or container-based configuration. For additional details, including credential setup and customization, refer to the README in the `Sources/GrokProxy` folder.
 
 ## Usage
 
@@ -256,7 +260,7 @@ Alternatively, initialize `GrokClient` with cookies directly in code (see "Basic
 
 ### Custom Instructions
 
-For CLI usage, customize Grok’s behavior with instructions:
+For CLI usage, customize Grok's behavior with instructions:
 
 ```bash
 grok /edit-instructions
