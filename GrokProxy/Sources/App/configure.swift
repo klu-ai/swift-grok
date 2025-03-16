@@ -2,6 +2,9 @@ import Vapor
 
 // configures your application
 public func configure(_ app: Application) async throws {
+    // Register app configuration (must be before other middleware)
+    try AppConfiguration.register(app)
+    
     // Configure middleware
     app.middleware.use(CORSMiddleware(configuration: .init(
         allowedOrigin: .all,
@@ -22,4 +25,7 @@ public func configure(_ app: Application) async throws {
     
     // Register routes
     try routes(app)
+    
+    // Register Grok configuration
+    try GrokConfiguration.register(app)
 }
