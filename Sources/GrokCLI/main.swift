@@ -207,22 +207,21 @@ struct MessageCommand: ParsableCommand {
             if options.stream {
                 var isFirstChunk = true
                 for try await response in stream {
-                    // Skip empty responses with isSoftStop=true
                     if response.isSoftStop && response.message.isEmpty {
                         continue
                     }
-                    
-                    formatter.printStreamingChunk(
-                        response.message,
-                        isFirst: isFirstChunk,
-                        isLast: response.webSearchResults != nil || response.xposts != nil
-                    )
-                    isFirstChunk = false
+                    if response.isFinal {
+                        formatter.printSources(webSearchResults: response.webSearchResults, xposts: response.xposts)
+                    } else {
+                        formatter.printChunk(response.message, isFirst: isFirstChunk)
+                        isFirstChunk = false
+                    }
                 }
+                print("")
             } else {
                 var finalResponse: ConversationResponse?
                 for try await response in stream {
-                    if response.webSearchResults != nil || response.xposts != nil {
+                    if response.isFinal {
                         finalResponse = response
                         break
                     }
@@ -233,8 +232,8 @@ struct MessageCommand: ParsableCommand {
                         conversationId: app.getCurrentConversationId(),
                         responseId: app.getLastResponseId(),
                         debug: options.debug,
-                        webSearchResults: app.getLastWebSearchResults(),
-                        xposts: app.getLastXPosts()
+                        webSearchResults: response.webSearchResults,
+                        xposts: response.xposts
                     )
                 }
             }
@@ -501,22 +500,21 @@ struct GrokCLI {
                 if enableStream {
                     var isFirstChunk = true
                     for try await response in stream {
-                        // Skip empty responses with isSoftStop=true
                         if response.isSoftStop && response.message.isEmpty {
                             continue
                         }
-                        
-                        formatter.printStreamingChunk(
-                            response.message,
-                            isFirst: isFirstChunk,
-                            isLast: response.webSearchResults != nil || response.xposts != nil
-                        )
-                        isFirstChunk = false
+                        if response.isFinal {
+                            formatter.printSources(webSearchResults: response.webSearchResults, xposts: response.xposts)
+                        } else {
+                            formatter.printChunk(response.message, isFirst: isFirstChunk)
+                            isFirstChunk = false
+                        }
                     }
+                    print("")
                 } else {
                     var finalResponse: ConversationResponse?
                     for try await response in stream {
-                        if response.webSearchResults != nil || response.xposts != nil {
+                        if response.isFinal {
                             finalResponse = response
                             break
                         }
@@ -527,8 +525,8 @@ struct GrokCLI {
                             conversationId: app.getCurrentConversationId(),
                             responseId: app.getLastResponseId(),
                             debug: enableDebug,
-                            webSearchResults: app.getLastWebSearchResults(),
-                            xposts: app.getLastXPosts()
+                            webSearchResults: response.webSearchResults,
+                            xposts: response.xposts
                         )
                     }
                 }
@@ -743,22 +741,21 @@ struct GrokCLI {
                     if currentStream {
                         var isFirstChunk = true
                         for try await response in stream {
-                            // Skip empty responses with isSoftStop=true
                             if response.isSoftStop && response.message.isEmpty {
                                 continue
                             }
-                            
-                            formatter.printStreamingChunk(
-                                response.message,
-                                isFirst: isFirstChunk,
-                                isLast: response.webSearchResults != nil || response.xposts != nil
-                            )
-                            isFirstChunk = false
+                            if response.isFinal {
+                                formatter.printSources(webSearchResults: response.webSearchResults, xposts: response.xposts)
+                            } else {
+                                formatter.printChunk(response.message, isFirst: isFirstChunk)
+                                isFirstChunk = false
+                            }
                         }
+                        print("")
                     } else {
                         var finalResponse: ConversationResponse?
                         for try await response in stream {
-                            if response.webSearchResults != nil || response.xposts != nil {
+                            if response.isFinal {
                                 finalResponse = response
                                 break
                             }
@@ -769,8 +766,8 @@ struct GrokCLI {
                                 conversationId: app.getCurrentConversationId(),
                                 responseId: app.getLastResponseId(),
                                 debug: false,
-                                webSearchResults: app.getLastWebSearchResults(),
-                                xposts: app.getLastXPosts()
+                                webSearchResults: response.webSearchResults,
+                                xposts: response.xposts
                             )
                         }
                     }
@@ -898,22 +895,21 @@ struct GrokCLI {
                 if currentStream {
                     var isFirstChunk = true
                     for try await response in stream {
-                        // Skip empty responses with isSoftStop=true
                         if response.isSoftStop && response.message.isEmpty {
                             continue
                         }
-                        
-                        formatter.printStreamingChunk(
-                            response.message,
-                            isFirst: isFirstChunk,
-                            isLast: response.webSearchResults != nil || response.xposts != nil
-                        )
-                        isFirstChunk = false
+                        if response.isFinal {
+                            formatter.printSources(webSearchResults: response.webSearchResults, xposts: response.xposts)
+                        } else {
+                            formatter.printChunk(response.message, isFirst: isFirstChunk)
+                            isFirstChunk = false
+                        }
                     }
+                    print("")
                 } else {
                     var finalResponse: ConversationResponse?
                     for try await response in stream {
-                        if response.webSearchResults != nil || response.xposts != nil {
+                        if response.isFinal {
                             finalResponse = response
                             break
                         }
@@ -924,8 +920,8 @@ struct GrokCLI {
                             conversationId: app.getCurrentConversationId(),
                             responseId: app.getLastResponseId(),
                             debug: enableDebug,
-                            webSearchResults: app.getLastWebSearchResults(),
-                            xposts: app.getLastXPosts()
+                            webSearchResults: response.webSearchResults,
+                            xposts: response.xposts
                         )
                     }
                 }
@@ -1018,28 +1014,25 @@ struct GrokCLI {
                 // If streaming is enabled, print each chunk as it comes in
                 var isFirstChunk = true
                 for try await response in stream {
-                    // Skip empty responses with isSoftStop=true
                     if response.isSoftStop && response.message.isEmpty {
                         continue
                     }
-                    
-                    formatter.printStreamingChunk(
-                        response.message,
-                        isFirst: isFirstChunk,
-                        isLast: response.webSearchResults != nil || response.xposts != nil
-                    )
-                    isFirstChunk = false
+                    if response.isFinal {
+                        formatter.printSources(webSearchResults: response.webSearchResults, xposts: response.xposts)
+                    } else {
+                        formatter.printChunk(response.message, isFirst: isFirstChunk)
+                        isFirstChunk = false
+                    }
                 }
+                print("")
             } else {
                 // If streaming is disabled, collect the responses and only show the final one
                 var finalResponse: ConversationResponse?
                 for try await response in stream {
-                    // Keep the last response with web search results as the final one
-                    if response.webSearchResults != nil || response.xposts != nil {
+                    if response.isFinal {
                         finalResponse = response
                         break
                     }
-                    finalResponse = response
                 }
                 
                 if let response = finalResponse {
@@ -1049,8 +1042,8 @@ struct GrokCLI {
                         conversationId: app.getCurrentConversationId(),
                         responseId: app.getLastResponseId(),
                         debug: enableDebug,
-                        webSearchResults: app.getLastWebSearchResults(),
-                        xposts: app.getLastXPosts()
+                        webSearchResults: response.webSearchResults,
+                        xposts: response.xposts
                     )
                 }
             }
@@ -1194,7 +1187,7 @@ struct GrokCLI {
             
             let conversations = try await client.listConversations()
             
-            if enableDebug {
+            if app.getDebugMode() {
                 print("Debug: Retrieved \(conversations.count) conversations")
             }
             
@@ -1294,13 +1287,11 @@ class OutputFormatter {
         print("\n" + "Grok:".green.bold)
         
         if useMarkdown {
-            // Simple markdown formatting
             printMarkdown(response)
         } else {
             print(response)
         }
         
-        // Show sources information if available
         let webSearchCount = webSearchResults?.count ?? 0
         let xpostsCount = xposts?.count ?? 0
         
@@ -1314,14 +1305,13 @@ class OutputFormatter {
             }
         }
         
-        // Print conversation and response IDs if in debug mode
         if debug, let conversationId = conversationId, let responseId = responseId {
             print("\n" + "Debug Info:".cyan)
             print("Conversation ID: \(conversationId)".cyan)
             print("Response ID: \(responseId)".cyan)
         }
         
-        print("")  // Empty line after response
+        print("")
     }
     
     func printStreamingChunk(_ chunk: String, isFirst: Bool, isLast: Bool) {
@@ -1336,7 +1326,6 @@ class OutputFormatter {
         }
         
         if isLast {
-            // Show sources information if available (these are updated in GrokCLIApp)
             let webSearchCount = GrokCLIApp.shared.getLastWebSearchResults()?.count ?? 0
             let xpostsCount = GrokCLIApp.shared.getLastXPosts()?.count ?? 0
             
@@ -1350,10 +1339,37 @@ class OutputFormatter {
                 }
             }
             
-            print("")  // Empty line after response
+            print("")
         }
         
-        fflush(stdout) // Ensure output is flushed immediately
+        fflush(stdout)
+    }
+    
+    func printChunk(_ chunk: String, isFirst: Bool) {
+        if isFirst {
+            print("\n" + "Grok:".green.bold, terminator: "")
+        }
+        if useMarkdown {
+            printMarkdown(chunk)
+        } else {
+            print(chunk, terminator: "")
+        }
+        fflush(stdout)
+    }
+    
+    func printSources(webSearchResults: [WebSearchResult]?, xposts: [XPost]?) {
+        let webSearchCount = webSearchResults?.count ?? 0
+        let xpostsCount = xposts?.count ?? 0
+        if webSearchCount > 0 || xpostsCount > 0 {
+            print("\n" + "Sources:".cyan)
+            if webSearchCount > 0 {
+                print("Web search results: \(webSearchCount)".yellow)
+            }
+            if xpostsCount > 0 {
+                print("X posts: \(xpostsCount)".yellow)
+            }
+        }
+        print("")
     }
     
     func printError(_ message: String) {
@@ -1729,10 +1745,10 @@ class GrokCLIApp {
         return AsyncThrowingStream<ConversationResponse, Error> { continuation in
             Task {
                 do {
+                    let stream: AsyncThrowingStream<ConversationResponse, Error>
                     if let conversationId = currentConversationId {
-                        // For existing conversations, we need to use continueConversation
-                        // and convert the result to a stream
-                        let (responseMessage, newResponseId, webSearchResults, xposts) = try await client.continueConversation(
+                        // For existing conversations, use continueConversation with streaming API
+                        stream = try await client.continueConversation(
                             conversationId: conversationId,
                             parentResponseId: lastResponseId,
                             message: message,
@@ -1743,27 +1759,9 @@ class GrokCLIApp {
                             temporary: temporary,
                             personalityType: personality
                         )
-                        
-                        // Update conversation context
-                        self.lastResponseId = newResponseId
-                        self.lastWebSearchResults = webSearchResults
-                        self.lastXPosts = xposts
-                        
-                        // Create a response object
-                        let response = ConversationResponse(
-                            message: responseMessage,
-                            conversationId: conversationId,
-                            responseId: newResponseId,
-                            webSearchResults: webSearchResults,
-                            xposts: xposts
-                        )
-                        
-                        // Yield the response
-                        continuation.yield(response)
-                        continuation.finish()
                     } else {
                         // For new conversations, use streamMessage
-                        let stream = try await client.streamMessage(
+                        stream = try await client.streamMessage(
                             message: message,
                             enableReasoning: enableReasoning,
                             enableDeepSearch: enableDeepSearch,
@@ -1772,28 +1770,28 @@ class GrokCLIApp {
                             temporary: temporary,
                             personalityType: personality
                         )
-                        
-                        for try await response in stream {
-                            // Update conversation context
-                            if currentConversationId == nil {
-                                currentConversationId = response.conversationId
-                            }
-                            lastResponseId = response.responseId
-                            lastWebSearchResults = response.webSearchResults
-                            lastXPosts = response.xposts
-                            
-                            if isDebug {
-                                print("Debug: Stream chunk received, length: \(response.message.count) characters")
-                                print("Debug: Conversation ID: \(response.conversationId)")
-                                print("Debug: Response ID: \(response.responseId)")
-                                print("Debug: Web Search Results: \(response.webSearchResults?.count ?? 0)")
-                                print("Debug: X Posts: \(response.xposts?.count ?? 0)")
-                            }
-                            
-                            continuation.yield(response)
-                        }
-                        continuation.finish()
                     }
+                    
+                    // Forward all responses from the stream to our continuation
+                    for try await response in stream {
+                        if currentConversationId == nil {
+                            currentConversationId = response.conversationId
+                        }
+                        lastResponseId = response.responseId
+                        lastWebSearchResults = response.webSearchResults
+                        lastXPosts = response.xposts
+                        
+                        if isDebug {
+                            print("Debug: Stream chunk received, length: \(response.message.count) characters")
+                            print("Debug: Conversation ID: \(response.conversationId)")
+                            print("Debug: Response ID: \(response.responseId)")
+                            print("Debug: Web Search Results: \(response.webSearchResults?.count ?? 0)")
+                            print("Debug: X Posts: \(response.xposts?.count ?? 0)")
+                        }
+                        
+                        continuation.yield(response)
+                    }
+                    continuation.finish()
                 } catch {
                     if isDebug {
                         print("Debug: Error in msg: \(error.localizedDescription)")
