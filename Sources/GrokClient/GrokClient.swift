@@ -88,14 +88,16 @@ public struct ConversationResponse: Codable {
     public let timestamp: Date?
     public let webSearchResults: [WebSearchResult]?
     public let xposts: [XPost]?
+    public let isSoftStop: Bool
     
-    public init(message: String, conversationId: String, responseId: String, timestamp: Date? = nil, webSearchResults: [WebSearchResult]? = nil, xposts: [XPost]? = nil) {
+    public init(message: String, conversationId: String, responseId: String, timestamp: Date? = nil, webSearchResults: [WebSearchResult]? = nil, xposts: [XPost]? = nil, isSoftStop: Bool = false) {
         self.message = message
         self.conversationId = conversationId
         self.responseId = responseId
         self.timestamp = timestamp
         self.webSearchResults = webSearchResults
         self.xposts = xposts
+        self.isSoftStop = isSoftStop
     }
 }
 
@@ -188,6 +190,13 @@ internal struct ResponseContent: Codable {
     let responseId: String?
     let isThinking: Bool?
     let isSoftStop: Bool?
+    let finalMetadata: FinalMetadata?
+}
+
+internal struct FinalMetadata: Codable {
+    let followUpSuggestions: [String]?
+    let feedbackLabels: [String]?
+    let disclaimer: String?
 }
 
 // Add internal models for web search results and X posts
@@ -412,7 +421,7 @@ public class GrokClient {
         return payload
     }
     
-    /// Sends a message to Grok and returns the complete response
+    /// Sends a message to Grok and returns a streaming response
     /// - Parameters:
     ///   - message: The user's input message
     ///   - enableReasoning: Whether to enable reasoning mode (cannot be used with deepSearch)
@@ -421,7 +430,7 @@ public class GrokClient {
     ///   - customInstructions: Optional custom instructions, defaults to empty string (no instructions)
     ///   - temporary: Whether the message and thread should not be saved (private mode), defaults to false
     ///   - personalityType: Optional personality type for Grok, defaults to none
-    /// - Returns: A tuple with the complete response and conversationId from Grok
+    /// - Returns: An async stream of conversation responses from Grok
     /// - Throws: Network, decoding, or API errors
     public func streamMessage(
         message: String,
@@ -491,6 +500,10 @@ public class GrokClient {
                                 responseId = id
                             }
                             
+                            // Check for soft stop signal
+                            let isSoftStop = streamingResponse.result?.response?.isSoftStop ?? 
+                                            streamingResponse.result?.isSoftStop ?? false
+                            
                             // Yield token if present
                             if let token = streamingResponse.result?.response?.token {
                                 continuation.yield(ConversationResponse(
@@ -499,8 +512,17 @@ public class GrokClient {
                                     responseId: responseId,
                                     timestamp: Date(),
                                     webSearchResults: nil,
-                                    xposts: nil
+                                    xposts: nil,
+                                    isSoftStop: isSoftStop
                                 ))
+                            }
+                            
+                            // When we get a soft stop signal with an empty token, we don't need to yield it
+                            // This prevents an empty response being sent to the client
+                            if isSoftStop && (streamingResponse.result?.response?.token == nil || 
+                                             streamingResponse.result?.response?.token == "") {
+                                // Don't yield anything, just wait for the model response
+                                continue
                             }
                             
                             // Yield complete response if present
@@ -511,7 +533,8 @@ public class GrokClient {
                                     responseId: responseId,
                                     timestamp: Date(),
                                     webSearchResults: modelResponse.extractWebSearchResults(),
-                                    xposts: modelResponse.extractXPosts()
+                                    xposts: modelResponse.extractXPosts(),
+                                    isSoftStop: false // Final response is not a soft stop
                                 ))
                                 continuation.finish()
                                 return
@@ -592,7 +615,8 @@ public class GrokClient {
                         responseId: responseId,
                         timestamp: Date(),
                         webSearchResults: modelResponse.extractWebSearchResults(),
-                        xposts: modelResponse.extractXPosts()
+                        xposts: modelResponse.extractXPosts(),
+                        isSoftStop: false
                     )
                 }
                 
@@ -606,6 +630,14 @@ public class GrokClient {
                 if let content = streamingResponse.result?.response,
                    let id = content.responseId {
                     responseId = id
+                }
+                
+                // Skip soft stop signals with empty tokens
+                let isSoftStop = streamingResponse.result?.response?.isSoftStop ?? 
+                                streamingResponse.result?.isSoftStop ?? false
+                if isSoftStop && (streamingResponse.result?.response?.token == nil || 
+                                 streamingResponse.result?.response?.token == "") {
+                    continue
                 }
                 
                 // Accumulate token
@@ -622,7 +654,8 @@ public class GrokClient {
             responseId: responseId,
             timestamp: Date(),
             webSearchResults: webSearchResults,
-            xposts: xposts
+            xposts: xposts,
+            isSoftStop: false
         )
     }
     

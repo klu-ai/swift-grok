@@ -206,6 +206,11 @@ struct MessageCommand: ParsableCommand {
                 print("Thinking...".blue)
                 var isFirstChunk = true
                 for try await response in stream {
+                    // Skip empty responses with isSoftStop=true
+                    if response.isSoftStop && response.message.isEmpty {
+                        continue
+                    }
+                    
                     formatter.printStreamingChunk(
                         response.message,
                         isFirst: isFirstChunk,
@@ -496,6 +501,11 @@ struct GrokCLI {
                     print("Thinking...".blue)
                     var isFirstChunk = true
                     for try await response in stream {
+                        // Skip empty responses with isSoftStop=true
+                        if response.isSoftStop && response.message.isEmpty {
+                            continue
+                        }
+                        
                         formatter.printStreamingChunk(
                             response.message,
                             isFirst: isFirstChunk,
@@ -735,6 +745,11 @@ struct GrokCLI {
                         print("Thinking...".blue)
                         var isFirstChunk = true
                         for try await response in stream {
+                            // Skip empty responses with isSoftStop=true
+                            if response.isSoftStop && response.message.isEmpty {
+                                continue
+                            }
+                            
                             formatter.printStreamingChunk(
                                 response.message,
                                 isFirst: isFirstChunk,
@@ -886,6 +901,11 @@ struct GrokCLI {
                 
                 var isFirstChunk = true
                 for try await response in stream {
+                    // Skip empty responses with isSoftStop=true
+                    if response.isSoftStop && response.message.isEmpty {
+                        continue
+                    }
+                    
                     formatter.printStreamingChunk(
                         response.message,
                         isFirst: isFirstChunk,
