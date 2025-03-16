@@ -88,14 +88,18 @@ public struct ConversationResponse: Codable {
     public let timestamp: Date?
     public let webSearchResults: [WebSearchResult]?
     public let xposts: [XPost]?
+    public let isSoftStop: Bool
+    public let isFinal: Bool
     
-    public init(message: String, conversationId: String, responseId: String, timestamp: Date? = nil, webSearchResults: [WebSearchResult]? = nil, xposts: [XPost]? = nil) {
+    public init(message: String, conversationId: String, responseId: String, timestamp: Date? = nil, webSearchResults: [WebSearchResult]? = nil, xposts: [XPost]? = nil, isSoftStop: Bool = false, isFinal: Bool = false) {
         self.message = message
         self.conversationId = conversationId
         self.responseId = responseId
         self.timestamp = timestamp
         self.webSearchResults = webSearchResults
         self.xposts = xposts
+        self.isSoftStop = isSoftStop
+        self.isFinal = isFinal
     }
 }
 
@@ -176,6 +180,9 @@ internal struct StreamingResult: Codable {
     let responseId: String?
     let isThinking: Bool?
     let isSoftStop: Bool?
+    let token: String?
+    let userResponse: UserResponse?
+    let finalMetadata: FinalMetadata?
 }
 
 internal struct ConversationData: Codable {
@@ -188,6 +195,77 @@ internal struct ResponseContent: Codable {
     let responseId: String?
     let isThinking: Bool?
     let isSoftStop: Bool?
+    let finalMetadata: FinalMetadata?
+}
+
+// AnyCodable type to handle unknown types in JSON
+internal struct AnyCodable: Codable {
+    private let value: Any
+    
+    init(_ value: Any) {
+        self.value = value
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        
+        if container.decodeNil() {
+            self.value = NSNull()
+        } else if let bool = try? container.decode(Bool.self) {
+            self.value = bool
+        } else if let int = try? container.decode(Int.self) {
+            self.value = int
+        } else if let double = try? container.decode(Double.self) {
+            self.value = double
+        } else if let string = try? container.decode(String.self) {
+            self.value = string
+        } else if let array = try? container.decode([AnyCodable].self) {
+            self.value = array
+        } else if let dictionary = try? container.decode([String: AnyCodable].self) {
+            self.value = dictionary
+        } else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "AnyCodable cannot decode value")
+        }
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        
+        switch self.value {
+        case is NSNull:
+            try container.encodeNil()
+        case let bool as Bool:
+            try container.encode(bool)
+        case let int as Int:
+            try container.encode(int)
+        case let double as Double:
+            try container.encode(double)
+        case let string as String:
+            try container.encode(string)
+        case let array as [Any]:
+            try container.encode(array.map { AnyCodable($0) })
+        case let dictionary as [String: Any]:
+            try container.encode(dictionary.mapValues { AnyCodable($0) })
+        default:
+            throw EncodingError.invalidValue(self.value, EncodingError.Context(
+                codingPath: container.codingPath,
+                debugDescription: "AnyCodable cannot encode value"
+            ))
+        }
+    }
+}
+
+internal struct FinalMetadata: Codable {
+    let followUpSuggestions: [String]?
+    let feedbackLabels: [String]?
+    let disclaimer: String?
+    let toolsUsed: [String: AnyCodable]?
+}
+
+internal struct UserResponse: Codable {
+    let responseId: String?
+    let message: String?
+    let sender: String?
 }
 
 // Add internal models for web search results and X posts
@@ -412,7 +490,7 @@ public class GrokClient {
         return payload
     }
     
-    /// Sends a message to Grok and returns the complete response
+    /// Sends a message to Grok and returns a streaming response
     /// - Parameters:
     ///   - message: The user's input message
     ///   - enableReasoning: Whether to enable reasoning mode (cannot be used with deepSearch)
@@ -421,8 +499,127 @@ public class GrokClient {
     ///   - customInstructions: Optional custom instructions, defaults to empty string (no instructions)
     ///   - temporary: Whether the message and thread should not be saved (private mode), defaults to false
     ///   - personalityType: Optional personality type for Grok, defaults to none
-    /// - Returns: A tuple with the complete response and conversationId from Grok
+    /// - Returns: An async stream of conversation responses from Grok
     /// - Throws: Network, decoding, or API errors
+    public func streamMessage(
+        message: String,
+        enableReasoning: Bool = false,
+        enableDeepSearch: Bool = false,
+        disableSearch: Bool = false,
+        customInstructions: String = "",
+        temporary: Bool = false,
+        personalityType: PersonalityType = .none
+    ) async throws -> AsyncThrowingStream<ConversationResponse, Error> {
+        let url = URL(string: "\(baseURL)/conversations/new")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        
+        // Add headers
+        for (key, value) in headers {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        
+        // Prepare payload
+        let payload = preparePayload(
+            message: message,
+            enableReasoning: enableReasoning,
+            enableDeepSearch: enableDeepSearch,
+            disableSearch: disableSearch,
+            customInstructions: customInstructions,
+            temporary: temporary,
+            personalityType: personalityType
+        )
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        
+        // Create a URLSession that can handle streams
+        let (bytes, response) = try await session.bytes(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw GrokError.networkError(URLError(.badServerResponse))
+        }
+        
+        // Handle HTTP errors
+        guard (200...299).contains(httpResponse.statusCode) else {
+            switch httpResponse.statusCode {
+            case 401: throw GrokError.unauthorized
+            case 404: throw GrokError.notFound
+            default: throw GrokError.apiError("HTTP Error: \(httpResponse.statusCode)")
+            }
+        }
+        
+        return AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    var conversationId = ""
+                    var responseId = ""
+                    
+                    for try await line in bytes.lines {
+                        if let data = line.data(using: .utf8),
+                           let streamingResponse = try? JSONDecoder().decode(StreamingResponse.self, from: data) {
+                            
+                            // Capture conversation ID
+                            if let conversationData = streamingResponse.result?.conversation,
+                               let id = conversationData.conversationId {
+                                conversationId = id
+                            }
+                            
+                            // Capture response ID
+                            if let content = streamingResponse.result?.response,
+                               let id = content.responseId {
+                                responseId = id
+                            }
+                            
+                            // Check for soft stop signal
+                            let isSoftStop = streamingResponse.result?.response?.isSoftStop ?? 
+                                            streamingResponse.result?.isSoftStop ?? false
+                            
+                            // Yield token if present
+                            if let token = streamingResponse.result?.response?.token {
+                                continuation.yield(ConversationResponse(
+                                    message: token,
+                                    conversationId: conversationId,
+                                    responseId: responseId,
+                                    timestamp: Date(),
+                                    webSearchResults: nil,
+                                    xposts: nil,
+                                    isSoftStop: isSoftStop,
+                                    isFinal: false
+                                ))
+                            }
+                            
+                            // When we get a soft stop signal with an empty token, we don't need to yield it
+                            // This prevents an empty response being sent to the client
+                            if isSoftStop && (streamingResponse.result?.response?.token == nil || 
+                                             streamingResponse.result?.response?.token == "") {
+                                // Don't yield anything, just wait for the model response
+                                continue
+                            }
+                            
+                            // Yield complete response if present
+                            if let modelResponse = streamingResponse.result?.response?.modelResponse {
+                                continuation.yield(ConversationResponse(
+                                    message: modelResponse.message,
+                                    conversationId: conversationId,
+                                    responseId: responseId,
+                                    timestamp: Date(),
+                                    webSearchResults: modelResponse.extractWebSearchResults(),
+                                    xposts: modelResponse.extractXPosts(),
+                                    isSoftStop: false, // Final response is not a soft stop
+                                    isFinal: true
+                                ))
+                                continuation.finish()
+                                return
+                            }
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+    
     public func sendMessage(
         message: String,
         enableReasoning: Bool = false,
@@ -489,7 +686,9 @@ public class GrokClient {
                         responseId: responseId,
                         timestamp: Date(),
                         webSearchResults: modelResponse.extractWebSearchResults(),
-                        xposts: modelResponse.extractXPosts()
+                        xposts: modelResponse.extractXPosts(),
+                        isSoftStop: false,
+                        isFinal: true
                     )
                 }
                 
@@ -503,6 +702,14 @@ public class GrokClient {
                 if let content = streamingResponse.result?.response,
                    let id = content.responseId {
                     responseId = id
+                }
+                
+                // Skip soft stop signals with empty tokens
+                let isSoftStop = streamingResponse.result?.response?.isSoftStop ?? 
+                                streamingResponse.result?.isSoftStop ?? false
+                if isSoftStop && (streamingResponse.result?.response?.token == nil || 
+                                 streamingResponse.result?.response?.token == "") {
+                    continue
                 }
                 
                 // Accumulate token
@@ -519,7 +726,9 @@ public class GrokClient {
             responseId: responseId,
             timestamp: Date(),
             webSearchResults: webSearchResults,
-            xposts: xposts
+            xposts: xposts,
+            isSoftStop: false,
+            isFinal: true
         )
     }
     
@@ -546,7 +755,7 @@ public class GrokClient {
         customInstructions: String = "",
         temporary: Bool = false,
         personalityType: PersonalityType = .none
-    ) async throws -> (message: String, responseId: String, webSearchResults: [WebSearchResult]?, xposts: [XPost]?) {
+    ) async throws -> AsyncThrowingStream<ConversationResponse, Error> {
         let url = URL(string: "\(baseURL)/conversations/\(conversationId)/responses")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -588,253 +797,244 @@ public class GrokClient {
             }
         }
         
-        // Process the streaming response
-        var fullResponse = ""
-        var responseId = ""
-        var webSearchResults: [WebSearchResult]? = nil
-        var xposts: [XPost]? = nil
-        var foundCompleteResponse = false
-        
-        for try await line in bytes.lines {
-            // Skip empty lines
-            if line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                continue
-            }
-            
-            if let data = line.data(using: .utf8) {
+        return AsyncThrowingStream { continuation in
+            Task {
                 do {
-                    // Parse the JSON response
-                    let streamingResponse = try JSONDecoder().decode(StreamingResponse.self, from: data)
+                    var responseId = ""
                     
-                    // Handle both response formats
-                    
-                    // Check for complete response in /new format (nested under response.modelResponse)
-                    if let nestedModelResponse = streamingResponse.result?.response?.modelResponse {
-                        foundCompleteResponse = true
-                        fullResponse = nestedModelResponse.message
-                        
-                        // Capture responseId from model response or parent
-                        if let respId = nestedModelResponse.responseId ?? streamingResponse.result?.response?.responseId {
-                            responseId = respId
+                    for try await line in bytes.lines {
+                        // Skip empty lines
+                        if line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            continue
                         }
                         
-                        // Extract web search results and X posts
-                        webSearchResults = nestedModelResponse.extractWebSearchResults()
-                        xposts = nestedModelResponse.extractXPosts()
-                    }
-                    
-                    // Check for complete response in /responses format (directly under result.modelResponse)
-                    else if let directModelResponse = streamingResponse.result?.modelResponse {
-                        foundCompleteResponse = true
-                        fullResponse = directModelResponse.message
-                        
-                        // Capture responseId from model response or parent
-                        if let respId = directModelResponse.responseId ?? streamingResponse.result?.responseId {
-                            responseId = respId
-                        }
-                        
-                        // Extract web search results and X posts
-                        webSearchResults = directModelResponse.extractWebSearchResults()
-                        xposts = directModelResponse.extractXPosts()
-                    }
-                    
-                    // Accumulate token if this is a streaming token
-                    else if let token = streamingResponse.result?.response?.token {
-                        fullResponse += token
-                        
-                        // Capture responseId if available
-                        if let respId = streamingResponse.result?.response?.responseId ?? streamingResponse.result?.responseId {
-                            responseId = respId
-                        }
-                    }
-                } catch {
-                    // Fallback: try to parse as raw JSON and extract data
-                    do {
-                        if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                            // Try to navigate through the JSON structure
-                            if let result = json["result"] as? [String: Any] {
-                                // Format 1: Check if modelResponse is directly in result
-                                if let modelResponse = result["modelResponse"] as? [String: Any],
-                                   let message = modelResponse["message"] as? String {
-                                    foundCompleteResponse = true
-                                    fullResponse = message
-                                    
-                                    if let respId = modelResponse["responseId"] as? String ?? result["responseId"] as? String {
-                                        responseId = respId
-                                    }
-                                    
-                                    // Try to extract web search results
-                                    if let webSearchResultsJson = modelResponse["webSearchResults"] as? [[String: Any]] {
-                                        var results: [WebSearchResult] = []
-                                        for resultJson in webSearchResultsJson {
-                                            if let url = resultJson["url"] as? String, !url.isEmpty,
-                                               let title = resultJson["title"] as? String,
-                                               let preview = resultJson["preview"] as? String {
-                                                let siteName = resultJson["siteName"] as? String
-                                                let description = resultJson["description"] as? String
-                                                let citationId = resultJson["citationId"] as? String
-                                                
-                                                results.append(WebSearchResult(
-                                                    url: url,
-                                                    title: title,
-                                                    preview: preview,
-                                                    siteName: siteName?.isEmpty ?? true ? nil : siteName,
-                                                    description: description?.isEmpty ?? true ? nil : description,
-                                                    citationId: citationId?.isEmpty ?? true ? nil : citationId
-                                                ))
-                                            }
-                                        }
-                                        if !results.isEmpty {
-                                            webSearchResults = results
-                                        }
-                                    }
-                                    
-                                    // Try to extract X posts
-                                    if let xpostsJson = modelResponse["xposts"] as? [[String: Any]] {
-                                        var posts: [XPost] = []
-                                        for postJson in xpostsJson {
-                                            if let username = postJson["username"] as? String, !username.isEmpty,
-                                               let name = postJson["name"] as? String,
-                                               let text = postJson["text"] as? String,
-                                               let postId = postJson["postId"] as? String {
-                                                let createTime = postJson["createTime"] as? String
-                                                let profileImageUrl = postJson["profileImageUrl"] as? String
-                                                let citationId = postJson["citationId"] as? String
-                                                
-                                                posts.append(XPost(
-                                                    username: username,
-                                                    name: name,
-                                                    text: text,
-                                                    postId: postId,
-                                                    createTime: createTime?.isEmpty ?? true ? nil : createTime,
-                                                    profileImageUrl: profileImageUrl?.isEmpty ?? true ? nil : profileImageUrl,
-                                                    citationId: citationId?.isEmpty ?? true ? nil : citationId
-                                                ))
-                                            }
-                                        }
-                                        if !posts.isEmpty {
-                                            xposts = posts
-                                        }
-                                    }
+                        if let data = line.data(using: .utf8) {
+                            if isDebug {
+                                print("Debug: Received data - \(String(data: data, encoding: .utf8) ?? "Unable to decode")")
+                            }
+                            
+                            // Try to decode the response
+                            if let streamingResponse = try? JSONDecoder().decode(StreamingResponse.self, from: data) {
+                                // Capture responseId wherever we can find it
+                                if let id = streamingResponse.result?.responseId {
+                                    responseId = id
+                                } else if let id = streamingResponse.result?.response?.responseId {
+                                    responseId = id
+                                } else if let id = streamingResponse.result?.userResponse?.responseId {
+                                    responseId = id
                                 }
-                                // Format 2: Check if modelResponse is in result.response
-                                else if let response = result["response"] as? [String: Any],
-                                        let modelResponse = response["modelResponse"] as? [String: Any],
-                                        let message = modelResponse["message"] as? String {
-                                    foundCompleteResponse = true
-                                    fullResponse = message
-                                    
-                                    if let respId = modelResponse["responseId"] as? String ?? response["responseId"] as? String {
-                                        responseId = respId
-                                    }
-                                    
-                                    // Try to extract web search results
-                                    if let webSearchResultsJson = modelResponse["webSearchResults"] as? [[String: Any]] {
-                                        var results: [WebSearchResult] = []
-                                        for resultJson in webSearchResultsJson {
-                                            if let url = resultJson["url"] as? String, !url.isEmpty,
-                                               let title = resultJson["title"] as? String,
-                                               let preview = resultJson["preview"] as? String {
-                                                let siteName = resultJson["siteName"] as? String
-                                                let description = resultJson["description"] as? String
-                                                let citationId = resultJson["citationId"] as? String
-                                                
-                                                results.append(WebSearchResult(
-                                                    url: url,
-                                                    title: title,
-                                                    preview: preview,
-                                                    siteName: siteName?.isEmpty ?? true ? nil : siteName,
-                                                    description: description?.isEmpty ?? true ? nil : description,
-                                                    citationId: citationId?.isEmpty ?? true ? nil : citationId
-                                                ))
-                                            }
-                                        }
-                                        if !results.isEmpty {
-                                            webSearchResults = results
-                                        }
-                                    }
-                                    
-                                    // Try to extract X posts
-                                    if let xpostsJson = modelResponse["xposts"] as? [[String: Any]] {
-                                        var posts: [XPost] = []
-                                        for postJson in xpostsJson {
-                                            if let username = postJson["username"] as? String, !username.isEmpty,
-                                               let name = postJson["name"] as? String,
-                                               let text = postJson["text"] as? String,
-                                               let postId = postJson["postId"] as? String {
-                                                let createTime = postJson["createTime"] as? String
-                                                let profileImageUrl = postJson["profileImageUrl"] as? String
-                                                let citationId = postJson["citationId"] as? String
-                                                
-                                                posts.append(XPost(
-                                                    username: username,
-                                                    name: name,
-                                                    text: text,
-                                                    postId: postId,
-                                                    createTime: createTime?.isEmpty ?? true ? nil : createTime,
-                                                    profileImageUrl: profileImageUrl?.isEmpty ?? true ? nil : profileImageUrl,
-                                                    citationId: citationId?.isEmpty ?? true ? nil : citationId
-                                                ))
-                                            }
-                                        }
-                                        if !posts.isEmpty {
-                                            xposts = posts
-                                        }
-                                    }
+                                
+                                // Check for soft stop signal
+                                let isSoftStop = streamingResponse.result?.isSoftStop ?? 
+                                               streamingResponse.result?.response?.isSoftStop ?? false
+                                
+                                // Process direct token in result (flat structure)
+                                if let token = streamingResponse.result?.token, !token.isEmpty {
+                                    continuation.yield(ConversationResponse(
+                                        message: token,
+                                        conversationId: conversationId,
+                                        responseId: responseId,
+                                        timestamp: Date(),
+                                        webSearchResults: nil,
+                                        xposts: nil,
+                                        isSoftStop: isSoftStop,
+                                        isFinal: false
+                                    ))
+                                    continue
                                 }
-                                // Format 3: Check for token in streaming response
-                                else if let response = result["response"] as? [String: Any],
-                                        let token = response["token"] as? String {
-                                    fullResponse += token
+                                
+                                // Process token in response object (nested structure)
+                                if let token = streamingResponse.result?.response?.token, !token.isEmpty {
+                                    continuation.yield(ConversationResponse(
+                                        message: token,
+                                        conversationId: conversationId,
+                                        responseId: responseId,
+                                        timestamp: Date(),
+                                        webSearchResults: nil,
+                                        xposts: nil,
+                                        isSoftStop: isSoftStop,
+                                        isFinal: false
+                                    ))
+                                    continue
+                                }
+                                
+                                // Skip soft stop with empty token
+                                if isSoftStop && (
+                                    (streamingResponse.result?.token == nil || streamingResponse.result?.token?.isEmpty == true) &&
+                                    (streamingResponse.result?.response?.token == nil || streamingResponse.result?.response?.token?.isEmpty == true)
+                                ) {
+                                    continue
+                                }
+                                
+                                // Check for complete response in direct modelResponse
+                                if let modelResponse = streamingResponse.result?.modelResponse {
+                                    continuation.yield(ConversationResponse(
+                                        message: modelResponse.message,
+                                        conversationId: conversationId,
+                                        responseId: responseId,
+                                        timestamp: Date(),
+                                        webSearchResults: modelResponse.extractWebSearchResults(),
+                                        xposts: modelResponse.extractXPosts(),
+                                        isSoftStop: false,
+                                        isFinal: true
+                                    ))
+                                    continuation.finish()
+                                    return
+                                }
+                                
+                                // Check for complete response in nested modelResponse
+                                if let modelResponse = streamingResponse.result?.response?.modelResponse {
+                                    continuation.yield(ConversationResponse(
+                                        message: modelResponse.message,
+                                        conversationId: conversationId,
+                                        responseId: responseId,
+                                        timestamp: Date(),
+                                        webSearchResults: modelResponse.extractWebSearchResults(),
+                                        xposts: modelResponse.extractXPosts(),
+                                        isSoftStop: false,
+                                        isFinal: true
+                                    ))
+                                    continuation.finish()
+                                    return
+                                }
+                            } else {
+                                // Manual parsing fallback
+                                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                                   let result = json["result"] as? [String: Any] {
                                     
-                                    if let respId = response["responseId"] as? String {
-                                        responseId = respId
+                                    // Update responseId if available
+                                    if let id = result["responseId"] as? String {
+                                        responseId = id
+                                    }
+                                    
+                                    // Check for soft stop
+                                    let isSoftStop = result["isSoftStop"] as? Bool ?? false
+                                    
+                                    // Handle direct token
+                                    if let token = result["token"] as? String, !token.isEmpty {
+                                        continuation.yield(ConversationResponse(
+                                            message: token,
+                                            conversationId: conversationId,
+                                            responseId: responseId,
+                                            timestamp: Date(),
+                                            webSearchResults: nil,
+                                            xposts: nil,
+                                            isSoftStop: isSoftStop,
+                                            isFinal: false
+                                        ))
+                                        continue
+                                    }
+                                    
+                                    // Handle nested token in response
+                                    if let response = result["response"] as? [String: Any],
+                                       let token = response["token"] as? String, !token.isEmpty {
+                                        
+                                        if let respId = response["responseId"] as? String {
+                                            responseId = respId
+                                        }
+                                        
+                                        continuation.yield(ConversationResponse(
+                                            message: token,
+                                            conversationId: conversationId,
+                                            responseId: responseId,
+                                            timestamp: Date(),
+                                            webSearchResults: nil,
+                                            xposts: nil,
+                                            isSoftStop: isSoftStop,
+                                            isFinal: false
+                                        ))
+                                        continue
+                                    }
+                                    
+                                    // Handle modelResponse (complete message)
+                                    if let modelResponse = result["modelResponse"] as? [String: Any],
+                                       let message = modelResponse["message"] as? String {
+                                        
+                                        if let respId = modelResponse["responseId"] as? String {
+                                            responseId = respId
+                                        }
+                                        
+                                        // Extract web search results
+                                        var webSearchResults: [WebSearchResult]? = nil
+                                        if let webSearchResultsJson = modelResponse["webSearchResults"] as? [[String: Any]] {
+                                            var results: [WebSearchResult] = []
+                                            for resultJson in webSearchResultsJson {
+                                                if let url = resultJson["url"] as? String, !url.isEmpty,
+                                                   let title = resultJson["title"] as? String,
+                                                   let preview = resultJson["preview"] as? String {
+                                                    let siteName = resultJson["siteName"] as? String
+                                                    let description = resultJson["description"] as? String
+                                                    let citationId = resultJson["citationId"] as? String
+                                                    
+                                                    results.append(WebSearchResult(
+                                                        url: url,
+                                                        title: title,
+                                                        preview: preview,
+                                                        siteName: siteName?.isEmpty ?? true ? nil : siteName,
+                                                        description: description?.isEmpty ?? true ? nil : description,
+                                                        citationId: citationId?.isEmpty ?? true ? nil : citationId
+                                                    ))
+                                                }
+                                            }
+                                            if !results.isEmpty {
+                                                webSearchResults = results
+                                            }
+                                        }
+                                        
+                                        // Extract X posts
+                                        var xposts: [XPost]? = nil
+                                        if let xpostsJson = modelResponse["xposts"] as? [[String: Any]] {
+                                            var posts: [XPost] = []
+                                            for postJson in xpostsJson {
+                                                if let username = postJson["username"] as? String, !username.isEmpty,
+                                                   let name = postJson["name"] as? String,
+                                                   let text = postJson["text"] as? String,
+                                                   let postId = postJson["postId"] as? String {
+                                                    let createTime = postJson["createTime"] as? String
+                                                    let profileImageUrl = postJson["profileImageUrl"] as? String
+                                                    let citationId = postJson["citationId"] as? String
+                                                    
+                                                    posts.append(XPost(
+                                                        username: username,
+                                                        name: name,
+                                                        text: text,
+                                                        postId: postId,
+                                                        createTime: createTime?.isEmpty ?? true ? nil : createTime,
+                                                        profileImageUrl: profileImageUrl?.isEmpty ?? true ? nil : profileImageUrl,
+                                                        citationId: citationId?.isEmpty ?? true ? nil : citationId
+                                                    ))
+                                                }
+                                            }
+                                            if !posts.isEmpty {
+                                                xposts = posts
+                                            }
+                                        }
+                                        
+                                        // Yield the final response with all data
+                                        continuation.yield(ConversationResponse(
+                                            message: message,
+                                            conversationId: conversationId,
+                                            responseId: responseId,
+                                            timestamp: Date(),
+                                            webSearchResults: webSearchResults,
+                                            xposts: xposts,
+                                            isSoftStop: false,
+                                            isFinal: true
+                                        ))
+                                        continuation.finish()
+                                        return
                                     }
                                 }
                             }
                         }
-                    } catch {
-                        // Continue to next line if we can't parse this format
-                        continue
                     }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
                 }
             }
         }
-        
-        // If we found a complete response, return it
-        if foundCompleteResponse && !fullResponse.isEmpty {
-            return (message: fullResponse, responseId: responseId, webSearchResults: webSearchResults, xposts: xposts)
-        }
-        
-        // Fallback to returning whatever we accumulated
-        return (
-            message: fullResponse.trimmingCharacters(in: .whitespacesAndNewlines),
-            responseId: responseId,
-            webSearchResults: webSearchResults,
-            xposts: xposts
-        )
     }
-    
-    /// Legacy method to start a new conversation (maintained for compatibility)
-    /// - Returns: A Conversation object representing the new conversation
-    /// - Throws: Network, decoding, or API errors
-    // public func startNewConversation() async throws -> Conversation {
-    //     // In the new API structure, conversations are created when sending a message
-    //     // This is a compatibility method that returns a placeholder conversation
-    //     return Conversation(conversationId: "new_conversation", title: "New Conversation", starred: false, createTime: "", modifyTime: "", systemPromptName: "", temporary: false, mediaTypes: [])
-    // }
-    
-    /// Legacy method to send a message to a specific conversation (maintained for compatibility)
-    /// - Parameters:
-    ///   - conversationId: The ID of the conversation (ignored in the new implementation)
-    ///   - message: The message content to send
-    /// - Returns: A MessageResponse object with the API response
-    /// - Throws: Network, decoding, or API errors
-    // public func sendMessage(conversationId: String, message: String) async throws -> MessageResponse {
-    //     // For backward compatibility, we'll just start a new conversation
-    //     let response = try await sendMessage(message: message)
-    //     return MessageResponse(message: response.message, timestamp: response.timestamp)
-    // }
     
     /// Fetch a list of past conversations
     /// - Parameter pageSize: The number of conversations to fetch (default 100)
