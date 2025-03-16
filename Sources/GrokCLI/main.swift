@@ -869,6 +869,7 @@ struct GrokCLI {
                 break
             }
             
+            // show thinking indicator
             do {
                 if currentStream {
                     print("Streaming...".blue)
