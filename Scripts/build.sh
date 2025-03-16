@@ -7,7 +7,7 @@ echo "Building GrokProxy..."
 
 # First run the setup script to ensure dependencies and credentials
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SETUP_SCRIPT="$SCRIPT_DIR/setup.sh"
+SETUP_SCRIPT="$SCRIPT_DIR/setup_proxy.sh"
 
 if [ -f "$SETUP_SCRIPT" ]; then
     echo "Running setup script..."
@@ -19,7 +19,7 @@ else
     echo "Warning: Setup script not found at $SETUP_SCRIPT"
     
     # Check if credentials.json exists in the root directory
-    CREDENTIALS_FILE="../../credentials.json"
+    CREDENTIALS_FILE="../credentials.json"
     if [ ! -f "$CREDENTIALS_FILE" ]; then
         echo "Warning: credentials.json not found."
         echo "The proxy will start with mock credentials which will likely fail with real requests."

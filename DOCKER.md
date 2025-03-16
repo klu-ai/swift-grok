@@ -15,7 +15,7 @@ GrokProxy requires valid Grok credentials to function. There are several ways to
 
 1. Generate a credentials file using one of these methods:
    - Run `swift run grok auth generate` on your host machine
-   - Run the proxy's setup script: `Sources/GrokProxy/setup.sh`
+   - Run the proxy's setup script: `Scripts/setup_proxy.sh`
 
 2. Place the `credentials.json` file in the project root directory
 
@@ -63,10 +63,10 @@ environment:
 cd path/to/swift-grok
 
 # Build the Docker image
-docker compose -f Sources/GrokProxy/docker-compose.yml build
+docker compose build
 
 # Run the container
-docker compose -f Sources/GrokProxy/docker-compose.yml up
+docker compose up
 ```
 
 ## How Credential Generation Works

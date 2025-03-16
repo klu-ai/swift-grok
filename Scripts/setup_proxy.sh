@@ -23,12 +23,12 @@ if ! python3 -c "import browsercookie" &> /dev/null; then
 fi
 
 # Check if credentials.json exists in the root directory
-CREDENTIALS_FILE="../../credentials.json"
+CREDENTIALS_FILE="../credentials.json"
 if [ ! -f "$CREDENTIALS_FILE" ]; then
     echo "credentials.json not found. Attempting to generate it..."
     
     # Check if the cookie_extractor.py script exists
-    COOKIE_EXTRACTOR="../../Scripts/cookie_extractor.py"
+    COOKIE_EXTRACTOR="cookie_extractor.py"
     if [ ! -f "$COOKIE_EXTRACTOR" ]; then
         echo "Error: cookie_extractor.py not found at $COOKIE_EXTRACTOR"
         exit 1
