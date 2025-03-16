@@ -5,9 +5,12 @@ This project implements an OpenAI-compatible reverse proxy server for Grok, allo
 ## Features
 
 - OpenAI-compatible API endpoints
+  - `/v1/chat/completions` - For generating chat responses
+  - `/v1/models` - For listing available models
 - Conversion between OpenAI format and Grok format
 - Support for system messages (as custom instructions for Grok)
 - Mapping of temperature to reasoning mode
+- Verbose logging option for debugging
 - Error handling and validation
 
 ## Getting Started
@@ -32,9 +35,23 @@ swift build
 swift run
 ```
 
+### Running with Verbose Logging
+
+For debugging purposes, you can enable verbose logging to see detailed request and response information:
+
+```bash
+# Using command line flag
+swift run App --verbose
+
+# Or using environment variable
+VERBOSE=true swift run
+```
+
 ## Usage
 
-The server exposes an OpenAI-compatible endpoint at:
+The server exposes OpenAI-compatible endpoints:
+
+### Chat Completions
 
 ```
 POST /v1/chat/completions
@@ -79,7 +96,43 @@ Response:
 }
 ```
 
+### Models
+
+```
+GET /v1/models
+```
+
+Response:
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "gpt-3.5-turbo",
+      "object": "model",
+      "created": 1677858242,
+      "owned_by": "grok"
+    },
+    {
+      "id": "gpt-4",
+      "object": "model",
+      "created": 1677858242,
+      "owned_by": "grok"
+    },
+    {
+      "id": "grok-3",
+      "object": "model",
+      "created": 1677858242,
+      "owned_by": "grok"
+    }
+  ]
+}
+```
+
 ## Configuration
+
+### Grok Credentials
 
 The application will try to find Grok credentials in the following order:
 
@@ -98,6 +151,12 @@ Example `credentials.json` file:
   "sso-rw": "your-sso-rw-token"
 }
 ```
+
+### Application Settings
+
+| Option | Environment Variable | Command Line Flag | Description |
+|--------|---------------------|-------------------|-------------|
+| Verbose Logging | `VERBOSE=true` | `--verbose` | Enables detailed logging of requests and responses |
 
 ## Parameter Mapping
 
