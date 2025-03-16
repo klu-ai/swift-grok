@@ -185,14 +185,14 @@ struct MessageCommand: ParsableCommand {
         // Initialization message
         print("Calling Grok API...".cyan)
         print("Sending: \(message)".cyan)
-        print("Thinking...".blue)
+        
         
         do {
             // Try to initialize the client
             _ = try app.initializeClient()
             
             if options.stream {
-                print("Streaming...".blue)
+                //print("Thinking...".blue)
                 let stream = try await app.streamMsg(
                     message: message,
                     enableReasoning: options.reasoning,
@@ -201,7 +201,7 @@ struct MessageCommand: ParsableCommand {
                     customInstructions: options.noCustomInstructions ? Self.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
                     temporary: options.privateMode
                 )
-                
+                print("Thinking...".blue)
                 var isFirstChunk = true
                 for try await response in stream {
                     formatter.printStreamingChunk(
@@ -212,7 +212,7 @@ struct MessageCommand: ParsableCommand {
                     isFirstChunk = false
                 }
             } else {
-                print("Thinking...".blue)
+                //print("Thinking...".blue)
                 // Send the message
                 let response = try await app.msg(
                     message: message,
@@ -222,7 +222,7 @@ struct MessageCommand: ParsableCommand {
                     customInstructions: options.noCustomInstructions ? Self.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
                     temporary: options.privateMode
                 )
-                
+                print("Thinking...".blue)
                 // Display the response
                 formatter.printResponse(
                     response,
@@ -481,7 +481,7 @@ struct GrokCLI {
             
             do {
                 if enableStream {
-                    print("Streaming...".blue)
+                    
                     let stream = try await app.streamMsg(
                         message: message,
                         enableReasoning: enableReasoning,
@@ -490,7 +490,7 @@ struct GrokCLI {
                         customInstructions: enableNoCustomInstructions ? ChatCommand.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
                         temporary: enablePrivate
                     )
-                    
+                    print("Thinking...".blue)
                     var isFirstChunk = true
                     for try await response in stream {
                         formatter.printStreamingChunk(
@@ -501,7 +501,7 @@ struct GrokCLI {
                         isFirstChunk = false
                     }
                 } else {
-                    print("Thinking...".blue)
+                    
                     // Send the message to Grok
                     let response = try await app.msg(
                         message: message,
@@ -511,7 +511,7 @@ struct GrokCLI {
                         customInstructions: enableNoCustomInstructions ? ChatCommand.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
                         temporary: enablePrivate
                     )
-                    
+                    print("Thinking...".blue)
                     // Format and display the response
                     formatter.printResponse(
                         response,
@@ -720,7 +720,7 @@ struct GrokCLI {
                 
                 do {
                     if currentStream {
-                        print("Streaming...".blue)
+                        
                         let stream = try await app.streamMsg(
                             message: ChatCommand.hiddenMode,
                             enableReasoning: false,
@@ -729,7 +729,7 @@ struct GrokCLI {
                             customInstructions: "",
                             temporary: true
                         )
-                        
+                        print("Thinking...".blue)
                         var isFirstChunk = true
                         for try await response in stream {
                             formatter.printStreamingChunk(
@@ -740,7 +740,7 @@ struct GrokCLI {
                             isFirstChunk = false
                         }
                     } else {
-                        print("Thinking...".blue)
+                        
                         // Send the hidden mode message to Grok
                         let response = try await app.msg(
                             message: ChatCommand.hiddenMode,
@@ -750,7 +750,7 @@ struct GrokCLI {
                             customInstructions: "",
                             temporary: true
                         )
-                        
+                        print("Thinking...".blue)
                         // Format and display the response
                         formatter.printResponse(
                             response,
