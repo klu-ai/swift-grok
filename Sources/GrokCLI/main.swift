@@ -205,19 +205,27 @@ struct MessageCommand: ParsableCommand {
             print("Thinking...".blue)
             
             if options.stream {
+                var accumulatedMessage = ""
                 var isFirstChunk = true
                 for try await response in stream {
                     if response.isSoftStop && response.message.isEmpty {
                         continue
                     }
                     if response.isFinal {
-                        formatter.printSources(webSearchResults: response.webSearchResults, xposts: response.xposts)
+                        if accumulatedMessage.isEmpty {
+                            formatter.printResponse(response.message, webSearchResults: response.webSearchResults, xposts: response.xposts)
+                        } else {
+                            formatter.printSources(webSearchResults: response.webSearchResults, xposts: response.xposts)
+                        }
                     } else {
+                        accumulatedMessage += response.message
                         formatter.printChunk(response.message, isFirst: isFirstChunk)
                         isFirstChunk = false
                     }
                 }
-                print("")
+                if !accumulatedMessage.isEmpty {
+                    print("")
+                }
             } else {
                 var finalResponse: ConversationResponse?
                 for try await response in stream {
@@ -498,19 +506,27 @@ struct GrokCLI {
                 print("Thinking...".blue)
                 
                 if enableStream {
+                    var accumulatedMessage = ""
                     var isFirstChunk = true
                     for try await response in stream {
                         if response.isSoftStop && response.message.isEmpty {
                             continue
                         }
                         if response.isFinal {
-                            formatter.printSources(webSearchResults: response.webSearchResults, xposts: response.xposts)
+                            if accumulatedMessage.isEmpty {
+                                formatter.printResponse(response.message, webSearchResults: response.webSearchResults, xposts: response.xposts)
+                            } else {
+                                formatter.printSources(webSearchResults: response.webSearchResults, xposts: response.xposts)
+                            }
                         } else {
+                            accumulatedMessage += response.message
                             formatter.printChunk(response.message, isFirst: isFirstChunk)
                             isFirstChunk = false
                         }
                     }
-                    print("")
+                    if !accumulatedMessage.isEmpty {
+                        print("")
+                    }
                 } else {
                     var finalResponse: ConversationResponse?
                     for try await response in stream {
@@ -739,19 +755,27 @@ struct GrokCLI {
                     print("Thinking...".blue)
                     
                     if currentStream {
+                        var accumulatedMessage = ""
                         var isFirstChunk = true
                         for try await response in stream {
                             if response.isSoftStop && response.message.isEmpty {
                                 continue
                             }
                             if response.isFinal {
-                                formatter.printSources(webSearchResults: response.webSearchResults, xposts: response.xposts)
+                                if accumulatedMessage.isEmpty {
+                                    formatter.printResponse(response.message, webSearchResults: response.webSearchResults, xposts: response.xposts)
+                                } else {
+                                    formatter.printSources(webSearchResults: response.webSearchResults, xposts: response.xposts)
+                                }
                             } else {
+                                accumulatedMessage += response.message
                                 formatter.printChunk(response.message, isFirst: isFirstChunk)
                                 isFirstChunk = false
                             }
                         }
-                        print("")
+                        if !accumulatedMessage.isEmpty {
+                            print("")
+                        }
                     } else {
                         var finalResponse: ConversationResponse?
                         for try await response in stream {
@@ -893,19 +917,27 @@ struct GrokCLI {
                 )
                 
                 if currentStream {
+                    var accumulatedMessage = ""
                     var isFirstChunk = true
                     for try await response in stream {
                         if response.isSoftStop && response.message.isEmpty {
                             continue
                         }
                         if response.isFinal {
-                            formatter.printSources(webSearchResults: response.webSearchResults, xposts: response.xposts)
+                            if accumulatedMessage.isEmpty {
+                                formatter.printResponse(response.message, webSearchResults: response.webSearchResults, xposts: response.xposts)
+                            } else {
+                                formatter.printSources(webSearchResults: response.webSearchResults, xposts: response.xposts)
+                            }
                         } else {
+                            accumulatedMessage += response.message
                             formatter.printChunk(response.message, isFirst: isFirstChunk)
                             isFirstChunk = false
                         }
                     }
-                    print("")
+                    if !accumulatedMessage.isEmpty {
+                        print("")
+                    }
                 } else {
                     var finalResponse: ConversationResponse?
                     for try await response in stream {
@@ -1012,19 +1044,27 @@ struct GrokCLI {
             
             if enableStream {
                 // If streaming is enabled, print each chunk as it comes in
+                var accumulatedMessage = ""
                 var isFirstChunk = true
                 for try await response in stream {
                     if response.isSoftStop && response.message.isEmpty {
                         continue
                     }
                     if response.isFinal {
-                        formatter.printSources(webSearchResults: response.webSearchResults, xposts: response.xposts)
+                        if accumulatedMessage.isEmpty {
+                            formatter.printResponse(response.message, webSearchResults: response.webSearchResults, xposts: response.xposts)
+                        } else {
+                            formatter.printSources(webSearchResults: response.webSearchResults, xposts: response.xposts)
+                        }
                     } else {
+                        accumulatedMessage += response.message
                         formatter.printChunk(response.message, isFirst: isFirstChunk)
                         isFirstChunk = false
                     }
                 }
-                print("")
+                if !accumulatedMessage.isEmpty {
+                    print("")
+                }
             } else {
                 // If streaming is disabled, collect the responses and only show the final one
                 var finalResponse: ConversationResponse?
