@@ -111,89 +111,56 @@ struct ChatCompletionsController: RouteCollection {
         enableReasoning: Bool,
         customInstructions: String
     ) async throws -> Vapor.Response {
-        // For now, we'll simulate streaming by chunking the complete response
-        let response = try await grokClient.sendMessage(
+        let stream = try await grokClient.streamMessage(
             message: userMessage,
             enableReasoning: enableReasoning,
             customInstructions: customInstructions,
             temporary: true
         )
         
-        // Generate a response ID for the entire stream
         let responseId = UUID().uuidString
-        
-        // Split the message into chunks (for demonstration)
-        // In a real implementation, this would come from Grok's streaming API
-        let chunkSize = 10
-        var chunks = [String]()
-        let message = response.message
-        
-        // Chunk the message into pieces
-        for i in stride(from: 0, to: message.count, by: chunkSize) {
-            let endIndex = min(i + chunkSize, message.count)
-            let startIndex = message.index(message.startIndex, offsetBy: i)
-            let endStringIndex = message.index(message.startIndex, offsetBy: endIndex)
-            chunks.append(String(message[startIndex..<endStringIndex]))
-        }
-        
-        // Set up the stream response
         let streamResponse = Vapor.Response(status: .ok)
         streamResponse.headers.contentType = HTTPMediaType(type: "text", subType: "event-stream")
         
-        // Create a body stream according to Vapor docs
         streamResponse.body = .init(stream: { writer in
-            // First chunk with role
-            let firstChunk = ChatCompletionChunkResponse.create(
-                id: responseId,
-                model: model,
-                chunk: chunks.first ?? "",
-                includeRole: true
-            )
-            let firstChunkData = try! JSONEncoder().encode(firstChunk)
-            let firstChunkString = "data: \(String(data: firstChunkData, encoding: .utf8)!)\n\n"
-            
-            // Write the first chunk immediately
-            _ = writer.write(.buffer(ByteBuffer(string: firstChunkString)))
-            
-            // Send remaining chunks with delays
-            for (index, chunk) in chunks.dropFirst().enumerated() {
-                // Schedule the delayed write with explicit Int64 conversion
-                _ = writer.eventLoop.scheduleTask(in: .milliseconds(Int64(100 * (index + 1)))) {
-                    let chunkResponse = ChatCompletionChunkResponse.create(
-                        id: responseId,
-                        model: model,
-                        chunk: chunk
-                    )
-                    let chunkData = try! JSONEncoder().encode(chunkResponse)
-                    let chunkString = "data: \(String(data: chunkData, encoding: .utf8)!)\n\n"
+            Task {
+                do {
+                    var isFirstChunk = true
+                    for try await response in stream {
+                        let chunkResponse: ChatCompletionChunkResponse
+                        if response.webSearchResults != nil || response.xposts != nil {
+                            // Final response
+                            chunkResponse = ChatCompletionChunkResponse.create(
+                                id: responseId,
+                                model: model,
+                                chunk: response.message,
+                                finishReason: "stop"
+                            )
+                        } else {
+                            // Streaming token
+                            chunkResponse = ChatCompletionChunkResponse.create(
+                                id: responseId,
+                                model: model,
+                                chunk: response.message,
+                                includeRole: isFirstChunk
+                            )
+                            isFirstChunk = false
+                        }
+                        
+                        let chunkData = try JSONEncoder().encode(chunkResponse)
+                        let chunkString = "data: \(String(data: chunkData, encoding: .utf8)!)\n\n"
+                        _ = writer.write(.buffer(ByteBuffer(string: chunkString)))
+                    }
                     
-                    _ = writer.write(.buffer(ByteBuffer(string: chunkString)))
+                    // Send [DONE] marker
+                    _ = writer.write(.buffer(ByteBuffer(string: "data: [DONE]\n\n")))
+                    _ = writer.write(.end)
+                } catch {
+                    let errorString = "data: {\"error\": \"\(error.localizedDescription)\"}\n\n"
+                    _ = writer.write(.buffer(ByteBuffer(string: errorString)))
+                    _ = writer.write(.end)
                 }
             }
-            
-            // Schedule the final "done" chunk with explicit Int64 conversion
-            let finalDelay = Int64(chunks.count * 100)
-            
-            _ = writer.eventLoop.scheduleTask(in: .milliseconds(finalDelay)) {
-                // Send the final chunk
-                let doneChunk = ChatCompletionChunkResponse.createDoneChunk(
-                    id: responseId,
-                    model: model
-                )
-                let doneData = try! JSONEncoder().encode(doneChunk)
-                let doneString = "data: \(String(data: doneData, encoding: .utf8)!)\n\n"
-                
-                _ = writer.write(.buffer(ByteBuffer(string: doneString)))
-                
-                // Send [DONE] marker
-                _ = writer.write(.buffer(ByteBuffer(string: "data: [DONE]\n\n")))
-                
-                // End the stream
-                _ = writer.write(.end)
-            }
-            
-            // The stream closure doesn't need to return anything
-            // The EventLoopFuture-based streaming is handled by the writer
         })
         
         return streamResponse
