@@ -22,7 +22,7 @@ struct GrokConfiguration {
         }
         
         // If no environment variables, try to load from a credentials file
-        let credentialsPath = "../credentials.json"
+        let credentialsPath = "credentials.json"
         let fileManager = FileManager.default
         
         if fileManager.fileExists(atPath: credentialsPath) {
@@ -37,6 +37,7 @@ struct GrokConfiguration {
             } catch {
                 throw GrokConfigurationError.fileReadError
             }
+
         }
         
         // Fallback to mock cookies (this will likely not work with the actual Grok API)
