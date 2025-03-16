@@ -20,7 +20,6 @@ This project implements an OpenAI-compatible reverse proxy server for Grok, allo
 - Swift 6.0 or higher
 - Vapor 4.x
 - GrokClient (from the SwiftGrok package)
-- Python 3 (for automatic credential generation)
 
 ### Installation
 
@@ -28,37 +27,13 @@ This project implements an OpenAI-compatible reverse proxy server for Grok, allo
 2. Configure Grok credentials by either:
    - Setting a `GROK_COOKIES` environment variable with a JSON string of cookie key-values
    - Creating a `credentials.json` file in the parent directory with Grok cookies
-   - **NEW: Automatic generation** - If no credentials are found, the proxy will attempt to extract them from your browser automatically during build
    - Required cookies: `x-anonuserid`, `x-challenge`, `x-signature`, `sso`, `sso-rw`
-3. Build and run the application using one of these methods:
+3. Build and run the application:
 
 ```bash
-# Option 1: Build and run manually
 swift build
 swift run
-
-# Option 2: Use the convenience build script (also handles credential setup)
-Sources/GrokProxy/build.sh
-
-# Option 3: Set up and run separately
-Sources/GrokProxy/setup.sh  # Ensures credentials and dependencies
-swift run proxy
 ```
-
-### Docker Deployment
-
-For running the proxy in Docker, detailed instructions are available in [DOCKER.md](DOCKER.md).
-
-```bash
-# Build and run with Docker
-docker compose -f Sources/GrokProxy/docker-compose.yml up --build
-```
-
-The Docker setup includes advanced credential handling that can:
-- Use an existing credentials.json file (recommended method)
-- Accept credentials via environment variables
-- Automatically generate credentials from mounted browser cookies
-- Fall back to mock credentials with appropriate warnings
 
 ### Running with Verbose Logging
 

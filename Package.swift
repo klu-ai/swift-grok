@@ -54,14 +54,7 @@ let package = Package(
                 .product(name: "NIOPosix", package: "swift-nio"),
                 "GrokClient",
             ],
-            exclude: [
-                "README.md",
-                "test_models.sh",
-                "run_verbose.sh",
-                "docker-compose.yml",
-                "Dockerfile",
-                "test_request.sh"
-            ],
+            exclude: [],
             swiftSettings: swiftSettings
         ),
         .testTarget(
