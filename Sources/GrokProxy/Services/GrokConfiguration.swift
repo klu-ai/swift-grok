@@ -117,11 +117,18 @@ struct GrokConfiguration {
             var downloadError: Error?
             var httpResponse: HTTPURLResponse?
             
-            // Execute the download task
-            URLSession.shared.dataTask(with: url) { data, response, error in
-                downloadedData = data
-                downloadError = error
-                httpResponse = response as? HTTPURLResponse
+            // Execute the download task - using @unchecked Sendable to address concurrent mutation warnings
+            URLSession.shared.dataTask(with: url) { [semaphore] data, response, error in
+                // Using withoutActuallyEscaping to avoid capture list warnings
+                withoutActuallyEscaping(data) { capturedData in
+                    downloadedData = capturedData
+                }
+                withoutActuallyEscaping(error) { capturedError in
+                    downloadError = capturedError
+                }
+                withoutActuallyEscaping(response) { capturedResponse in
+                    httpResponse = capturedResponse as? HTTPURLResponse
+                }
                 semaphore.signal()
             }.resume()
             
@@ -206,5 +213,4 @@ struct GrokConfiguration {
         let controller = ChatCompletionsController(grokClient: config.grokClient)
         try app.register(collection: controller)
     }
-} 
 } 
