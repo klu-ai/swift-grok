@@ -1794,6 +1794,12 @@ class GrokCLIApp {
                             print("Debug: X Posts: \(response.xposts?.count ?? 0)")
                         }
                         
+                        // Skip the final modelResponse to prevent duplication in streaming mode
+                        if response.webSearchResults != nil || response.xposts != nil {
+                            print("\n")
+                            continue
+                        }
+                        
                         continuation.yield(response)
                     }
                     continuation.finish()
