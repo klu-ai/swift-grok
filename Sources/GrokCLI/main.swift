@@ -27,7 +27,7 @@ struct GrokCommandOptions: ParsableArguments {
     var privateMode: Bool = false
     
     @Flag(name: .long, help: "Enable streaming responses")
-    var stream: Bool = false
+    var stream: Bool = true
 }
 
 // ChatCommand: Interactive chat session with Grok
@@ -73,7 +73,7 @@ struct ChatCommand: ParsableCommand {
     var initialMessage: [String] = []
     
     // Print the current settings status line
-    static func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool) {
+    static func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool, currentStream: Bool) {
         let personality = GrokCLIApp.shared.getCurrentPersonality()
         let personalityText = personality == .none ? "" : personality.displayName.yellow + " | "
         
@@ -82,11 +82,12 @@ struct ChatCommand: ParsableCommand {
               (currentDeepSearch ? "DeepSearch".green + " | " : "") + 
               personalityText +
               (currentNoSearch ? "No Search".red : "Realtime".green) + " | " + 
-              (currentPrivate ? "Private".red : "Saved".blue))
+              (currentPrivate ? "Private".red : "Saved".blue) + " | " +
+              (currentStream ? "Streaming".green : "Not Streaming".red))
     }
     
     // Print the current settings status line
-    func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool) {
+    func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool, currentStream: Bool) {
         let personality = GrokCLIApp.shared.getCurrentPersonality()
         let personalityText = personality == .none ? "" : personality.displayName.yellow + " | "
         
@@ -96,7 +97,8 @@ struct ChatCommand: ParsableCommand {
               (currentDeepSearch ? "DeepSearch".green + " | " : "") + 
               personalityText +
               (currentNoSearch ? "No Search".red : "Realtime".green) + " | " + 
-              (currentPrivate ? "Private".red : "Saved".blue))
+              (currentPrivate ? "Private".red : "Saved".blue) + " | " +
+              (currentStream ? "Stream".green : "Not Streaming".red))
     }
     
     // Edit custom instructions in an interactive mode
@@ -361,7 +363,7 @@ struct GrokCLI {
     }
     
     // Print the current settings status line
-    static func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool) {
+    static func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool, currentStream: Bool) {
         let personality = GrokCLIApp.shared.getCurrentPersonality()
         let personalityText = personality == .none ? "" : personality.displayName.yellow + " | "
         
@@ -371,7 +373,8 @@ struct GrokCLI {
               (currentDeepSearch ? "DeepSearch".green + " | " : "") + 
               personalityText +
               (currentNoSearch ? "No Search".red : "Realtime".green) + " | " + 
-              (currentPrivate ? "Private".red : "Saved".blue))
+              (currentPrivate ? "Private".red : "Saved".blue) + " | " +
+              (currentStream ? "Stream".green : "No Stream".red))
     }
     
     static func main() async throws {
@@ -423,7 +426,7 @@ struct GrokCLI {
         var enableNoCustomInstructions = false
         var enableNoSearch = false
         var enablePrivate = false
-        var enableStream = false
+        var enableStream = true
         
         // Parse all arguments
         for arg in args {
@@ -529,7 +532,7 @@ struct GrokCLI {
         }
         
         print("Connected to Grok! Type 'quit' to exit, 'new' to start a new thread, 'help' for commands.".green)
-        printSettingsStatus(currentReasoning: enableReasoning, currentDeepSearch: enableDeepSearch, currentNoCustomInstructions: enableNoCustomInstructions, currentNoSearch: enableNoSearch, currentPrivate: enablePrivate)
+        printSettingsStatus(currentReasoning: enableReasoning, currentDeepSearch: enableDeepSearch, currentNoCustomInstructions: enableNoCustomInstructions, currentNoSearch: enableNoSearch, currentPrivate: enablePrivate, currentStream: enableStream)
         if let conversationId = app.getCurrentConversationId() {
             print("Conversation ID: \(conversationId)".cyan)
         }
@@ -567,7 +570,7 @@ struct GrokCLI {
                 if let conversationId = app.getCurrentConversationId() {
                     print("Conversation ID: \(conversationId)".cyan)
                 }
-                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate, currentStream: currentStream)
                 continue
                 
             case _ where input.hasPrefix("/quit"):
@@ -590,7 +593,7 @@ struct GrokCLI {
             case _ where input.hasPrefix("/realtime"):
                 currentNoSearch = !currentNoSearch
                 print("Real-time data: \(currentNoSearch ? "DISABLED".red : "ENABLED".green)")
-                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate, currentStream: currentStream)
                 continue
                 
             case _ where input.hasPrefix("/custom"):
@@ -601,13 +604,13 @@ struct GrokCLI {
             case _ where input.hasPrefix("/private"):
                 currentPrivate = !currentPrivate
                 print("Private mode: \(currentPrivate ? "ENABLED".green : "DISABLED".red)")
-                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate, currentStream: currentStream)
                 continue
                 
             case _ where input.hasPrefix("/stream"):
                 currentStream = !currentStream
                 print("Streaming: \(currentStream ? "ENABLED".green : "DISABLED".red)")
-                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate, currentStream: currentStream)
                 continue
             
             case _ where input.hasPrefix("/personality"):
@@ -622,7 +625,7 @@ struct GrokCLI {
                     print("Started a new conversation with the selected personality.")
                 }
                 
-                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate, currentStream: currentStream)
                 continue
                 
             case _ where input.hasPrefix("/help"):
@@ -694,7 +697,7 @@ struct GrokCLI {
             case _ where input.hasPrefix("/reset-conversation"):
                 app.resetConversation()
                 print("Conversation reset. Starting a new conversation.".yellow)
-                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate, currentStream: currentStream)
                 continue
                 
             case _ where input.hasPrefix("/edit-instructions"):
@@ -716,7 +719,7 @@ struct GrokCLI {
                 print("Started a new special mode conversation thread.".red.bold)
                 print("Special mode activated.".red.bold)
                 currentPrivate = true
-                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate, currentStream: currentStream)
                 
                 do {
                     if currentStream {
@@ -784,7 +787,7 @@ struct GrokCLI {
             case "new conversation", "new-conversation", "reset conversation", "reset-conversation":
                 app.resetConversation()
                 print("Conversation reset. Starting a new conversation.".yellow)
-                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate, currentStream: currentStream)
                 continue
                 
             case "new":
@@ -793,7 +796,7 @@ struct GrokCLI {
                 if let conversationId = app.getCurrentConversationId() {
                     print("Conversation ID: \(conversationId)".cyan)
                 }
-                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate, currentStream: currentStream)
                 continue
                 
             case "reasoning on", "reason on":
@@ -842,7 +845,7 @@ struct GrokCLI {
                     app.resetConversation()
                     print("Started a new private conversation thread.".yellow)
                     currentPrivate = true
-                    printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
+                    printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate, currentStream: currentStream)
                 }
                 currentPrivate = true
                 print("Private mode enabled".yellow)
@@ -858,7 +861,7 @@ struct GrokCLI {
                 
             case "/clear", "/cls":
                 formatter.clearScreen()
-                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate, currentStream: currentStream)
                 continue
                 
             case "":
@@ -871,47 +874,24 @@ struct GrokCLI {
             
             // show thinking indicator
             do {
-                if currentStream {
-                    print("Streaming...".blue)
-                    let stream = try await app.streamMsg(
-                        message: input,
-                        enableReasoning: currentReasoning,
-                        enableDeepSearch: currentDeepSearch,
-                        disableSearch: currentNoSearch,
-                        customInstructions: currentNoCustomInstructions ? ChatCommand.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
-                        temporary: currentPrivate
+                print(currentStream ? "Streaming...".blue : "Thinking...".blue)
+                let stream = try await app.streamMsg(
+                    message: input,
+                    enableReasoning: currentReasoning,
+                    enableDeepSearch: currentDeepSearch,
+                    disableSearch: currentNoSearch,
+                    customInstructions: currentNoCustomInstructions ? ChatCommand.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
+                    temporary: currentPrivate
+                )
+                
+                var isFirstChunk = true
+                for try await response in stream {
+                    formatter.printStreamingChunk(
+                        response.message,
+                        isFirst: isFirstChunk,
+                        isLast: response.webSearchResults != nil || response.xposts != nil
                     )
-                    
-                    var isFirstChunk = true
-                    for try await response in stream {
-                        formatter.printStreamingChunk(
-                            response.message,
-                            isFirst: isFirstChunk,
-                            isLast: response.webSearchResults != nil || response.xposts != nil
-                        )
-                        isFirstChunk = false
-                    }
-                } else {
-                    print("Thinking...".blue)
-                    // Send the message to Grok
-                    let response = try await app.msg(
-                        message: input,
-                        enableReasoning: currentReasoning,
-                        enableDeepSearch: currentDeepSearch,
-                        disableSearch: currentNoSearch,
-                        customInstructions: currentNoCustomInstructions ? ChatCommand.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
-                        temporary: currentPrivate
-                    )
-                    
-                    // Format and display the response
-                    formatter.printResponse(
-                        response,
-                        conversationId: app.getCurrentConversationId(),
-                        responseId: app.getLastResponseId(),
-                        debug: currentNoCustomInstructions ? false : enableDebug,
-                        webSearchResults: app.getLastWebSearchResults(),
-                        xposts: app.getLastXPosts()
-                    )
+                    isFirstChunk = false
                 }
             } catch {
                 app.handleError(error, debug: enableDebug)
