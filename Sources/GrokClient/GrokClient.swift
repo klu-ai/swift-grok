@@ -180,6 +180,9 @@ internal struct StreamingResult: Codable {
     let responseId: String?
     let isThinking: Bool?
     let isSoftStop: Bool?
+    let token: String?
+    let userResponse: UserResponse?
+    let finalMetadata: FinalMetadata?
 }
 
 internal struct ConversationData: Codable {
@@ -195,10 +198,74 @@ internal struct ResponseContent: Codable {
     let finalMetadata: FinalMetadata?
 }
 
+// AnyCodable type to handle unknown types in JSON
+internal struct AnyCodable: Codable {
+    private let value: Any
+    
+    init(_ value: Any) {
+        self.value = value
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        
+        if container.decodeNil() {
+            self.value = NSNull()
+        } else if let bool = try? container.decode(Bool.self) {
+            self.value = bool
+        } else if let int = try? container.decode(Int.self) {
+            self.value = int
+        } else if let double = try? container.decode(Double.self) {
+            self.value = double
+        } else if let string = try? container.decode(String.self) {
+            self.value = string
+        } else if let array = try? container.decode([AnyCodable].self) {
+            self.value = array
+        } else if let dictionary = try? container.decode([String: AnyCodable].self) {
+            self.value = dictionary
+        } else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "AnyCodable cannot decode value")
+        }
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        
+        switch self.value {
+        case is NSNull:
+            try container.encodeNil()
+        case let bool as Bool:
+            try container.encode(bool)
+        case let int as Int:
+            try container.encode(int)
+        case let double as Double:
+            try container.encode(double)
+        case let string as String:
+            try container.encode(string)
+        case let array as [Any]:
+            try container.encode(array.map { AnyCodable($0) })
+        case let dictionary as [String: Any]:
+            try container.encode(dictionary.mapValues { AnyCodable($0) })
+        default:
+            throw EncodingError.invalidValue(self.value, EncodingError.Context(
+                codingPath: container.codingPath,
+                debugDescription: "AnyCodable cannot encode value"
+            ))
+        }
+    }
+}
+
 internal struct FinalMetadata: Codable {
     let followUpSuggestions: [String]?
     let feedbackLabels: [String]?
     let disclaimer: String?
+    let toolsUsed: [String: AnyCodable]?
+}
+
+internal struct UserResponse: Codable {
+    let responseId: String?
+    let message: String?
+    let sender: String?
 }
 
 // Add internal models for web search results and X posts
@@ -742,22 +809,27 @@ public class GrokClient {
                         }
                         
                         if let data = line.data(using: .utf8) {
-                            do {
-                                // Parse the JSON response
-                                let streamingResponse = try JSONDecoder().decode(StreamingResponse.self, from: data)
-                                
-                                // Capture responseId if available
-                                if let content = streamingResponse.result?.response,
-                                   let id = content.responseId {
+                            if isDebug {
+                                print("Debug: Received data - \(String(data: data, encoding: .utf8) ?? "Unable to decode")")
+                            }
+                            
+                            // Try to decode the response
+                            if let streamingResponse = try? JSONDecoder().decode(StreamingResponse.self, from: data) {
+                                // Capture responseId wherever we can find it
+                                if let id = streamingResponse.result?.responseId {
+                                    responseId = id
+                                } else if let id = streamingResponse.result?.response?.responseId {
+                                    responseId = id
+                                } else if let id = streamingResponse.result?.userResponse?.responseId {
                                     responseId = id
                                 }
                                 
                                 // Check for soft stop signal
-                                let isSoftStop = streamingResponse.result?.response?.isSoftStop ?? 
-                                               streamingResponse.result?.isSoftStop ?? false
+                                let isSoftStop = streamingResponse.result?.isSoftStop ?? 
+                                               streamingResponse.result?.response?.isSoftStop ?? false
                                 
-                                // Handle streaming token
-                                if let token = streamingResponse.result?.response?.token {
+                                // Process direct token in result (flat structure)
+                                if let token = streamingResponse.result?.token, !token.isEmpty {
                                     continuation.yield(ConversationResponse(
                                         message: token,
                                         conversationId: conversationId,
@@ -768,16 +840,34 @@ public class GrokClient {
                                         isSoftStop: isSoftStop,
                                         isFinal: false
                                     ))
-                                }
-                                
-                                // Skip soft stop with empty token
-                                if isSoftStop && (streamingResponse.result?.response?.token == nil || 
-                                               streamingResponse.result?.response?.token == "") {
                                     continue
                                 }
                                 
-                                // Check for complete response in modelResponse
-                                if let modelResponse = streamingResponse.result?.response?.modelResponse {
+                                // Process token in response object (nested structure)
+                                if let token = streamingResponse.result?.response?.token, !token.isEmpty {
+                                    continuation.yield(ConversationResponse(
+                                        message: token,
+                                        conversationId: conversationId,
+                                        responseId: responseId,
+                                        timestamp: Date(),
+                                        webSearchResults: nil,
+                                        xposts: nil,
+                                        isSoftStop: isSoftStop,
+                                        isFinal: false
+                                    ))
+                                    continue
+                                }
+                                
+                                // Skip soft stop with empty token
+                                if isSoftStop && (
+                                    (streamingResponse.result?.token == nil || streamingResponse.result?.token?.isEmpty == true) &&
+                                    (streamingResponse.result?.response?.token == nil || streamingResponse.result?.response?.token?.isEmpty == true)
+                                ) {
+                                    continue
+                                }
+                                
+                                // Check for complete response in direct modelResponse
+                                if let modelResponse = streamingResponse.result?.modelResponse {
                                     continuation.yield(ConversationResponse(
                                         message: modelResponse.message,
                                         conversationId: conversationId,
@@ -792,35 +882,56 @@ public class GrokClient {
                                     return
                                 }
                                 
-                                // Check for complete response in direct modelResponse
-                                if let directModelResponse = streamingResponse.result?.modelResponse {
+                                // Check for complete response in nested modelResponse
+                                if let modelResponse = streamingResponse.result?.response?.modelResponse {
                                     continuation.yield(ConversationResponse(
-                                        message: directModelResponse.message,
+                                        message: modelResponse.message,
                                         conversationId: conversationId,
                                         responseId: responseId,
                                         timestamp: Date(),
-                                        webSearchResults: directModelResponse.extractWebSearchResults(),
-                                        xposts: directModelResponse.extractXPosts(),
+                                        webSearchResults: modelResponse.extractWebSearchResults(),
+                                        xposts: modelResponse.extractXPosts(),
                                         isSoftStop: false,
                                         isFinal: true
                                     ))
                                     continuation.finish()
                                     return
                                 }
-                            } catch {
-                                // Fallback: try to parse as raw JSON and extract data
-                                // Using optional try (try?) to avoid another try-catch block
+                            } else {
+                                // Manual parsing fallback
                                 if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                                    let result = json["result"] as? [String: Any] {
                                     
-                                    // Handle token streaming
+                                    // Update responseId if available
+                                    if let id = result["responseId"] as? String {
+                                        responseId = id
+                                    }
+                                    
+                                    // Check for soft stop
+                                    let isSoftStop = result["isSoftStop"] as? Bool ?? false
+                                    
+                                    // Handle direct token
+                                    if let token = result["token"] as? String, !token.isEmpty {
+                                        continuation.yield(ConversationResponse(
+                                            message: token,
+                                            conversationId: conversationId,
+                                            responseId: responseId,
+                                            timestamp: Date(),
+                                            webSearchResults: nil,
+                                            xposts: nil,
+                                            isSoftStop: isSoftStop,
+                                            isFinal: false
+                                        ))
+                                        continue
+                                    }
+                                    
+                                    // Handle nested token in response
                                     if let response = result["response"] as? [String: Any],
-                                       let token = response["token"] as? String {
+                                       let token = response["token"] as? String, !token.isEmpty {
                                         
                                         if let respId = response["responseId"] as? String {
                                             responseId = respId
                                         }
-                                        let isSoftStop = response["isSoftStop"] as? Bool ?? false
                                         
                                         continuation.yield(ConversationResponse(
                                             message: token,
@@ -835,11 +946,11 @@ public class GrokClient {
                                         continue
                                     }
                                     
-                                    // Handle complete model response
+                                    // Handle modelResponse (complete message)
                                     if let modelResponse = result["modelResponse"] as? [String: Any],
                                        let message = modelResponse["message"] as? String {
                                         
-                                        if let respId = modelResponse["responseId"] as? String ?? result["responseId"] as? String {
+                                        if let respId = modelResponse["responseId"] as? String {
                                             responseId = respId
                                         }
                                         
@@ -914,9 +1025,6 @@ public class GrokClient {
                                         return
                                     }
                                 }
-                                
-                                // If we couldn't parse in any expected format, just continue to next line
-                                continue
                             }
                         }
                     }
