@@ -25,6 +25,9 @@ struct GrokCommandOptions: ParsableArguments {
     
     @Flag(name: .customLong("private"), help: "Enable private mode (conversations will not be saved)")
     var privateMode: Bool = false
+    
+    @Flag(name: .long, help: "Enable streaming responses")
+    var stream: Bool = false
 }
 
 // ChatCommand: Interactive chat session with Grok
@@ -176,6 +179,7 @@ struct MessageCommand: ParsableCommand {
         // Debug output
         if options.debug {
             print("Debug: Sending message: \"\(message)\"")
+            print("Debug: Streaming: \(options.stream)")
         }
         
         // Initialization message
@@ -187,25 +191,48 @@ struct MessageCommand: ParsableCommand {
             // Try to initialize the client
             _ = try app.initializeClient()
             
-            // Send the message
-            let response = try await app.msg(
-                message: message,
-                enableReasoning: options.reasoning,
-                enableDeepSearch: options.deepSearch,
-                disableSearch: options.noSearch,
-                customInstructions: options.noCustomInstructions ? Self.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
-                temporary: options.privateMode
-            )
-            
-            // Display the response
-            formatter.printResponse(
-                response,
-                conversationId: app.getCurrentConversationId(),
-                responseId: app.getLastResponseId(),
-                debug: options.debug,
-                webSearchResults: app.getLastWebSearchResults(),
-                xposts: app.getLastXPosts()
-            )
+            if options.stream {
+                print("Streaming...".blue)
+                let stream = try await app.streamMsg(
+                    message: message,
+                    enableReasoning: options.reasoning,
+                    enableDeepSearch: options.deepSearch,
+                    disableSearch: options.noSearch,
+                    customInstructions: options.noCustomInstructions ? Self.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
+                    temporary: options.privateMode
+                )
+                
+                var isFirstChunk = true
+                for try await response in stream {
+                    formatter.printStreamingChunk(
+                        response.message,
+                        isFirst: isFirstChunk,
+                        isLast: response.webSearchResults != nil || response.xposts != nil
+                    )
+                    isFirstChunk = false
+                }
+            } else {
+                print("Thinking...".blue)
+                // Send the message
+                let response = try await app.msg(
+                    message: message,
+                    enableReasoning: options.reasoning,
+                    enableDeepSearch: options.deepSearch,
+                    disableSearch: options.noSearch,
+                    customInstructions: options.noCustomInstructions ? Self.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
+                    temporary: options.privateMode
+                )
+                
+                // Display the response
+                formatter.printResponse(
+                    response,
+                    conversationId: app.getCurrentConversationId(),
+                    responseId: app.getLastResponseId(),
+                    debug: options.debug,
+                    webSearchResults: app.getLastWebSearchResults(),
+                    xposts: app.getLastXPosts()
+                )
+            }
         } catch {
             app.handleError(error, debug: options.debug)
         }
@@ -396,6 +423,7 @@ struct GrokCLI {
         var enableNoCustomInstructions = false
         var enableNoSearch = false
         var enablePrivate = false
+        var enableStream = false
         
         // Parse all arguments
         for arg in args {
@@ -413,6 +441,8 @@ struct GrokCLI {
                 enableNoSearch = true
             } else if arg == "--private" {
                 enablePrivate = true
+            } else if arg == "--stream" {
+                enableStream = true
             } else {
                 initialMessage.append(arg)
             }
@@ -432,6 +462,7 @@ struct GrokCLI {
         
         if enableDebug {
             print("Debug: initialMessage = \(initialMessage)")
+            print("Debug: Streaming = \(enableStream)")
         }
         
         // Try to initialize the client to check authentication before starting
@@ -447,28 +478,50 @@ struct GrokCLI {
         if !initialMessage.isEmpty {
             let message = initialMessage.joined(separator: " ")
             print("Sending message: \(message)".cyan)
-            print("Thinking...".blue)
             
             do {
-                // Send the message to Grok
-                let response = try await app.msg(
-                    message: message,
-                    enableReasoning: enableReasoning,
-                    enableDeepSearch: enableDeepSearch,
-                    disableSearch: enableNoSearch,
-                    customInstructions: enableNoCustomInstructions ? ChatCommand.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
-                    temporary: enablePrivate
-                )
-                
-                // Format and display the response
-                formatter.printResponse(
-                    response,
-                    conversationId: app.getCurrentConversationId(),
-                    responseId: app.getLastResponseId(),
-                    debug: enableDebug,
-                    webSearchResults: app.getLastWebSearchResults(),
-                    xposts: app.getLastXPosts()
-                )
+                if enableStream {
+                    print("Streaming...".blue)
+                    let stream = try await app.streamMsg(
+                        message: message,
+                        enableReasoning: enableReasoning,
+                        enableDeepSearch: enableDeepSearch,
+                        disableSearch: enableNoSearch,
+                        customInstructions: enableNoCustomInstructions ? ChatCommand.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
+                        temporary: enablePrivate
+                    )
+                    
+                    var isFirstChunk = true
+                    for try await response in stream {
+                        formatter.printStreamingChunk(
+                            response.message,
+                            isFirst: isFirstChunk,
+                            isLast: response.webSearchResults != nil || response.xposts != nil
+                        )
+                        isFirstChunk = false
+                    }
+                } else {
+                    print("Thinking...".blue)
+                    // Send the message to Grok
+                    let response = try await app.msg(
+                        message: message,
+                        enableReasoning: enableReasoning,
+                        enableDeepSearch: enableDeepSearch,
+                        disableSearch: enableNoSearch,
+                        customInstructions: enableNoCustomInstructions ? ChatCommand.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
+                        temporary: enablePrivate
+                    )
+                    
+                    // Format and display the response
+                    formatter.printResponse(
+                        response,
+                        conversationId: app.getCurrentConversationId(),
+                        responseId: app.getLastResponseId(),
+                        debug: enableDebug,
+                        webSearchResults: app.getLastWebSearchResults(),
+                        xposts: app.getLastXPosts()
+                    )
+                }
             } catch {
                 app.handleError(error, debug: enableDebug)
                 return
@@ -489,6 +542,7 @@ struct GrokCLI {
         var currentNoCustomInstructions = enableNoCustomInstructions
         var currentNoSearch = enableNoSearch
         var currentPrivate = enablePrivate
+        var currentStream = enableStream
         
         while isRunning {
             // Display prompt
@@ -547,6 +601,12 @@ struct GrokCLI {
             case _ where input.hasPrefix("/private"):
                 currentPrivate = !currentPrivate
                 print("Private mode: \(currentPrivate ? "ENABLED".green : "DISABLED".red)")
+                printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
+                continue
+                
+            case _ where input.hasPrefix("/stream"):
+                currentStream = !currentStream
+                print("Streaming: \(currentStream ? "ENABLED".green : "DISABLED".red)")
                 printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 continue
             
@@ -658,28 +718,49 @@ struct GrokCLI {
                 currentPrivate = true
                 printSettingsStatus(currentReasoning: currentReasoning, currentDeepSearch: currentDeepSearch, currentNoCustomInstructions: currentNoCustomInstructions, currentNoSearch: currentNoSearch, currentPrivate: currentPrivate)
                 
-                print("Thinking...".blue)
-                
                 do {
-                    // Send the hidden mode message to Grok
-                    let response = try await app.msg(
-                        message: ChatCommand.hiddenMode,
-                        enableReasoning: false,
-                        enableDeepSearch: false,
-                        disableSearch: false,
-                        customInstructions: "",
-                        temporary: true
-                    )
-                    
-                    // Format and display the response
-                    formatter.printResponse(
-                        response,
-                        conversationId: app.getCurrentConversationId(),
-                        responseId: app.getLastResponseId(),
-                        debug: false,
-                        webSearchResults: app.getLastWebSearchResults(),
-                        xposts: app.getLastXPosts()
-                    )
+                    if currentStream {
+                        print("Streaming...".blue)
+                        let stream = try await app.streamMsg(
+                            message: ChatCommand.hiddenMode,
+                            enableReasoning: false,
+                            enableDeepSearch: false,
+                            disableSearch: false,
+                            customInstructions: "",
+                            temporary: true
+                        )
+                        
+                        var isFirstChunk = true
+                        for try await response in stream {
+                            formatter.printStreamingChunk(
+                                response.message,
+                                isFirst: isFirstChunk,
+                                isLast: response.webSearchResults != nil || response.xposts != nil
+                            )
+                            isFirstChunk = false
+                        }
+                    } else {
+                        print("Thinking...".blue)
+                        // Send the hidden mode message to Grok
+                        let response = try await app.msg(
+                            message: ChatCommand.hiddenMode,
+                            enableReasoning: false,
+                            enableDeepSearch: false,
+                            disableSearch: false,
+                            customInstructions: "",
+                            temporary: true
+                        )
+                        
+                        // Format and display the response
+                        formatter.printResponse(
+                            response,
+                            conversationId: app.getCurrentConversationId(),
+                            responseId: app.getLastResponseId(),
+                            debug: false,
+                            webSearchResults: app.getLastWebSearchResults(),
+                            xposts: app.getLastXPosts()
+                        )
+                    }
                 } catch {
                     app.handleError(error, debug: enableDebug)
                     continue
@@ -788,29 +869,49 @@ struct GrokCLI {
                 break
             }
             
-            // Show "thinking" indicator
-            print("Thinking...".blue)
-            
             do {
-                // Send the message to Grok
-                let response = try await app.msg(
-                    message: input,
-                    enableReasoning: currentReasoning,
-                    enableDeepSearch: currentDeepSearch,
-                    disableSearch: currentNoSearch,
-                    customInstructions: currentNoCustomInstructions ? ChatCommand.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
-                    temporary: currentPrivate
-                )
-                
-                // Format and display the response
-                formatter.printResponse(
-                    response,
-                    conversationId: app.getCurrentConversationId(),
-                    responseId: app.getLastResponseId(),
-                    debug: currentNoCustomInstructions ? false : enableDebug,
-                    webSearchResults: app.getLastWebSearchResults(),
-                    xposts: app.getLastXPosts()
-                )
+                if currentStream {
+                    print("Streaming...".blue)
+                    let stream = try await app.streamMsg(
+                        message: input,
+                        enableReasoning: currentReasoning,
+                        enableDeepSearch: currentDeepSearch,
+                        disableSearch: currentNoSearch,
+                        customInstructions: currentNoCustomInstructions ? ChatCommand.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
+                        temporary: currentPrivate
+                    )
+                    
+                    var isFirstChunk = true
+                    for try await response in stream {
+                        formatter.printStreamingChunk(
+                            response.message,
+                            isFirst: isFirstChunk,
+                            isLast: response.webSearchResults != nil || response.xposts != nil
+                        )
+                        isFirstChunk = false
+                    }
+                } else {
+                    print("Thinking...".blue)
+                    // Send the message to Grok
+                    let response = try await app.msg(
+                        message: input,
+                        enableReasoning: currentReasoning,
+                        enableDeepSearch: currentDeepSearch,
+                        disableSearch: currentNoSearch,
+                        customInstructions: currentNoCustomInstructions ? ChatCommand.defaultCustomInstructions : GrokCLI.getCustomInstructions(),
+                        temporary: currentPrivate
+                    )
+                    
+                    // Format and display the response
+                    formatter.printResponse(
+                        response,
+                        conversationId: app.getCurrentConversationId(),
+                        responseId: app.getLastResponseId(),
+                        debug: currentNoCustomInstructions ? false : enableDebug,
+                        webSearchResults: app.getLastWebSearchResults(),
+                        xposts: app.getLastXPosts()
+                    )
+                }
             } catch {
                 app.handleError(error, debug: enableDebug)
             }
@@ -1067,7 +1168,7 @@ struct GrokCLI {
                 print("\nLoading conversation \"\(selected.title)\"...".green)
                 let responses = try await app.loadConversation(conversationId: selected.conversationId)
                 
-                if enableDebug {
+                if app.getDebugMode() {
                     print("Debug: Loaded \(responses.count) responses")
                 }
                 
@@ -1170,6 +1271,38 @@ class OutputFormatter {
         print("")  // Empty line after response
     }
     
+    func printStreamingChunk(_ chunk: String, isFirst: Bool, isLast: Bool) {
+        if isFirst {
+            print("\n" + "Grok:".green.bold, terminator: "")
+        }
+        
+        if useMarkdown {
+            printMarkdown(chunk)
+        } else {
+            print(chunk, terminator: "")
+        }
+        
+        if isLast {
+            // Show sources information if available (these are updated in GrokCLIApp)
+            let webSearchCount = GrokCLIApp.shared.getLastWebSearchResults()?.count ?? 0
+            let xpostsCount = GrokCLIApp.shared.getLastXPosts()?.count ?? 0
+            
+            if webSearchCount > 0 || xpostsCount > 0 {
+                print("\n" + "Sources:".cyan)
+                if webSearchCount > 0 {
+                    print("Web search results: \(webSearchCount)".yellow)
+                }
+                if xpostsCount > 0 {
+                    print("X posts: \(xpostsCount)".yellow)
+                }
+            }
+            
+            print("")  // Empty line after response
+        }
+        
+        fflush(stdout) // Ensure output is flushed immediately
+    }
+    
     func printError(_ message: String) {
         print(message.red)
     }
@@ -1189,6 +1322,7 @@ class OutputFormatter {
         - \("/search".yellow): Toggle deep search on/off
         - \("/realtime".yellow): Toggle real-time data on/off
         - \("/private".yellow): Toggle private mode on/off 
+        - \("/stream".yellow): Toggle streaming responses on/off
         - \("/personality".yellow): Choose Grok personality
         - \("/custom-instructions".yellow): Toggle custom instructions 
         - \("/edit-instructions".yellow): Edit custom instructions
@@ -1201,6 +1335,7 @@ class OutputFormatter {
         - \("DeepSearch".yellow): Conduct in-depth analysis with research agent
         - \("Realtime".yellow): Enables real-time data from web and X search
         - \("Private Mode".yellow): When enabled, conversations will not be saved
+        - \("Streaming".yellow): Displays responses as they are generated
         - \("Personality".yellow): Interact with different Grok personalities
         - \("Custom Instructions".yellow): Enables/disables custom personality for the assistant
         
@@ -1597,6 +1732,77 @@ class GrokCLIApp {
                 print("Debug: Error sending message: \(error.localizedDescription)")
             }
             throw error
+        }
+    }
+    
+    func streamMsg(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, disableSearch: Bool = false, customInstructions: String = "", temporary: Bool = false, personalityType: GrokClient.PersonalityType? = nil) async throws -> AsyncThrowingStream<ConversationResponse, Error> {
+        let personality = personalityType ?? currentPersonality
+        
+        if isDebug {
+            print("Debug: Streaming message to Grok:")
+            print("Debug: - Message: \(message)")
+            print("Debug: - Reasoning: \(enableReasoning)")
+            print("Debug: - Deep Search: \(enableDeepSearch)")
+            print("Debug: - Disable Search: \(disableSearch)")
+            print("Debug: - Custom Instructions: \(customInstructions.isEmpty ? "None" : "Enabled")")
+            print("Debug: - Private Mode: \(temporary ? "ON" : "OFF")")
+            print("Debug: - Personality: \(personality.displayName)")
+            if let conversationId = currentConversationId {
+                print("Debug: - Conversation ID: \(conversationId)")
+                if let responseId = lastResponseId {
+                    print("Debug: - Parent Response ID: \(responseId)")
+                }
+            } else {
+                print("Debug: - Starting new conversation")
+            }
+        }
+        
+        let client = try initializeClient()
+        
+        if isDebug {
+            print("Debug: Client initialized, starting stream...")
+        }
+        
+        let stream = try await client.streamMessage(
+            message: message,
+            enableReasoning: enableReasoning,
+            enableDeepSearch: enableDeepSearch,
+            disableSearch: disableSearch,
+            customInstructions: customInstructions,
+            temporary: temporary,
+            personalityType: personality
+        )
+        
+        return AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    for try await response in stream {
+                        // Update conversation context with each chunk
+                        if currentConversationId == nil {
+                            currentConversationId = response.conversationId
+                        }
+                        lastResponseId = response.responseId
+                        lastWebSearchResults = response.webSearchResults
+                        lastXPosts = response.xposts
+                        
+                        if isDebug {
+                            print("Debug: Stream chunk received, length: \(response.message.count) characters")
+                            print("Debug: Conversation ID: \(response.conversationId)")
+                            print("Debug: Response ID: \(response.responseId)")
+                            print("Debug: Web Search Results: \(response.webSearchResults?.count ?? 0)")
+                            print("Debug: X Posts: \(response.xposts?.count ?? 0)")
+                        }
+                        
+                        continuation.yield(response)
+                    }
+                    continuation.finish()
+                } catch {
+                    if isDebug {
+                        print("Debug: Streaming error: \(error.localizedDescription)")
+                    }
+                    continuation.finish(throwing: error)
+                }
+            }
         }
     }
     
