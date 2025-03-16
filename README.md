@@ -2,7 +2,7 @@
 
 <img width="922" alt="image" src="https://github.com/user-attachments/assets/f4a72dfd-5c9f-480c-9ef4-c888631cae2f" />
 
-SwiftGrok is a Swift package that provides a client for interacting with the Grok AI API developed by xAI. It includes both a programmatic API through `GrokClient` and a command-line interface (CLI) tool named `grok` for terminal-based interactions with Grok. The package supports features such as multi-turn conversations, reasoning mode, deep search capabilities, and custom instructions, making it suitable for developers building AI-driven applications or users seeking direct command-line access to Grok.
+SwiftGrok is a Swift package that provides a client library (`GrokClient`) for interacting with the Grok AI API developed by xAI. This comes with two implementations of the client, an OpenAI-compatible proxy server (`GrokProxy`) and a command-line interface (CLI) tool named `grok` for terminal-based interactions. The package supports features such as multi-turn conversations, reasoning mode, deep search capabilities, and custom instructions, making it perfect for Swift developers building AI-driven applications, integrating with OpenAI-compatible tools, or users seeking direct command-line access to Grok.
 
 This README provides detailed instructions for installation, usage, and configuration, along with examples to help you get started. The package is designed to be extensible and integrates seamlessly into Swift projects via the Swift Package Manager.
 
