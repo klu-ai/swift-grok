@@ -13,6 +13,18 @@ struct GrokConfiguration {
     let grokClient: GrokClient
     
     init(from environment: Environment) throws {
+        // First, set up a default mock client as fallback
+        let mockCookies = [
+            "x-anonuserid": "mock-user-id",
+            "x-challenge": "mock-challenge",
+            "x-signature": "mock-signature",
+            "sso": "mock-sso",
+            "sso-rw": "mock-sso-rw"
+        ]
+        
+        // Initialize with mock cookies as a fallback (this ensures self.grokClient is always initialized)
+        self.grokClient = try GrokClient(cookies: mockCookies, isDebug: true)
+        
         // Try to load credentials from environment variables first
         if let cookiesJson = Environment.get("GROK_COOKIES"),
            let cookiesData = cookiesJson.data(using: .utf8),
@@ -33,23 +45,21 @@ struct GrokConfiguration {
                 if let cookies = try JSONSerialization.jsonObject(with: data) as? [String: String], !cookies.isEmpty {
                     self.grokClient = try GrokClient(cookies: cookies)
                     return
-                } else {
-                    throw GrokConfigurationError.invalidCredentialsFile
                 }
             } catch {
-                throw GrokConfigurationError.fileReadError
+                print("Error loading credentials.json: \(error.localizedDescription)")
+                // Continue with mock cookies
             }
         } else {
             // Attempt to generate credentials if they don't exist
             do {
-                try generateCredentials(to: credentialsPath)
-                // Now try to load the newly generated credentials
-                let data = try Data(contentsOf: URL(fileURLWithPath: credentialsPath))
-                if let cookies = try JSONSerialization.jsonObject(with: data) as? [String: String], !cookies.isEmpty {
-                    self.grokClient = try GrokClient(cookies: cookies)
-                    return
-                } else {
-                    throw GrokConfigurationError.invalidCredentialsFile
+                if try Self.generateCredentials(to: credentialsPath) {
+                    // Now try to load the newly generated credentials
+                    let data = try Data(contentsOf: URL(fileURLWithPath: credentialsPath))
+                    if let cookies = try JSONSerialization.jsonObject(with: data) as? [String: String], !cookies.isEmpty {
+                        self.grokClient = try GrokClient(cookies: cookies)
+                        return
+                    }
                 }
             } catch {
                 // Log the error but continue with mock cookies
@@ -57,21 +67,13 @@ struct GrokConfiguration {
             }
         }
         
-        // Fallback to mock cookies (this will likely not work with the actual Grok API)
-        let mockCookies = [
-            "x-anonuserid": "mock-user-id",
-            "x-challenge": "mock-challenge",
-            "x-signature": "mock-signature",
-            "sso": "mock-sso",
-            "sso-rw": "mock-sso-rw"
-        ]
-        
-        // This will likely fail in a real environment, but allows for compilation
-        self.grokClient = try GrokClient(cookies: mockCookies, isDebug: true)
+        // At this point, we're using the mock cookies initialized at the start
+        print("Warning: Using mock cookies - API requests will likely fail.")
     }
     
     // Method to generate credentials using the cookie_extractor.py script
-    private func generateCredentials(to outputPath: String) throws {
+    // Made static to avoid 'self' usage before initialization
+    private static func generateCredentials(to outputPath: String) throws -> Bool {
         print("Credentials file not found. Attempting to generate...")
         
         // Determine the path to the script relative to the current executable
@@ -107,11 +109,6 @@ struct GrokConfiguration {
             // URL for the cookie extractor script
             guard let url = URL(string: "https://raw.githubusercontent.com/klu-ai/swift-grok/refs/heads/main/Scripts/cookie_extractor.py") else {
                 throw GrokConfigurationError.credentialsGenerationFailed
-            }
-            
-            // Download the script
-            let downloadTask = URLSession.shared.dataTask(with: url) { data, response, error in
-                // This is a synchronous implementation within the async context
             }
             
             // Create a semaphore for synchronous download
@@ -173,18 +170,20 @@ struct GrokConfiguration {
                 if let output = String(data: data, encoding: .utf8) {
                     print("Cookie extraction failed with output: \(output)")
                 }
-                throw GrokConfigurationError.credentialsGenerationFailed
+                return false
             }
             
             print("Successfully generated credentials file at: \(outputPath)")
+            return true
         } catch {
             print("Failed to run cookie extractor: \(error.localizedDescription)")
-            throw GrokConfigurationError.credentialsGenerationFailed
+            return false
         }
     }
     
     // Helper method to find the project root directory
-    private func findProjectRoot() -> URL? {
+    // Made static to avoid 'self' usage before initialization
+    private static func findProjectRoot() -> URL? {
         let fileManager = FileManager.default
         var currentURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         
@@ -207,4 +206,5 @@ struct GrokConfiguration {
         let controller = ChatCompletionsController(grokClient: config.grokClient)
         try app.register(collection: controller)
     }
+} 
 } 
