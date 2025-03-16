@@ -56,15 +56,6 @@ private func ensureCredentialsExist(_ environment: Environment) throws {
         
         // Create a temporary GrokConfiguration to generate credentials
         do {
-            // Create the mock cookies so initialization succeeds
-            let mockCookies = [
-                "x-anonuserid": "mock-user-id",
-                "x-challenge": "mock-challenge",
-                "x-signature": "mock-signature",
-                "sso": "mock-sso",
-                "sso-rw": "mock-sso-rw"
-            ]
-            
             // Instead of creating a GrokClient directly, we'll check if the cookie extractor script exists
             // and try to run it directly
             let scriptPaths = [
@@ -113,9 +104,6 @@ private func ensureCredentialsExist(_ environment: Environment) throws {
                 print("Warning: Could not generate credentials.json automatically")
                 print("You may need to run 'swift run grok auth generate' to create credentials")
             }
-        } catch {
-            print("Error during credential generation: \(error.localizedDescription)")
-            print("Warning: Proxy will start with mock credentials which will likely fail with real requests")
         }
     }
 }

@@ -10,7 +10,7 @@ enum GrokConfigurationError: Error {
 }
 
 struct GrokConfiguration {
-    let grokClient: GrokClient
+    var grokClient: GrokClient
     
     init(from environment: Environment) throws {
         // First, set up a default mock client as fallback
@@ -113,27 +113,31 @@ struct GrokConfiguration {
             
             // Create a semaphore for synchronous download
             let semaphore = DispatchSemaphore(value: 0)
-            var downloadedData: Data?
-            var downloadError: Error?
-            var httpResponse: HTTPURLResponse?
             
-            // Execute the download task - using @unchecked Sendable to address concurrent mutation warnings
-            URLSession.shared.dataTask(with: url) { [semaphore] data, response, error in
-                // Using withoutActuallyEscaping to avoid capture list warnings
-                withoutActuallyEscaping(data) { capturedData in
-                    downloadedData = capturedData
-                }
-                withoutActuallyEscaping(error) { capturedError in
-                    downloadError = capturedError
-                }
-                withoutActuallyEscaping(response) { capturedResponse in
-                    httpResponse = capturedResponse as? HTTPURLResponse
+            // Create thread-safe variables using a dedicated synchronization queue
+            let syncQueue = DispatchQueue(label: "com.grok.download.sync")
+            var _downloadedData: Data?
+            var _downloadError: Error?
+            var _httpResponse: HTTPURLResponse?
+            
+            // Execute the download task with thread-safe approach
+            let task = URLSession.shared.dataTask(with: url) { data, response, error in
+                syncQueue.sync {
+                    _downloadedData = data
+                    _downloadError = error
+                    _httpResponse = response as? HTTPURLResponse
                 }
                 semaphore.signal()
-            }.resume()
+            }
+            task.resume()
             
             // Wait for download to complete
             _ = semaphore.wait(timeout: .distantFuture)
+            
+            // Access the results in a thread-safe way
+            let (downloadedData, downloadError, httpResponse) = syncQueue.sync {
+                return (_downloadedData, _downloadError, _httpResponse)
+            }
             
             // Check for download errors
             if let error = downloadError {
