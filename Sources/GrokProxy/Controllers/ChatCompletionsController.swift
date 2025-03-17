@@ -1,8 +1,10 @@
 import Vapor
+import Logging
 @preconcurrency import GrokClient
 
 // We're removing the Sendable conformance since GrokClient isn't Sendable
 struct ChatCompletionsController: RouteCollection {
+    private static let logger = Logger(label: "ChatCompletionsController")
     private let grokClient: GrokClient
     
     init(grokClient: GrokClient) {
@@ -67,6 +69,9 @@ struct ChatCompletionsController: RouteCollection {
             
             // If streaming is requested, handle it differently
             if isStreaming {
+
+                Self.logger.info("Streaming request received")
+                
                 return try await handleStreamingResponse(
                     req: req,
                     grokClient: grokClient,
@@ -77,12 +82,16 @@ struct ChatCompletionsController: RouteCollection {
                 )
             } else {
                 // Non-streaming response
+                Self.logger.info("Non-streaming request received")
                 let response = try await grokClient.sendMessage(
                     message: lastUserMessage,
                     enableReasoning: enableReasoning,
                     customInstructions: systemMessage ?? "",
                     temporary: true // Don't save in Grok's history
                 )
+                
+                Self.logger.info("result from grok: \(response.message)")
+                
                 
                 // 5. Format the response to match OpenAI's format
                 let responseData = ChatCompletionResponse.create(
@@ -117,6 +126,8 @@ struct ChatCompletionsController: RouteCollection {
             customInstructions: customInstructions,
             temporary: true
         )
+        
+        print("I am here dawg")
         
         let responseId = UUID().uuidString
         let streamResponse = Vapor.Response(status: .ok)
