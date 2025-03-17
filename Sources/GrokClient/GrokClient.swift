@@ -419,25 +419,25 @@ public class GrokClient {
         self.cookies = cookies
         self.isDebug = isDebug
         
-        #if os(Linux)
-            // Linux: URLSession cookie support is limited, so skip setting cookies.
-            self.session = URLSession(configuration: .default)
-        #else
-            let configuration = URLSessionConfiguration.default
-            var httpCookies = [HTTPCookie]()
-            for (name, value) in cookies {
-                if let cookie = HTTPCookie(properties: [
-                    .domain: "grok.com",
-                    .path: "/",
-                    .name: name,
-                    .value: value
-                ]) {
-                    httpCookies.append(cookie)
-                }
+        // #if os(Linux)
+        //     // Linux: URLSession cookie support is limited, so skip setting cookies.
+        //     self.session = URLSession(configuration: .default)
+        // #else
+        let configuration = URLSessionConfiguration.default
+        var httpCookies = [HTTPCookie]()
+        for (name, value) in cookies {
+            if let cookie = HTTPCookie(properties: [
+                .domain: "grok.com",
+                .path: "/",
+                .name: name,
+                .value: value
+            ]) {
+                httpCookies.append(cookie)
             }
-            configuration.httpCookieStorage?.setCookies(httpCookies, for: URL(string: "https://grok.com"), mainDocumentURL: nil)
-            self.session = URLSession(configuration: configuration)
-        #endif
+        }
+        configuration.httpCookieStorage?.setCookies(httpCookies, for: URL(string: "https://grok.com"), mainDocumentURL: nil)
+        self.session = URLSession(configuration: configuration)
+        // #endif
     }
     
     /// Prepares the default payload with the user's message
@@ -531,6 +531,8 @@ public class GrokClient {
             personalityType: personalityType
         )
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        
+        print("CURL Request (streamMessage): \(request.curlRepresentation())")
         
         #if os(Linux)
             let (data, response) = try await session.data(for: request)
@@ -704,6 +706,8 @@ public class GrokClient {
         #else
             let (bytes, response) = try await session.bytes(for: request)
         #endif
+
+        print("CURL Request (streamMessage): \(request.curlRepresentation())")
         
         guard let httpResponse = response as? HTTPURLResponse else {
             throw GrokError.networkError(URLError(.badServerResponse))
@@ -865,7 +869,9 @@ public class GrokClient {
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         
         #if os(Linux)
+            request.setValue("Mozilla/5.0 (compatible; GrokClient/1.0; +https://grok.com)", forHTTPHeaderField: "User-Agent")
             let (data, response) = try await session.data(for: request)
+            print("Response from grok: \(response)")
         #else
             let (bytes, response) = try await session.bytes(for: request)
         #endif
@@ -1323,5 +1329,29 @@ public class GrokClient {
                 throw GrokError.decodingError(error)
             }
         }
+    }
+}
+
+// MARK: - URLRequest Extension for curl representation
+extension URLRequest {
+    func curlRepresentation() -> String {
+        var components = ["curl"]
+        if let method = self.httpMethod, method != "GET" {
+            components.append("-X \(method)")
+        }
+        if let headers = self.allHTTPHeaderFields {
+            for (key, value) in headers {
+                components.append("-H \"\(key): \(value)\"")
+            }
+        }
+        if let bodyData = self.httpBody, let body = String(data: bodyData, encoding: .utf8) {
+            // Escape single quotes in the body
+            let escapedBody = body.replacingOccurrences(of: "'", with: "'\\''")
+            components.append("--data '\(escapedBody)'")
+        }
+        if let url = self.url {
+            components.append("\"\(url.absoluteString)\"")
+        }
+        return components.joined(separator: " ")
     }
 }
