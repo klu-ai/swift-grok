@@ -19,9 +19,10 @@ public extension GrokClient {
     static func withAutoCookies(isDebug: Bool = false) throws -> GrokClient {
         // For this to work, you must add the generated GrokCookies.swift file to your project
         // We'll check for it at runtime to avoid compile-time issues
-        if let cookiesClass = NSClassFromString("GrokCookies"),
-           let method = cookiesClass.value(forKey: "cookies") as? [String: String] {
-            return try GrokClient(cookies: method, isDebug: isDebug)
+        #if canImport(ObjectiveC)
+        if let cookiesClass = NSClassFromString("GrokCookies") as? NSObject.Type,
+           let cookiesValue = cookiesClass.perform(NSSelectorFromString("cookies"))?.takeUnretainedValue() as? [String: String] {
+            return try GrokClient(cookies: cookiesValue, isDebug: isDebug)
         } else {
             // Fallback to check for a GrokCookies.swift file in standard locations
             for path in ["./GrokCookies.swift", "./Sources/GrokCookies.swift"] {
@@ -33,6 +34,10 @@ public extension GrokClient {
             }
             throw GrokError.invalidCredentials
         }
+        #else
+            // Auto cookies are not supported on platforms without ObjectiveC (e.g. Linux)
+            throw GrokError.invalidCredentials
+        #endif
     }
     
     /// Loads cookies from a Swift dictionary literal string

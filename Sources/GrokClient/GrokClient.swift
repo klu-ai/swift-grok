@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 // MARK: - Error Handling
 public enum GrokError: Error, Equatable {
@@ -419,21 +422,26 @@ public class GrokClient {
         self.cookies = cookies
         self.isDebug = isDebug
         
-        // Configure URLSession with cookies
-        let configuration = URLSessionConfiguration.default
-        var httpCookies = [HTTPCookie]()
-        for (name, value) in cookies {
-            if let cookie = HTTPCookie(properties: [
-                .domain: "grok.com",
-                .path: "/",
-                .name: name,
-                .value: value
-            ]) {
-                httpCookies.append(cookie)
+        #if os(Linux)
+            // Linux: URLSession cookie support is limited, so skip setting cookies.
+            self.session = URLSession(configuration: .default)
+        #else
+            // Configure URLSession with cookies
+            let configuration = URLSessionConfiguration.default
+            var httpCookies = [HTTPCookie]()
+            for (name, value) in cookies {
+                if let cookie = HTTPCookie(properties: [
+                    .domain: "grok.com",
+                    .path: "/",
+                    .name: name,
+                    .value: value
+                ]) {
+                    httpCookies.append(cookie)
+                }
             }
-        }
-        configuration.httpCookieStorage?.setCookies(httpCookies, for: URL(string: "https://grok.com"), mainDocumentURL: nil)
-        self.session = URLSession(configuration: configuration)
+            configuration.httpCookieStorage?.setCookies(httpCookies, for: URL(string: "https://grok.com"), mainDocumentURL: nil)
+            self.session = URLSession(configuration: configuration)
+        #endif
     }
     
     /// Prepares the default payload with the user's message
@@ -531,9 +539,11 @@ public class GrokClient {
         )
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         
-        // Create a URLSession that can handle streams
-        let (bytes, response) = try await session.bytes(for: request)
-        
+        #if os(Linux)
+            let (data, response) = try await session.data(for: request)
+#else
+            let (bytes, response) = try await session.bytes(for: request)
+#endif
         guard let httpResponse = response as? HTTPURLResponse else {
             throw GrokError.networkError(URLError(.badServerResponse))
         }
@@ -553,65 +563,132 @@ public class GrokClient {
                     var conversationId = ""
                     var responseId = ""
                     
-                    for try await line in bytes.lines {
-                        if let data = line.data(using: .utf8),
-                           let streamingResponse = try? JSONDecoder().decode(StreamingResponse.self, from: data) {
-                            
-                            // Capture conversation ID
-                            if let conversationData = streamingResponse.result?.conversation,
-                               let id = conversationData.conversationId {
-                                conversationId = id
-                            }
-                            
-                            // Capture response ID
-                            if let content = streamingResponse.result?.response,
-                               let id = content.responseId {
-                                responseId = id
-                            }
-                            
-                            // Check for soft stop signal
-                            let isSoftStop = streamingResponse.result?.response?.isSoftStop ?? 
-                                            streamingResponse.result?.isSoftStop ?? false
-                            
-                            // Yield token if present
-                            if let token = streamingResponse.result?.response?.token {
-                                continuation.yield(ConversationResponse(
-                                    message: token,
-                                    conversationId: conversationId,
-                                    responseId: responseId,
-                                    timestamp: Date(),
-                                    webSearchResults: nil,
-                                    xposts: nil,
-                                    isSoftStop: isSoftStop,
-                                    isFinal: false
-                                ))
-                            }
-                            
-                            // When we get a soft stop signal with an empty token, we don't need to yield it
-                            // This prevents an empty response being sent to the client
-                            if isSoftStop && (streamingResponse.result?.response?.token == nil || 
-                                             streamingResponse.result?.response?.token == "") {
-                                // Don't yield anything, just wait for the model response
-                                continue
-                            }
-                            
-                            // Yield complete response if present
-                            if let modelResponse = streamingResponse.result?.response?.modelResponse {
-                                continuation.yield(ConversationResponse(
-                                    message: modelResponse.message,
-                                    conversationId: conversationId,
-                                    responseId: responseId,
-                                    timestamp: Date(),
-                                    webSearchResults: modelResponse.extractWebSearchResults(),
-                                    xposts: modelResponse.extractXPosts(),
-                                    isSoftStop: false, // Final response is not a soft stop
-                                    isFinal: true
-                                ))
-                                continuation.finish()
-                                return
+                    #if os(Linux)
+                        guard let fullString = String(data: data, encoding: .utf8) else {
+                            throw GrokError.decodingError(URLError(.cannotDecodeContentData))
+                        }
+                        let lines = fullString.split(separator: "\n")
+                        for line in lines {
+                            let lineStr = String(line)
+                            if let lineData = lineStr.data(using: .utf8),
+                               let streamingResponse = try? JSONDecoder().decode(StreamingResponse.self, from: lineData) {
+                                
+                                // Capture conversation ID
+                                if let conversationData = streamingResponse.result?.conversation,
+                                   let id = conversationData.conversationId {
+                                    conversationId = id
+                                }
+                                
+                                // Capture response ID
+                                if let content = streamingResponse.result?.response,
+                                   let id = content.responseId {
+                                    responseId = id
+                                }
+                                
+                                // Check for soft stop signal
+                                let isSoftStop = streamingResponse.result?.response?.isSoftStop ?? 
+                                                streamingResponse.result?.isSoftStop ?? false
+                                
+                                // Yield token if present
+                                if let token = streamingResponse.result?.response?.token {
+                                    continuation.yield(ConversationResponse(
+                                        message: token,
+                                        conversationId: conversationId,
+                                        responseId: responseId,
+                                        timestamp: Date(),
+                                        webSearchResults: nil,
+                                        xposts: nil,
+                                        isSoftStop: isSoftStop,
+                                        isFinal: false
+                                    ))
+                                }
+                                
+                                // When we get a soft stop signal with an empty token, we don't need to yield it
+                                // This prevents an empty response being sent to the client
+                                if isSoftStop && (streamingResponse.result?.response?.token == nil || 
+                                                 streamingResponse.result?.response?.token == "") {
+                                    // Don't yield anything, just wait for the model response
+                                    continue
+                                }
+                                
+                                // Yield complete response if present
+                                if let modelResponse = streamingResponse.result?.response?.modelResponse {
+                                    continuation.yield(ConversationResponse(
+                                        message: modelResponse.message,
+                                        conversationId: conversationId,
+                                        responseId: responseId,
+                                        timestamp: Date(),
+                                        webSearchResults: modelResponse.extractWebSearchResults(),
+                                        xposts: modelResponse.extractXPosts(),
+                                        isSoftStop: false, // Final response is not a soft stop
+                                        isFinal: true
+                                    ))
+                                    continuation.finish()
+                                    return
+                                }
                             }
                         }
-                    }
+                    #else
+                        for try await line in bytes.lines {
+                            if let data = line.data(using: .utf8),
+                               let streamingResponse = try? JSONDecoder().decode(StreamingResponse.self, from: data) {
+                                
+                                // Capture conversation ID
+                                if let conversationData = streamingResponse.result?.conversation,
+                                   let id = conversationData.conversationId {
+                                    conversationId = id
+                                }
+                                
+                                // Capture response ID
+                                if let content = streamingResponse.result?.response,
+                                   let id = content.responseId {
+                                    responseId = id
+                                }
+                                
+                                // Check for soft stop signal
+                                let isSoftStop = streamingResponse.result?.response?.isSoftStop ?? 
+                                                streamingResponse.result?.isSoftStop ?? false
+                                
+                                // Yield token if present
+                                if let token = streamingResponse.result?.response?.token {
+                                    continuation.yield(ConversationResponse(
+                                        message: token,
+                                        conversationId: conversationId,
+                                        responseId: responseId,
+                                        timestamp: Date(),
+                                        webSearchResults: nil,
+                                        xposts: nil,
+                                        isSoftStop: isSoftStop,
+                                        isFinal: false
+                                    ))
+                                }
+                                
+                                // When we get a soft stop signal with an empty token, we don't need to yield it
+                                // This prevents an empty response being sent to the client
+                                if isSoftStop && (streamingResponse.result?.response?.token == nil || 
+                                                 streamingResponse.result?.response?.token == "") {
+                                    // Don't yield anything, just wait for the model response
+                                    continue
+                                }
+                                
+                                // Yield complete response if present
+                                if let modelResponse = streamingResponse.result?.response?.modelResponse {
+                                    continuation.yield(ConversationResponse(
+                                        message: modelResponse.message,
+                                        conversationId: conversationId,
+                                        responseId: responseId,
+                                        timestamp: Date(),
+                                        webSearchResults: modelResponse.extractWebSearchResults(),
+                                        xposts: modelResponse.extractXPosts(),
+                                        isSoftStop: false, // Final response is not a soft stop
+                                        isFinal: true
+                                    ))
+                                    continuation.finish()
+                                    return
+                                }
+                            }
+                        }
+                    #endif
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -650,9 +727,11 @@ public class GrokClient {
         )
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         
-        // Create a URLSession that can handle streams
-        let (bytes, response) = try await session.bytes(for: request)
-        
+        #if os(Linux)
+            let (data, response) = try await session.data(for: request)
+#else
+            let (bytes, response) = try await session.bytes(for: request)
+#endif
         guard let httpResponse = response as? HTTPURLResponse else {
             throw GrokError.networkError(URLError(.badServerResponse))
         }
@@ -673,52 +752,103 @@ public class GrokClient {
         let webSearchResults: [WebSearchResult]? = nil
         let xposts: [XPost]? = nil
         
-        for try await line in bytes.lines {
-            // Parse the JSON from each line
-            if let data = line.data(using: .utf8),
-               let streamingResponse = try? JSONDecoder().decode(StreamingResponse.self, from: data) {
-                
-                // Check for complete response
-                if let modelResponse = streamingResponse.result?.response?.modelResponse {
-                    return ConversationResponse(
-                        message: modelResponse.message,
-                        conversationId: conversationId,
-                        responseId: responseId,
-                        timestamp: Date(),
-                        webSearchResults: modelResponse.extractWebSearchResults(),
-                        xposts: modelResponse.extractXPosts(),
-                        isSoftStop: false,
-                        isFinal: true
-                    )
-                }
-                
-                // Capture the conversation ID if available
-                if let conversationData = streamingResponse.result?.conversation,
-                   let id = conversationData.conversationId {
-                    conversationId = id
-                }
-                
-                // Capture the response ID if available
-                if let content = streamingResponse.result?.response,
-                   let id = content.responseId {
-                    responseId = id
-                }
-                
-                // Skip soft stop signals with empty tokens
-                let isSoftStop = streamingResponse.result?.response?.isSoftStop ?? 
-                                streamingResponse.result?.isSoftStop ?? false
-                if isSoftStop && (streamingResponse.result?.response?.token == nil || 
-                                 streamingResponse.result?.response?.token == "") {
-                    continue
-                }
-                
-                // Accumulate token
-                if let token = streamingResponse.result?.response?.token {
-                    fullResponse += token
+        #if os(Linux)
+            if let fullString = String(data: data, encoding: .utf8) {
+                let lines = fullString.split(separator: "\n")
+                for line in lines {
+                    let lineStr = String(line)
+                    if let lineData = lineStr.data(using: .utf8),
+                       let streamingResponse = try? JSONDecoder().decode(StreamingResponse.self, from: lineData) {
+                        
+                        // Check for complete response
+                        if let modelResponse = streamingResponse.result?.response?.modelResponse {
+                            return ConversationResponse(
+                                message: modelResponse.message,
+                                conversationId: conversationId,
+                                responseId: responseId,
+                                timestamp: Date(),
+                                webSearchResults: modelResponse.extractWebSearchResults(),
+                                xposts: modelResponse.extractXPosts(),
+                                isSoftStop: false,
+                                isFinal: true
+                            )
+                        }
+                        
+                        // Capture the conversation ID if available
+                        if let conversationData = streamingResponse.result?.conversation,
+                           let id = conversationData.conversationId {
+                            conversationId = id
+                        }
+                        
+                        // Capture the response ID if available
+                        if let content = streamingResponse.result?.response,
+                           let id = content.responseId {
+                            responseId = id
+                        }
+                        
+                        // Skip soft stop signals with empty tokens
+                        let isSoftStop = streamingResponse.result?.response?.isSoftStop ?? 
+                                        streamingResponse.result?.isSoftStop ?? false
+                        if isSoftStop && (streamingResponse.result?.response?.token == nil || 
+                                         streamingResponse.result?.response?.token == "") {
+                            continue
+                        }
+                        
+                        // Accumulate token
+                        if let token = streamingResponse.result?.response?.token {
+                            fullResponse += token
+                        }
+                    }
                 }
             }
-            // Continue to next line if this one can't be parsed
-        }
+        #else
+            for try await line in bytes.lines {
+                // Parse the JSON from each line
+                if let data = line.data(using: .utf8),
+                   let streamingResponse = try? JSONDecoder().decode(StreamingResponse.self, from: data) {
+                    
+                    // Check for complete response
+                    if let modelResponse = streamingResponse.result?.response?.modelResponse {
+                        return ConversationResponse(
+                            message: modelResponse.message,
+                            conversationId: conversationId,
+                            responseId: responseId,
+                            timestamp: Date(),
+                            webSearchResults: modelResponse.extractWebSearchResults(),
+                            xposts: modelResponse.extractXPosts(),
+                            isSoftStop: false,
+                            isFinal: true
+                        )
+                    }
+                    
+                    // Capture the conversation ID if available
+                    if let conversationData = streamingResponse.result?.conversation,
+                       let id = conversationData.conversationId {
+                        conversationId = id
+                    }
+                    
+                    // Capture the response ID if available
+                    if let content = streamingResponse.result?.response,
+                       let id = content.responseId {
+                        responseId = id
+                    }
+                    
+                    // Skip soft stop signals with empty tokens
+                    let isSoftStop = streamingResponse.result?.response?.isSoftStop ?? 
+                                    streamingResponse.result?.isSoftStop ?? false
+                    if isSoftStop && (streamingResponse.result?.response?.token == nil || 
+                                     streamingResponse.result?.response?.token == "") {
+                        continue
+                    }
+                    
+                    // Accumulate token
+                    if let token = streamingResponse.result?.response?.token {
+                        fullResponse += token
+                    }
+                }
+                // Continue to next line if this one can't be parsed
+            }
+        #endif
         
         return ConversationResponse(
             message: fullResponse.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -781,9 +911,11 @@ public class GrokClient {
         
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         
-        // Create a URLSession that can handle streams
-        let (bytes, response) = try await session.bytes(for: request)
-        
+        #if os(Linux)
+            let (data, response) = try await session.data(for: request)
+#else
+            let (bytes, response) = try await session.bytes(for: request)
+#endif
         guard let httpResponse = response as? HTTPURLResponse else {
             throw GrokError.networkError(URLError(.badServerResponse))
         }
@@ -802,19 +934,103 @@ public class GrokClient {
                 do {
                     var responseId = ""
                     
-                    for try await line in bytes.lines {
-                        // Skip empty lines
-                        if line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            continue
-                        }
-                        
-                        if let data = line.data(using: .utf8) {
-                            if isDebug {
-                                print("Debug: Received data - \(String(data: data, encoding: .utf8) ?? "Unable to decode")")
+                    #if os(Linux)
+                        if let fullString = String(data: data, encoding: .utf8) {
+                            let lines = fullString.split(separator: "\n")
+                            for line in lines {
+                                let lineStr = String(line)
+                                if let lineData = lineStr.data(using: .utf8),
+                                   let streamingResponse = try? JSONDecoder().decode(StreamingResponse.self, from: lineData) {
+                                    
+                                    // Capture responseId wherever we can find it
+                                    if let id = streamingResponse.result?.responseId {
+                                        responseId = id
+                                    } else if let id = streamingResponse.result?.response?.responseId {
+                                        responseId = id
+                                    } else if let id = streamingResponse.result?.userResponse?.responseId {
+                                        responseId = id
+                                    }
+                                    
+                                    // Check for soft stop signal
+                                    let isSoftStop = streamingResponse.result?.isSoftStop ?? 
+                                                   streamingResponse.result?.response?.isSoftStop ?? false
+                                    
+                                    // Process direct token in result (flat structure)
+                                    if let token = streamingResponse.result?.token, !token.isEmpty {
+                                        continuation.yield(ConversationResponse(
+                                            message: token,
+                                            conversationId: conversationId,
+                                            responseId: responseId,
+                                            timestamp: Date(),
+                                            webSearchResults: nil,
+                                            xposts: nil,
+                                            isSoftStop: isSoftStop,
+                                            isFinal: false
+                                        ))
+                                        continue
+                                    }
+                                    
+                                    // Process token in response object (nested structure)
+                                    if let token = streamingResponse.result?.response?.token, !token.isEmpty {
+                                        continuation.yield(ConversationResponse(
+                                            message: token,
+                                            conversationId: conversationId,
+                                            responseId: responseId,
+                                            timestamp: Date(),
+                                            webSearchResults: nil,
+                                            xposts: nil,
+                                            isSoftStop: isSoftStop,
+                                            isFinal: false
+                                        ))
+                                        continue
+                                    }
+                                    
+                                    // Skip soft stop with empty token
+                                    if isSoftStop && (
+                                        (streamingResponse.result?.token == nil || streamingResponse.result?.token?.isEmpty == true) &&
+                                        (streamingResponse.result?.response?.token == nil || streamingResponse.result?.response?.token?.isEmpty == true)
+                                    ) {
+                                        continue
+                                    }
+                                    
+                                    // Check for complete response in direct modelResponse
+                                    if let modelResponse = streamingResponse.result?.modelResponse {
+                                        continuation.yield(ConversationResponse(
+                                            message: modelResponse.message,
+                                            conversationId: conversationId,
+                                            responseId: responseId,
+                                            timestamp: Date(),
+                                            webSearchResults: modelResponse.extractWebSearchResults(),
+                                            xposts: modelResponse.extractXPosts(),
+                                            isSoftStop: false,
+                                            isFinal: true
+                                        ))
+                                        continuation.finish()
+                                        return
+                                    }
+                                    
+                                    // Check for complete response in nested modelResponse
+                                    if let modelResponse = streamingResponse.result?.response?.modelResponse {
+                                        continuation.yield(ConversationResponse(
+                                            message: modelResponse.message,
+                                            conversationId: conversationId,
+                                            responseId: responseId,
+                                            timestamp: Date(),
+                                            webSearchResults: modelResponse.extractWebSearchResults(),
+                                            xposts: modelResponse.extractXPosts(),
+                                            isSoftStop: false,
+                                            isFinal: true
+                                        ))
+                                        continuation.finish()
+                                        return
+                                    }
+                                }
                             }
-                            
-                            // Try to decode the response
-                            if let streamingResponse = try? JSONDecoder().decode(StreamingResponse.self, from: data) {
+                        }
+                    #else
+                        for try await line in bytes.lines {
+                            if let data = line.data(using: .utf8),
+                               let streamingResponse = try? JSONDecoder().decode(StreamingResponse.self, from: data) {
                                 // Capture responseId wherever we can find it
                                 if let id = streamingResponse.result?.responseId {
                                     responseId = id
@@ -897,137 +1113,9 @@ public class GrokClient {
                                     continuation.finish()
                                     return
                                 }
-                            } else {
-                                // Manual parsing fallback
-                                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                                   let result = json["result"] as? [String: Any] {
-                                    
-                                    // Update responseId if available
-                                    if let id = result["responseId"] as? String {
-                                        responseId = id
-                                    }
-                                    
-                                    // Check for soft stop
-                                    let isSoftStop = result["isSoftStop"] as? Bool ?? false
-                                    
-                                    // Handle direct token
-                                    if let token = result["token"] as? String, !token.isEmpty {
-                                        continuation.yield(ConversationResponse(
-                                            message: token,
-                                            conversationId: conversationId,
-                                            responseId: responseId,
-                                            timestamp: Date(),
-                                            webSearchResults: nil,
-                                            xposts: nil,
-                                            isSoftStop: isSoftStop,
-                                            isFinal: false
-                                        ))
-                                        continue
-                                    }
-                                    
-                                    // Handle nested token in response
-                                    if let response = result["response"] as? [String: Any],
-                                       let token = response["token"] as? String, !token.isEmpty {
-                                        
-                                        if let respId = response["responseId"] as? String {
-                                            responseId = respId
-                                        }
-                                        
-                                        continuation.yield(ConversationResponse(
-                                            message: token,
-                                            conversationId: conversationId,
-                                            responseId: responseId,
-                                            timestamp: Date(),
-                                            webSearchResults: nil,
-                                            xposts: nil,
-                                            isSoftStop: isSoftStop,
-                                            isFinal: false
-                                        ))
-                                        continue
-                                    }
-                                    
-                                    // Handle modelResponse (complete message)
-                                    if let modelResponse = result["modelResponse"] as? [String: Any],
-                                       let message = modelResponse["message"] as? String {
-                                        
-                                        if let respId = modelResponse["responseId"] as? String {
-                                            responseId = respId
-                                        }
-                                        
-                                        // Extract web search results
-                                        var webSearchResults: [WebSearchResult]? = nil
-                                        if let webSearchResultsJson = modelResponse["webSearchResults"] as? [[String: Any]] {
-                                            var results: [WebSearchResult] = []
-                                            for resultJson in webSearchResultsJson {
-                                                if let url = resultJson["url"] as? String, !url.isEmpty,
-                                                   let title = resultJson["title"] as? String,
-                                                   let preview = resultJson["preview"] as? String {
-                                                    let siteName = resultJson["siteName"] as? String
-                                                    let description = resultJson["description"] as? String
-                                                    let citationId = resultJson["citationId"] as? String
-                                                    
-                                                    results.append(WebSearchResult(
-                                                        url: url,
-                                                        title: title,
-                                                        preview: preview,
-                                                        siteName: siteName?.isEmpty ?? true ? nil : siteName,
-                                                        description: description?.isEmpty ?? true ? nil : description,
-                                                        citationId: citationId?.isEmpty ?? true ? nil : citationId
-                                                    ))
-                                                }
-                                            }
-                                            if !results.isEmpty {
-                                                webSearchResults = results
-                                            }
-                                        }
-                                        
-                                        // Extract X posts
-                                        var xposts: [XPost]? = nil
-                                        if let xpostsJson = modelResponse["xposts"] as? [[String: Any]] {
-                                            var posts: [XPost] = []
-                                            for postJson in xpostsJson {
-                                                if let username = postJson["username"] as? String, !username.isEmpty,
-                                                   let name = postJson["name"] as? String,
-                                                   let text = postJson["text"] as? String,
-                                                   let postId = postJson["postId"] as? String {
-                                                    let createTime = postJson["createTime"] as? String
-                                                    let profileImageUrl = postJson["profileImageUrl"] as? String
-                                                    let citationId = postJson["citationId"] as? String
-                                                    
-                                                    posts.append(XPost(
-                                                        username: username,
-                                                        name: name,
-                                                        text: text,
-                                                        postId: postId,
-                                                        createTime: createTime?.isEmpty ?? true ? nil : createTime,
-                                                        profileImageUrl: profileImageUrl?.isEmpty ?? true ? nil : profileImageUrl,
-                                                        citationId: citationId?.isEmpty ?? true ? nil : citationId
-                                                    ))
-                                                }
-                                            }
-                                            if !posts.isEmpty {
-                                                xposts = posts
-                                            }
-                                        }
-                                        
-                                        // Yield the final response with all data
-                                        continuation.yield(ConversationResponse(
-                                            message: message,
-                                            conversationId: conversationId,
-                                            responseId: responseId,
-                                            timestamp: Date(),
-                                            webSearchResults: webSearchResults,
-                                            xposts: xposts,
-                                            isSoftStop: false,
-                                            isFinal: true
-                                        ))
-                                        continuation.finish()
-                                        return
-                                    }
-                                }
                             }
                         }
-                    }
+                    #endif
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
