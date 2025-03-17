@@ -331,9 +331,7 @@ internal struct ModelResponse: Codable {
         
         // Filter out empty posts and convert to public model
         return posts.compactMap { post in
-            // Skip empty username entries
             guard !post.username.isEmpty else { return nil }
-            
             return XPost(
                 username: post.username,
                 name: post.name,
@@ -410,7 +408,6 @@ public class GrokClient {
     /// Initializes the GrokClient with cookie credentials
     /// - Parameters:
     ///   - cookies: A dictionary of cookie name-value pairs for authentication
-    ///              Required cookies: x-anonuserid, x-challenge, x-signature, sso, sso-rw
     ///   - isDebug: Whether to print debug information (default: false)
     /// - Throws: GrokError.invalidCredentials if credentials are empty
     public init(cookies: [String: String], isDebug: Bool = false) throws {
@@ -426,7 +423,6 @@ public class GrokClient {
             // Linux: URLSession cookie support is limited, so skip setting cookies.
             self.session = URLSession(configuration: .default)
         #else
-            // Configure URLSession with cookies
             let configuration = URLSessionConfiguration.default
             var httpCookies = [HTTPCookie]()
             for (name, value) in cookies {
@@ -484,13 +480,11 @@ public class GrokClient {
             "enableSideBySide": true,
             "isPreset": false,
             "sendFinalMetadata": true,
-            // 03152025 customInstructions -> customPersonality
-            "customPersonality": customInstructions,          
+            "customPersonality": customInstructions,
             "deepsearchPreset": enableDeepSearch ? "default" : "",
             "isReasoning": enableReasoning
         ]
         
-        // Only add systemPromptName if it's not empty
         if !personalityType.rawValue.isEmpty {
             payload["systemPromptName"] = personalityType.rawValue
         }
@@ -527,7 +521,6 @@ public class GrokClient {
             request.setValue(value, forHTTPHeaderField: key)
         }
         
-        // Prepare payload
         let payload = preparePayload(
             message: message,
             enableReasoning: enableReasoning,
@@ -541,19 +534,22 @@ public class GrokClient {
         
         #if os(Linux)
             let (data, response) = try await session.data(for: request)
-#else
+        #else
             let (bytes, response) = try await session.bytes(for: request)
-#endif
+        #endif
+        
         guard let httpResponse = response as? HTTPURLResponse else {
             throw GrokError.networkError(URLError(.badServerResponse))
         }
         
-        // Handle HTTP errors
         guard (200...299).contains(httpResponse.statusCode) else {
             switch httpResponse.statusCode {
-            case 401: throw GrokError.unauthorized
-            case 404: throw GrokError.notFound
-            default: throw GrokError.apiError("HTTP Error: \(httpResponse.statusCode)")
+            case 401:
+                throw GrokError.unauthorized
+            case 404:
+                throw GrokError.notFound
+            default:
+                throw GrokError.apiError("HTTP Error: \(httpResponse.statusCode)")
             }
         }
         
@@ -569,27 +565,21 @@ public class GrokClient {
                         }
                         let lines = fullString.split(separator: "\n")
                         for line in lines {
-                            let lineStr = String(line)
-                            if let lineData = lineStr.data(using: .utf8),
+                            if let lineData = line.data(using: .utf8),
                                let streamingResponse = try? JSONDecoder().decode(StreamingResponse.self, from: lineData) {
                                 
-                                // Capture conversation ID
                                 if let conversationData = streamingResponse.result?.conversation,
                                    let id = conversationData.conversationId {
                                     conversationId = id
                                 }
-                                
-                                // Capture response ID
                                 if let content = streamingResponse.result?.response,
                                    let id = content.responseId {
                                     responseId = id
                                 }
                                 
-                                // Check for soft stop signal
-                                let isSoftStop = streamingResponse.result?.response?.isSoftStop ?? 
+                                let isSoftStop = streamingResponse.result?.response?.isSoftStop ??
                                                 streamingResponse.result?.isSoftStop ?? false
                                 
-                                // Yield token if present
                                 if let token = streamingResponse.result?.response?.token {
                                     continuation.yield(ConversationResponse(
                                         message: token,
@@ -602,16 +592,10 @@ public class GrokClient {
                                         isFinal: false
                                     ))
                                 }
-                                
-                                // When we get a soft stop signal with an empty token, we don't need to yield it
-                                // This prevents an empty response being sent to the client
-                                if isSoftStop && (streamingResponse.result?.response?.token == nil || 
+                                if isSoftStop && (streamingResponse.result?.response?.token == nil ||
                                                  streamingResponse.result?.response?.token == "") {
-                                    // Don't yield anything, just wait for the model response
                                     continue
                                 }
-                                
-                                // Yield complete response if present
                                 if let modelResponse = streamingResponse.result?.response?.modelResponse {
                                     continuation.yield(ConversationResponse(
                                         message: modelResponse.message,
@@ -620,7 +604,7 @@ public class GrokClient {
                                         timestamp: Date(),
                                         webSearchResults: modelResponse.extractWebSearchResults(),
                                         xposts: modelResponse.extractXPosts(),
-                                        isSoftStop: false, // Final response is not a soft stop
+                                        isSoftStop: false,
                                         isFinal: true
                                     ))
                                     continuation.finish()
@@ -633,23 +617,18 @@ public class GrokClient {
                             if let data = line.data(using: .utf8),
                                let streamingResponse = try? JSONDecoder().decode(StreamingResponse.self, from: data) {
                                 
-                                // Capture conversation ID
                                 if let conversationData = streamingResponse.result?.conversation,
                                    let id = conversationData.conversationId {
                                     conversationId = id
                                 }
-                                
-                                // Capture response ID
                                 if let content = streamingResponse.result?.response,
                                    let id = content.responseId {
                                     responseId = id
                                 }
                                 
-                                // Check for soft stop signal
-                                let isSoftStop = streamingResponse.result?.response?.isSoftStop ?? 
+                                let isSoftStop = streamingResponse.result?.response?.isSoftStop ??
                                                 streamingResponse.result?.isSoftStop ?? false
                                 
-                                // Yield token if present
                                 if let token = streamingResponse.result?.response?.token {
                                     continuation.yield(ConversationResponse(
                                         message: token,
@@ -662,16 +641,10 @@ public class GrokClient {
                                         isFinal: false
                                     ))
                                 }
-                                
-                                // When we get a soft stop signal with an empty token, we don't need to yield it
-                                // This prevents an empty response being sent to the client
-                                if isSoftStop && (streamingResponse.result?.response?.token == nil || 
+                                if isSoftStop && (streamingResponse.result?.response?.token == nil ||
                                                  streamingResponse.result?.response?.token == "") {
-                                    // Don't yield anything, just wait for the model response
                                     continue
                                 }
-                                
-                                // Yield complete response if present
                                 if let modelResponse = streamingResponse.result?.response?.modelResponse {
                                     continuation.yield(ConversationResponse(
                                         message: modelResponse.message,
@@ -680,7 +653,7 @@ public class GrokClient {
                                         timestamp: Date(),
                                         webSearchResults: modelResponse.extractWebSearchResults(),
                                         xposts: modelResponse.extractXPosts(),
-                                        isSoftStop: false, // Final response is not a soft stop
+                                        isSoftStop: false,
                                         isFinal: true
                                     ))
                                     continuation.finish()
@@ -697,6 +670,7 @@ public class GrokClient {
         }
     }
     
+    /// Sends a single message (non-streaming)
     public func sendMessage(
         message: String,
         enableReasoning: Bool = false,
@@ -710,15 +684,13 @@ public class GrokClient {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         
-        // Add headers
         for (key, value) in headers {
             request.setValue(value, forHTTPHeaderField: key)
         }
         
-        // Prepare payload
         let payload = preparePayload(
-            message: message, 
-            enableReasoning: enableReasoning, 
+            message: message,
+            enableReasoning: enableReasoning,
             enableDeepSearch: enableDeepSearch,
             disableSearch: disableSearch,
             customInstructions: customInstructions,
@@ -729,23 +701,25 @@ public class GrokClient {
         
         #if os(Linux)
             let (data, response) = try await session.data(for: request)
-#else
+        #else
             let (bytes, response) = try await session.bytes(for: request)
-#endif
+        #endif
+        
         guard let httpResponse = response as? HTTPURLResponse else {
             throw GrokError.networkError(URLError(.badServerResponse))
         }
         
-        // Handle HTTP errors
         guard (200...299).contains(httpResponse.statusCode) else {
             switch httpResponse.statusCode {
-            case 401: throw GrokError.unauthorized
-            case 404: throw GrokError.notFound
-            default: throw GrokError.apiError("HTTP Error: \(httpResponse.statusCode)")
+            case 401:
+                throw GrokError.unauthorized
+            case 404:
+                throw GrokError.notFound
+            default:
+                throw GrokError.apiError("HTTP Error: \(httpResponse.statusCode)")
             }
         }
         
-        // Process the streaming response
         var fullResponse = ""
         var conversationId = ""
         var responseId = ""
@@ -756,11 +730,9 @@ public class GrokClient {
             if let fullString = String(data: data, encoding: .utf8) {
                 let lines = fullString.split(separator: "\n")
                 for line in lines {
-                    let lineStr = String(line)
-                    if let lineData = lineStr.data(using: .utf8),
+                    if let lineData = line.data(using: .utf8),
                        let streamingResponse = try? JSONDecoder().decode(StreamingResponse.self, from: lineData) {
                         
-                        // Check for complete response
                         if let modelResponse = streamingResponse.result?.response?.modelResponse {
                             return ConversationResponse(
                                 message: modelResponse.message,
@@ -773,28 +745,21 @@ public class GrokClient {
                                 isFinal: true
                             )
                         }
-                        
-                        // Capture the conversation ID if available
                         if let conversationData = streamingResponse.result?.conversation,
                            let id = conversationData.conversationId {
                             conversationId = id
                         }
-                        
-                        // Capture the response ID if available
                         if let content = streamingResponse.result?.response,
                            let id = content.responseId {
                             responseId = id
                         }
                         
-                        // Skip soft stop signals with empty tokens
-                        let isSoftStop = streamingResponse.result?.response?.isSoftStop ?? 
-                                        streamingResponse.result?.isSoftStop ?? false
-                        if isSoftStop && (streamingResponse.result?.response?.token == nil || 
+                        let isSoftStop = streamingResponse.result?.response?.isSoftStop ??
+                                         streamingResponse.result?.isSoftStop ?? false
+                        if isSoftStop && (streamingResponse.result?.response?.token == nil ||
                                          streamingResponse.result?.response?.token == "") {
                             continue
                         }
-                        
-                        // Accumulate token
                         if let token = streamingResponse.result?.response?.token {
                             fullResponse += token
                         }
@@ -803,11 +768,9 @@ public class GrokClient {
             }
         #else
             for try await line in bytes.lines {
-                // Parse the JSON from each line
                 if let data = line.data(using: .utf8),
                    let streamingResponse = try? JSONDecoder().decode(StreamingResponse.self, from: data) {
                     
-                    // Check for complete response
                     if let modelResponse = streamingResponse.result?.response?.modelResponse {
                         return ConversationResponse(
                             message: modelResponse.message,
@@ -820,33 +783,25 @@ public class GrokClient {
                             isFinal: true
                         )
                     }
-                    
-                    // Capture the conversation ID if available
                     if let conversationData = streamingResponse.result?.conversation,
                        let id = conversationData.conversationId {
                         conversationId = id
                     }
-                    
-                    // Capture the response ID if available
                     if let content = streamingResponse.result?.response,
                        let id = content.responseId {
                         responseId = id
                     }
                     
-                    // Skip soft stop signals with empty tokens
-                    let isSoftStop = streamingResponse.result?.response?.isSoftStop ?? 
-                                    streamingResponse.result?.isSoftStop ?? false
-                    if isSoftStop && (streamingResponse.result?.response?.token == nil || 
+                    let isSoftStop = streamingResponse.result?.response?.isSoftStop ??
+                                     streamingResponse.result?.isSoftStop ?? false
+                    if isSoftStop && (streamingResponse.result?.response?.token == nil ||
                                      streamingResponse.result?.response?.token == "") {
                         continue
                     }
-                    
-                    // Accumulate token
                     if let token = streamingResponse.result?.response?.token {
                         fullResponse += token
                     }
                 }
-                // Continue to next line if this one can't be parsed
             }
         #endif
         
@@ -890,12 +845,10 @@ public class GrokClient {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         
-        // Add headers
         for (key, value) in headers {
             request.setValue(value, forHTTPHeaderField: key)
         }
         
-        // Prepare payload with parent response ID
         var payload = preparePayload(
             message: message,
             enableReasoning: enableReasoning,
@@ -913,19 +866,22 @@ public class GrokClient {
         
         #if os(Linux)
             let (data, response) = try await session.data(for: request)
-#else
+        #else
             let (bytes, response) = try await session.bytes(for: request)
-#endif
+        #endif
+        
         guard let httpResponse = response as? HTTPURLResponse else {
             throw GrokError.networkError(URLError(.badServerResponse))
         }
         
-        // Handle HTTP errors
         guard (200...299).contains(httpResponse.statusCode) else {
             switch httpResponse.statusCode {
-            case 401: throw GrokError.unauthorized
-            case 404: throw GrokError.notFound
-            default: throw GrokError.apiError("HTTP Error: \(httpResponse.statusCode)")
+            case 401:
+                throw GrokError.unauthorized
+            case 404:
+                throw GrokError.notFound
+            default:
+                throw GrokError.apiError("HTTP Error: \(httpResponse.statusCode)")
             }
         }
         
@@ -938,11 +894,9 @@ public class GrokClient {
                         if let fullString = String(data: data, encoding: .utf8) {
                             let lines = fullString.split(separator: "\n")
                             for line in lines {
-                                let lineStr = String(line)
-                                if let lineData = lineStr.data(using: .utf8),
+                                if let lineData = line.data(using: .utf8),
                                    let streamingResponse = try? JSONDecoder().decode(StreamingResponse.self, from: lineData) {
                                     
-                                    // Capture responseId wherever we can find it
                                     if let id = streamingResponse.result?.responseId {
                                         responseId = id
                                     } else if let id = streamingResponse.result?.response?.responseId {
@@ -951,11 +905,9 @@ public class GrokClient {
                                         responseId = id
                                     }
                                     
-                                    // Check for soft stop signal
-                                    let isSoftStop = streamingResponse.result?.isSoftStop ?? 
-                                                   streamingResponse.result?.response?.isSoftStop ?? false
+                                    let isSoftStop = streamingResponse.result?.isSoftStop ??
+                                                     streamingResponse.result?.response?.isSoftStop ?? false
                                     
-                                    // Process direct token in result (flat structure)
                                     if let token = streamingResponse.result?.token, !token.isEmpty {
                                         continuation.yield(ConversationResponse(
                                             message: token,
@@ -970,7 +922,6 @@ public class GrokClient {
                                         continue
                                     }
                                     
-                                    // Process token in response object (nested structure)
                                     if let token = streamingResponse.result?.response?.token, !token.isEmpty {
                                         continuation.yield(ConversationResponse(
                                             message: token,
@@ -985,7 +936,6 @@ public class GrokClient {
                                         continue
                                     }
                                     
-                                    // Skip soft stop with empty token
                                     if isSoftStop && (
                                         (streamingResponse.result?.token == nil || streamingResponse.result?.token?.isEmpty == true) &&
                                         (streamingResponse.result?.response?.token == nil || streamingResponse.result?.response?.token?.isEmpty == true)
@@ -993,7 +943,6 @@ public class GrokClient {
                                         continue
                                     }
                                     
-                                    // Check for complete response in direct modelResponse
                                     if let modelResponse = streamingResponse.result?.modelResponse {
                                         continuation.yield(ConversationResponse(
                                             message: modelResponse.message,
@@ -1009,7 +958,6 @@ public class GrokClient {
                                         return
                                     }
                                     
-                                    // Check for complete response in nested modelResponse
                                     if let modelResponse = streamingResponse.result?.response?.modelResponse {
                                         continuation.yield(ConversationResponse(
                                             message: modelResponse.message,
@@ -1031,7 +979,7 @@ public class GrokClient {
                         for try await line in bytes.lines {
                             if let data = line.data(using: .utf8),
                                let streamingResponse = try? JSONDecoder().decode(StreamingResponse.self, from: data) {
-                                // Capture responseId wherever we can find it
+                                
                                 if let id = streamingResponse.result?.responseId {
                                     responseId = id
                                 } else if let id = streamingResponse.result?.response?.responseId {
@@ -1040,11 +988,9 @@ public class GrokClient {
                                     responseId = id
                                 }
                                 
-                                // Check for soft stop signal
-                                let isSoftStop = streamingResponse.result?.isSoftStop ?? 
-                                               streamingResponse.result?.response?.isSoftStop ?? false
+                                let isSoftStop = streamingResponse.result?.isSoftStop ??
+                                                 streamingResponse.result?.response?.isSoftStop ?? false
                                 
-                                // Process direct token in result (flat structure)
                                 if let token = streamingResponse.result?.token, !token.isEmpty {
                                     continuation.yield(ConversationResponse(
                                         message: token,
@@ -1059,7 +1005,6 @@ public class GrokClient {
                                     continue
                                 }
                                 
-                                // Process token in response object (nested structure)
                                 if let token = streamingResponse.result?.response?.token, !token.isEmpty {
                                     continuation.yield(ConversationResponse(
                                         message: token,
@@ -1074,7 +1019,6 @@ public class GrokClient {
                                     continue
                                 }
                                 
-                                // Skip soft stop with empty token
                                 if isSoftStop && (
                                     (streamingResponse.result?.token == nil || streamingResponse.result?.token?.isEmpty == true) &&
                                     (streamingResponse.result?.response?.token == nil || streamingResponse.result?.response?.token?.isEmpty == true)
@@ -1082,7 +1026,6 @@ public class GrokClient {
                                     continue
                                 }
                                 
-                                // Check for complete response in direct modelResponse
                                 if let modelResponse = streamingResponse.result?.modelResponse {
                                     continuation.yield(ConversationResponse(
                                         message: modelResponse.message,
@@ -1098,7 +1041,6 @@ public class GrokClient {
                                     return
                                 }
                                 
-                                // Check for complete response in nested modelResponse
                                 if let modelResponse = streamingResponse.result?.response?.modelResponse {
                                     continuation.yield(ConversationResponse(
                                         message: modelResponse.message,
@@ -1131,7 +1073,6 @@ public class GrokClient {
     public func listConversations(pageSize: Int = 100) async throws -> [Conversation] {
         let url = URL(string: "\(baseURL)/conversations?pageSize=\(pageSize)&useNewImplementation=true")!
         
-        // Print debug information
         if isDebug {
             print("Debug URL: \(url.absoluteString)")
         }
@@ -1139,7 +1080,6 @@ public class GrokClient {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         
-        // Add headers
         for (key, value) in headers {
             request.setValue(value, forHTTPHeaderField: key)
         }
@@ -1150,22 +1090,21 @@ public class GrokClient {
             throw GrokError.networkError(URLError(.badServerResponse))
         }
         
-        // Handle HTTP errors
         guard (200...299).contains(httpResponse.statusCode) else {
             switch httpResponse.statusCode {
-            case 401: throw GrokError.unauthorized
-            case 404: throw GrokError.notFound
-            default: throw GrokError.apiError("HTTP Error: \(httpResponse.statusCode)")
+            case 401:
+                throw GrokError.unauthorized
+            case 404:
+                throw GrokError.notFound
+            default:
+                throw GrokError.apiError("HTTP Error: \(httpResponse.statusCode)")
             }
         }
         
-        // Print raw response for debugging
         if isDebug {
             if let jsonString = String(data: data, encoding: .utf8) {
                 print("Debug: Raw JSON response:")
                 print(jsonString)
-                
-                // Also try to print as a dictionary
                 if let jsonDict = try? JSONSerialization.jsonObject(with: data, options: []) {
                     print("Debug: JSON as Dictionary/Array:")
                     print(jsonDict)
@@ -1173,31 +1112,21 @@ public class GrokClient {
             }
         }
         
-        // Decode the response
+        let decoder = JSONDecoder()
         do {
-            let decoder = JSONDecoder()
-            
-            // Try to decode as a ConversationsResponse first (new API format)
-            do {
-                let conversationsResponse = try decoder.decode(ConversationsResponse.self, from: data)
-                return conversationsResponse.conversations
-            } catch {
-                // If that fails, try to decode as an array directly (old API format)
-                return try decoder.decode([Conversation].self, from: data)
-            }
+            // new API format
+            let conversationsResponse = try decoder.decode(ConversationsResponse.self, from: data)
+            return conversationsResponse.conversations
         } catch {
-            throw GrokError.decodingError(error)
+            // old API format
+            return try decoder.decode([Conversation].self, from: data)
         }
     }
     
     /// Get the response nodes for a conversation
-    /// - Parameter conversationId: The ID of the conversation
-    /// - Returns: An array of ResponseNode objects
-    /// - Throws: Network, decoding, or API errors
     public func getResponseNodes(conversationId: String) async throws -> [ResponseNode] {
         let url = URL(string: "\(baseURL)/conversations/\(conversationId)/response-node")!
         
-        // Print debug information
         if isDebug {
             print("Debug URL: \(url.absoluteString)")
         }
@@ -1205,7 +1134,6 @@ public class GrokClient {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         
-        // Add headers
         for (key, value) in headers {
             request.setValue(value, forHTTPHeaderField: key)
         }
@@ -1216,16 +1144,17 @@ public class GrokClient {
             throw GrokError.networkError(URLError(.badServerResponse))
         }
         
-        // Handle HTTP errors
         guard (200...299).contains(httpResponse.statusCode) else {
             switch httpResponse.statusCode {
-            case 401: throw GrokError.unauthorized
-            case 404: throw GrokError.notFound
-            default: throw GrokError.apiError("HTTP Error: \(httpResponse.statusCode)")
+            case 401:
+                throw GrokError.unauthorized
+            case 404:
+                throw GrokError.notFound
+            default:
+                throw GrokError.apiError("HTTP Error: \(httpResponse.statusCode)")
             }
         }
         
-        // Print response data for debugging
         if isDebug {
             if let jsonString = String(data: data, encoding: .utf8) {
                 print("Debug: Response JSON from response-node:")
@@ -1233,78 +1162,56 @@ public class GrokClient {
             }
         }
         
-        // Decode the response
+        let decoder = JSONDecoder()
         do {
-            let decoder = JSONDecoder()
+            // common wrapper keys
+            struct ResponseNodesWrapper: Codable {
+                let responseNodes: [ResponseNode]
+            }
+            struct NodesWrapper: Codable {
+                let nodes: [ResponseNode]
+            }
+            struct ResponsesWrapper: Codable {
+                let responses: [ResponseNode]
+            }
             
-            // First try to decode as a dictionary with common wrapper keys
             do {
-                // Try "responseNodes" key
-                struct ResponseNodesWrapper: Codable {
-                    let responseNodes: [ResponseNode]
-                }
-                
+                let wrapper = try decoder.decode(ResponseNodesWrapper.self, from: data)
+                return wrapper.responseNodes
+            } catch {
                 do {
-                    let wrapper = try decoder.decode(ResponseNodesWrapper.self, from: data)
-                    return wrapper.responseNodes
+                    let wrapper = try decoder.decode(NodesWrapper.self, from: data)
+                    return wrapper.nodes
                 } catch {
-                    // Try "nodes" key
-                    struct NodesWrapper: Codable {
-                        let nodes: [ResponseNode]
-                    }
-                    
                     do {
-                        let wrapper = try decoder.decode(NodesWrapper.self, from: data)
-                        return wrapper.nodes
+                        let wrapper = try decoder.decode(ResponsesWrapper.self, from: data)
+                        return wrapper.responses
                     } catch {
-                        // Try "responses" key
-                        struct ResponsesWrapper: Codable {
-                            let responses: [ResponseNode]
-                        }
-                        
-                        do {
-                            let wrapper = try decoder.decode(ResponsesWrapper.self, from: data)
-                            return wrapper.responses
-                        } catch {
-                            // If no known wrapper key works, try manual parsing
-                            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                                // Find a key that contains an array of dictionaries
-                                for (key, value) in json {
-                                    if let nodesArray = value as? [[String: Any]] {
-                                        if isDebug {
-                                            print("Debug: Found array in key '\(key)' with \(nodesArray.count) items")
+                        if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                            for (_, value) in json {
+                                if let nodesArray = value as? [[String: Any]] {
+                                    var nodes = [ResponseNode]()
+                                    for nodeDict in nodesArray {
+                                        if let responseId = nodeDict["responseId"] as? String,
+                                           let sender = nodeDict["sender"] as? String {
+                                            let parentResponseId = nodeDict["parentResponseId"] as? String
+                                            nodes.append(ResponseNode(
+                                                responseId: responseId,
+                                                sender: sender,
+                                                parentResponseId: parentResponseId
+                                            ))
                                         }
-                                        
-                                        var nodes = [ResponseNode]()
-                                        for nodeDict in nodesArray {
-                                            if let responseId = nodeDict["responseId"] as? String,
-                                               let sender = nodeDict["sender"] as? String {
-                                                let parentResponseId = nodeDict["parentResponseId"] as? String
-                                                nodes.append(ResponseNode(
-                                                    responseId: responseId,
-                                                    sender: sender,
-                                                    parentResponseId: parentResponseId
-                                                ))
-                                            }
-                                        }
-                                        
-                                        if !nodes.isEmpty {
-                                            return nodes
-                                        }
+                                    }
+                                    if !nodes.isEmpty {
+                                        return nodes
                                     }
                                 }
                             }
-                            
-                            // As a last resort, try direct array decode
-                            return try decoder.decode([ResponseNode].self, from: data)
                         }
+                        // fallback
+                        return try decoder.decode([ResponseNode].self, from: data)
                     }
                 }
-            } catch {
-                if isDebug {
-                    print("Debug: Failed to decode response-node: \(error)")
-                }
-                throw GrokError.decodingError(error)
             }
         } catch {
             throw GrokError.decodingError(error)
@@ -1317,46 +1224,37 @@ public class GrokClient {
     /// - Returns: An array of Response objects
     /// - Throws: Network, decoding, or API errors
     public func loadResponses(conversationId: String, specificResponseIds: [String]? = nil) async throws -> [Response] {
-        // The URL is correct - keep using "/load-responses"
         let url = URL(string: "\(baseURL)/conversations/\(conversationId)/load-responses")!
         
-        // Print debug information
         if isDebug {
             print("Debug URL: \(url.absoluteString)")
         }
         
         var request = URLRequest(url: url)
-        // Change to POST method
         request.httpMethod = "POST"
         
-        // Add headers
         for (key, value) in headers {
             request.setValue(value, forHTTPHeaderField: key)
         }
         
-        // Use provided response IDs or get all of them
         var responseIds: [String] = []
         
         if let specificIds = specificResponseIds, !specificIds.isEmpty {
             responseIds = specificIds
         } else {
-            // First, we need to get the response IDs for this conversation
             do {
                 let responseNodes = try await getResponseNodes(conversationId: conversationId)
                 responseIds = responseNodes.map { $0.responseId }
-                
                 if isDebug {
                     print("Debug: Found \(responseIds.count) response IDs for this conversation")
                 }
             } catch {
                 if isDebug {
-                    print("Debug: Failed to get response nodes, trying to load all responses: \(error)")
+                    print("Debug: Failed to get response nodes: \(error)")
                 }
-                // Continue with an empty array - some API implementations allow this to fetch all responses
             }
         }
         
-        // Create request body, either with responseIds or empty
         var requestBody: [String: Any] = [:]
         if !responseIds.isEmpty {
             requestBody["responseIds"] = responseIds
@@ -1370,16 +1268,17 @@ public class GrokClient {
             throw GrokError.networkError(URLError(.badServerResponse))
         }
         
-        // Handle HTTP errors
         guard (200...299).contains(httpResponse.statusCode) else {
             switch httpResponse.statusCode {
-            case 401: throw GrokError.unauthorized
-            case 404: throw GrokError.notFound
-            default: throw GrokError.apiError("HTTP Error: \(httpResponse.statusCode)")
+            case 401:
+                throw GrokError.unauthorized
+            case 404:
+                throw GrokError.notFound
+            default:
+                throw GrokError.apiError("HTTP Error: \(httpResponse.statusCode)")
             }
         }
         
-        // Print response data for debugging
         if isDebug {
             if let jsonString = String(data: data, encoding: .utf8) {
                 print("Debug: Response JSON:")
@@ -1387,64 +1286,42 @@ public class GrokClient {
             }
         }
         
-        // Try to decode using different approaches
+        let decoder = JSONDecoder()
+        struct ResponsesWrapper: Codable {
+            let responses: [Response]
+        }
+        
         do {
-            let decoder = JSONDecoder()
-            
-            // Primary approach: decode as a wrapper with responses array
-            struct ResponsesWrapper: Codable {
-                let responses: [Response]
-            }
-            
-            do {
-                let wrapper = try decoder.decode(ResponsesWrapper.self, from: data)
-                return wrapper.responses
-            } catch {
-                if isDebug {
-                    print("Debug: Failed to decode as ResponsesWrapper: \(error)")
-                }
-                
-                // Fallback 1: Try to decode directly as an array of Response
-                do {
-                    let responses = try decoder.decode([Response].self, from: data)
-                    return responses
-                } catch {
-                    if isDebug {
-                        print("Debug: Failed to decode as [Response]: \(error)")
-                    }
-                    
-                    // Fallback 2: Try to parse manually using JSONSerialization
-                    if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       let responsesArray = json["responses"] as? [[String: Any]] {
-                        var responses: [Response] = []
-                        
-                        for item in responsesArray {
-                            if let responseId = item["responseId"] as? String,
-                               let message = item["message"] as? String,
-                               let sender = item["sender"] as? String,
-                               let createTime = item["createTime"] as? String {
-                                let parentResponseId = item["parentResponseId"] as? String
-                                responses.append(Response(
-                                    responseId: responseId,
-                                    message: message,
-                                    sender: sender,
-                                    createTime: createTime,
-                                    parentResponseId: parentResponseId
-                                ))
-                            }
-                        }
-                        
-                        if !responses.isEmpty {
-                            return responses
-                        }
-                    }
-                    
-                    // If we got this far, all decode attempts failed
-                    throw GrokError.decodingError(error)
-                }
-            }
+            let wrapper = try decoder.decode(ResponsesWrapper.self, from: data)
+            return wrapper.responses
         } catch {
-            throw GrokError.decodingError(error)
+            do {
+                return try decoder.decode([Response].self, from: data)
+            } catch {
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let responsesArray = json["responses"] as? [[String: Any]] {
+                    var responses: [Response] = []
+                    for item in responsesArray {
+                        if let responseId = item["responseId"] as? String,
+                           let message = item["message"] as? String,
+                           let sender = item["sender"] as? String,
+                           let createTime = item["createTime"] as? String {
+                            let parentResponseId = item["parentResponseId"] as? String
+                            responses.append(Response(
+                                responseId: responseId,
+                                message: message,
+                                sender: sender,
+                                createTime: createTime,
+                                parentResponseId: parentResponseId
+                            ))
+                        }
+                    }
+                    if !responses.isEmpty {
+                        return responses
+                    }
+                }
+                throw GrokError.decodingError(error)
+            }
         }
     }
-} 
+}
