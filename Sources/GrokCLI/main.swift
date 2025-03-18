@@ -215,6 +215,7 @@ struct MessageCommand: ParsableCommand {
                         if accumulatedMessage.isEmpty {
                             formatter.printResponse(response.message, webSearchResults: response.webSearchResults, xposts: response.xposts)
                         } else {
+                            formatter.flushBuffer()  // Ensure any remaining buffer is printed
                             formatter.printSources(webSearchResults: response.webSearchResults, xposts: response.xposts)
                         }
                     } else {
@@ -516,6 +517,7 @@ struct GrokCLI {
                             if accumulatedMessage.isEmpty {
                                 formatter.printResponse(response.message, webSearchResults: response.webSearchResults, xposts: response.xposts)
                             } else {
+                                formatter.flushBuffer()  // Ensure any remaining buffer is printed
                                 formatter.printSources(webSearchResults: response.webSearchResults, xposts: response.xposts)
                             }
                         } else {
@@ -927,6 +929,7 @@ struct GrokCLI {
                             if accumulatedMessage.isEmpty {
                                 formatter.printResponse(response.message, webSearchResults: response.webSearchResults, xposts: response.xposts)
                             } else {
+                                formatter.flushBuffer()  // Ensure any remaining buffer is printed
                                 formatter.printSources(webSearchResults: response.webSearchResults, xposts: response.xposts)
                             }
                         } else {
@@ -1054,6 +1057,7 @@ struct GrokCLI {
                         if accumulatedMessage.isEmpty {
                             formatter.printResponse(response.message, webSearchResults: response.webSearchResults, xposts: response.xposts)
                         } else {
+                            formatter.flushBuffer()  // Ensure any remaining buffer is printed
                             formatter.printSources(webSearchResults: response.webSearchResults, xposts: response.xposts)
                         }
                     } else {
@@ -1318,9 +1322,17 @@ struct GrokCLI {
 // Output formatting
 class OutputFormatter {
     private let useMarkdown: Bool
+    private var markdownBuffer: String = ""
     
     init(useMarkdown: Bool = false) {
         self.useMarkdown = useMarkdown
+    }
+    
+    func flushBuffer() {
+        if !markdownBuffer.isEmpty {
+            printMarkdown(markdownBuffer)
+            markdownBuffer = ""
+        }
     }
     
     func printResponse(_ response: String, conversationId: String? = nil, responseId: String? = nil, debug: Bool = false, webSearchResults: [WebSearchResult]? = nil, xposts: [XPost]? = nil) {
@@ -1360,7 +1372,10 @@ class OutputFormatter {
         }
         
         if useMarkdown {
-            printMarkdown(chunk)
+            markdownBuffer += chunk
+            if chunk.contains("\n") || isLast {
+                flushBuffer()
+            }
         } else {
             print(chunk, terminator: "")
         }
@@ -1390,7 +1405,10 @@ class OutputFormatter {
             print("\n" + "Grok:".green.bold, terminator: "")
         }
         if useMarkdown {
-            printMarkdown(chunk)
+            markdownBuffer += chunk
+            if chunk.contains("\n") {
+                flushBuffer()
+            }
         } else {
             print(chunk, terminator: "")
         }
