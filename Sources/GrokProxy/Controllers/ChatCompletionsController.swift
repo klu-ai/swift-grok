@@ -127,8 +127,6 @@ struct ChatCompletionsController: RouteCollection {
             temporary: true
         )
         
-        print("I am here dawg")
-        
         let responseId = UUID().uuidString
         let streamResponse = Vapor.Response(status: .ok)
         streamResponse.headers.contentType = HTTPMediaType(type: "text", subType: "event-stream")
