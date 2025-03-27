@@ -532,7 +532,6 @@ public class GrokClient {
         )
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         
-        print("CURL Request (streamMessage): \(request.curlRepresentation())")
         
         #if os(Linux)
             let (data, response) = try await session.data(for: request)
@@ -707,8 +706,6 @@ public class GrokClient {
             let (bytes, response) = try await session.bytes(for: request)
         #endif
 
-        print("CURL Request (streamMessage): \(request.curlRepresentation())")
-        
         guard let httpResponse = response as? HTTPURLResponse else {
             throw GrokError.networkError(URLError(.badServerResponse))
         }
@@ -871,7 +868,6 @@ public class GrokClient {
         #if os(Linux)
             request.setValue("Mozilla/5.0 (compatible; GrokClient/1.0; +https://grok.com)", forHTTPHeaderField: "User-Agent")
             let (data, response) = try await session.data(for: request)
-            print("Response from grok: \(response)")
         #else
             let (bytes, response) = try await session.bytes(for: request)
         #endif
