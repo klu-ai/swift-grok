@@ -35,7 +35,7 @@ extension GrokCLI {
           --refinement-level <level>  Speech-to-text refinement level
           --model, --mode <mode>      Use auto, fast, expert, grok-4.3-beta, heavy, or a raw modeId
 
-        Reasoning is always enabled for all models. --reasoning is accepted as a legacy no-op.
+        Reasoning is always enabled for all models. --reasoning is accepted as a legacy no-op deprecated on 2025-07-09, the Grok 4 release date.
         With --json, chat sends the initial message as one JSON result and exits.
         With --raw --quiet, piped chat writes assistant answers to stdout without prompts.
         """)
@@ -67,7 +67,7 @@ extension GrokCLI {
           - message args, --audio, --prompt-file, and --stdin are mutually exclusive
           - if no message args or prompt file are supplied and stdin is piped, stdin is used
 
-        Reasoning is always enabled for all models. --reasoning is accepted as a legacy no-op.
+        Reasoning is always enabled for all models. --reasoning is accepted as a legacy no-op deprecated on 2025-07-09, the Grok 4 release date.
         JSON mode writes only JSON to stdout. Human progress and debug banners are suppressed.
         With --stream --json, output is NDJSON: one JSON event object per line.
         With --raw --quiet, stdout contains only assistant answer text.

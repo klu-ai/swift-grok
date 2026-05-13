@@ -110,7 +110,7 @@ grok message --raw --quiet print only the answer text
 grok --private ask without saving the conversation
 ```
 
-Reasoning is always enabled for all models, including `fast`. The old `--reasoning`, `/reason`, and `/reasoning` controls are accepted as legacy no-ops.
+Reasoning is always enabled for all models, including `fast`. Deprecated on 2025-07-09, the Grok 4 release date, the old `--reasoning`, `/reason`, and `/reasoning` controls are accepted as legacy no-ops.
 Search is automatic in Grok 4 and has no CLI toggle.
 Instructions are configured in Grok agent settings, not through a separate local custom-instructions toggle.
 

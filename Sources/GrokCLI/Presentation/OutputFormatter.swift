@@ -345,7 +345,7 @@ class OutputFormatter {
         - \("Output Format".yellow): Markdown is default; Raw preserves source Markdown
         - \("Agents".yellow): Configure instructions in Grok agent settings
 
-        \("Note:".cyan.bold) Reasoning is always enabled for all models; /reason is a legacy no-op.
+        \("Note:".cyan.bold) Reasoning is always enabled for all models; /reason is a legacy no-op deprecated on 2025-07-09, the Grok 4 release date.
 
         """)
     }

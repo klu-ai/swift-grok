@@ -109,8 +109,8 @@ struct GrokCommandOptions: ParsableArguments {
 }
 
 extension GrokCLI {
-    static let reasoningAlwaysOnWarning = "--reasoning is deprecated and ignored; reasoning is always enabled for all models."
-    static let interactiveReasoningAlwaysOnWarning = "/reason is deprecated and ignored; reasoning is always enabled for all models."
+    static let reasoningAlwaysOnWarning = "--reasoning is deprecated and ignored since the Grok 4 release on 2025-07-09; reasoning is always enabled for all models."
+    static let interactiveReasoningAlwaysOnWarning = "/reason is deprecated and ignored since the Grok 4 release on 2025-07-09; reasoning is always enabled for all models."
 
     static func reasoningConfigurationWarnings(reasoningRequested: Bool) -> [String] {
         reasoningRequested ? [reasoningAlwaysOnWarning] : []

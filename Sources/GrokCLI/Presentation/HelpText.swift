@@ -107,7 +107,7 @@ extension GrokCLI {
           - Use '/new' to start a new conversation thread
           - Use 'exit' or '/exit' to exit the app
           - The message command always starts a new conversation without context
-          - Reasoning is always enabled for all models; --reasoning and /reason are legacy no-ops
+          - Reasoning is always enabled for all models; --reasoning and /reason are legacy no-ops deprecated on 2025-07-09, the Grok 4 release date
 
         Examples:
           grok                                      - Start interactive chat mode
