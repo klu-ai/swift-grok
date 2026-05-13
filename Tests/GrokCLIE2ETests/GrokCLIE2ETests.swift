@@ -1634,6 +1634,38 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertFalse(run.cleanOutput.contains("MD Formatted"))
     }
 
+    func testInteractiveLowRateLimitAppearsAfterFormatStatusSegment() throws {
+        let server = try MockGrokServer(rateLimitResponse: [
+            "remainingResponses": 9,
+            "resetAfterSeconds": 300
+        ])
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run([], input: "/format raw\n/quit\n")
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Settings > Model: Fast | MD | Rate: 9 left, resets in 5m")
+        XCTAssertContains(run.cleanOutput, "Settings > Model: Fast | Raw | Rate: 9 left, resets in 5m")
+
+        let request = try XCTUnwrap(server.requests(matchingPath: "/rest/rate-limits", method: "POST").last)
+        XCTAssertEqual(request.jsonString("modelName"), "fast")
+    }
+
+    func testInteractiveMultiTurnLowRateLimitWarningShowsResetDuration() throws {
+        let server = try MockGrokServer(rateLimitResponse: [
+            "remainingResponses": 8,
+            "resetAfterSeconds": 300
+        ])
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run([], input: "first\nsecond\n/quit\n")
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Warning: 8 responses remaining; resets in 5m.")
+        XCTAssertEqual(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").count, 1)
+        XCTAssertEqual(server.requests(matchingPath: "/rest/app-chat/conversations/conv-e2e/responses", method: "POST").count, 1)
+    }
+
     private func captureStdout(_ body: () -> Void) -> String {
         fflush(stdout)
 
@@ -1977,6 +2009,7 @@ private final class MockGrokServer {
     private var unauthorizedNewConversationCount: Int
     private var accessDeniedNewConversationCount: Int
     private var rateLimitedNewConversationCount: Int
+    private let rateLimitResponse: [String: Any]
     private let streamTokens: [String]
     private let streamLines: [String]?
     private let finalMessage: String
@@ -1986,6 +2019,7 @@ private final class MockGrokServer {
         unauthorizedNewConversationCount: Int = 0,
         accessDeniedNewConversationCount: Int = 0,
         rateLimitedNewConversationCount: Int = 0,
+        rateLimitResponse: [String: Any] = ["remainingResponses": 25, "resetAfterSeconds": 3_600],
         streamTokens: [String] = ["Mock streamed ", "answer"],
         streamLines: [String]? = nil,
         finalMessage: String = "Mock final response",
@@ -1994,6 +2028,7 @@ private final class MockGrokServer {
         self.unauthorizedNewConversationCount = unauthorizedNewConversationCount
         self.accessDeniedNewConversationCount = accessDeniedNewConversationCount
         self.rateLimitedNewConversationCount = rateLimitedNewConversationCount
+        self.rateLimitResponse = rateLimitResponse
         self.streamTokens = streamTokens
         self.streamLines = streamLines
         self.finalMessage = finalMessage
@@ -2113,6 +2148,10 @@ private final class MockGrokServer {
                 "text": transcriptionText,
                 "transcript": transcriptionText
             ])
+        case ("POST", "/rest/rate-limits"):
+            var response = rateLimitResponse
+            response["modelName"] = response["modelName"] ?? request.jsonString("modelName") ?? "fast"
+            return jsonResponse(response)
         case ("POST", "/rest/app-chat/conversations/new"):
             if unauthorizedNewConversationCount > 0 {
                 unauthorizedNewConversationCount -= 1

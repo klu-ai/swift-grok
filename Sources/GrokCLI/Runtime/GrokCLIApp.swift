@@ -15,6 +15,8 @@ class GrokCLIApp {
     private var lastXPosts: [XPost]?
     private var currentPersonality: GrokClient.PersonalityType = .none
     private var currentMode: GrokMode = .defaultMode
+    private var lastRateLimit: GrokRateLimit?
+    private var lastRateLimitModeId: String?
     private var currentWorkspace: GrokWorkspace?
     private var attachedFileIds: [String] = []
 
@@ -113,7 +115,96 @@ class GrokCLIApp {
 
     // Set current Grok web mode
     func setCurrentMode(_ mode: GrokMode) {
+        if currentMode.id != mode.id {
+            lastRateLimit = nil
+            lastRateLimitModeId = nil
+        }
         self.currentMode = mode
+    }
+
+    func refreshRateLimitStatus(for mode: GrokMode) async -> String? {
+        guard let client else {
+            return currentRateLimitStatus(for: mode)
+        }
+
+        do {
+            let rateLimit = try await client.rateLimits(mode: mode)
+            lastRateLimit = rateLimit
+            lastRateLimitModeId = mode.id
+            return rateLimitStatusText(for: rateLimit)
+        } catch {
+            if isDebug {
+                print("Debug: Could not fetch rate limits: \(error.localizedDescription)")
+            }
+            return currentRateLimitStatus(for: mode)
+        }
+    }
+
+    func currentRateLimitStatus(for mode: GrokMode) -> String? {
+        guard lastRateLimitModeId == mode.id, let lastRateLimit else {
+            return nil
+        }
+        return rateLimitStatusText(for: lastRateLimit)
+    }
+
+    func currentRateLimitWarning(for mode: GrokMode) -> String? {
+        guard lastRateLimitModeId == mode.id,
+              let rateLimit = lastRateLimit,
+              let remaining = rateLimit.remainingResponses,
+              remaining < 10 else {
+            return nil
+        }
+
+        let noun = remaining == 1 ? "response" : "responses"
+        var warning = "Warning: \(remaining) \(noun) remaining"
+        if let reset = resetDurationDescription(for: rateLimit) {
+            warning += "; resets in \(reset)"
+        }
+        return warning + "."
+    }
+
+    private func rateLimitStatusText(for rateLimit: GrokRateLimit) -> String? {
+        guard let remaining = rateLimit.remainingResponses, remaining < 10 else {
+            return nil
+        }
+
+        var status = "Rate: \(remaining) left"
+        if let reset = resetDurationDescription(for: rateLimit) {
+            status += ", resets in \(reset)"
+        }
+        return status
+    }
+
+    private func resetDurationDescription(for rateLimit: GrokRateLimit) -> String? {
+        guard let seconds = rateLimit.secondsUntilReset() else {
+            return nil
+        }
+        return durationDescription(seconds: seconds)
+    }
+
+    private func durationDescription(seconds: Int) -> String {
+        let seconds = max(0, seconds)
+        if seconds == 0 {
+            return "now"
+        }
+        if seconds < 60 {
+            return "\(seconds)s"
+        }
+
+        let totalMinutes = Int(ceil(Double(seconds) / 60.0))
+        if totalMinutes < 60 {
+            return "\(totalMinutes)m"
+        }
+
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        if hours < 24 {
+            return minutes == 0 ? "\(hours)h" : "\(hours)h \(minutes)m"
+        }
+
+        let days = hours / 24
+        let remainingHours = hours % 24
+        return remainingHours == 0 ? "\(days)d" : "\(days)d \(remainingHours)h"
     }
 
     // Centralized error handling method

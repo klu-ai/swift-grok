@@ -1659,7 +1659,9 @@ public class GrokClient {
         requestedModelName: String,
         fetchedAt: Date = Date()
     ) -> GrokRateLimit {
-        let rateLimit = rateLimitDictionary(from: json, requestedModelName: requestedModelName) ?? [:]
+        let rateLimit = matchingRateLimitDictionary(from: json, requestedModelName: requestedModelName)
+            ?? rateLimitDictionary(from: json, requestedModelName: requestedModelName)
+            ?? [:]
         let modelName = firstString(in: rateLimit, keys: ["modelName", "model", "modelId", "modeId"])
             ?? (requestedModelName.isEmpty ? nil : requestedModelName)
 
@@ -1671,6 +1673,39 @@ public class GrokClient {
             fetchedAt: fetchedAt,
             rawJSON: AnyCodable(json)
         )
+    }
+
+    private func matchingRateLimitDictionary(from value: Any, requestedModelName: String) -> JSONDictionary? {
+        guard !requestedModelName.isEmpty else {
+            return nil
+        }
+
+        if let dictionary = value as? JSONDictionary {
+            if let nested = dictionary[requestedModelName],
+               let found = rateLimitDictionary(from: nested, requestedModelName: requestedModelName) {
+                return found
+            }
+
+            if matchesRateLimitModel(dictionary, requestedModelName: requestedModelName) {
+                return dictionary
+            }
+
+            for nested in dictionary.values {
+                if let found = matchingRateLimitDictionary(from: nested, requestedModelName: requestedModelName) {
+                    return found
+                }
+            }
+        }
+
+        if let array = value as? [Any] {
+            for nested in array {
+                if let found = matchingRateLimitDictionary(from: nested, requestedModelName: requestedModelName) {
+                    return found
+                }
+            }
+        }
+
+        return nil
     }
 
     private func rateLimitDictionary(from value: Any, requestedModelName: String) -> JSONDictionary? {

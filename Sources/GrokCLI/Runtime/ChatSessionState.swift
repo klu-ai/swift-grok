@@ -9,6 +9,7 @@ struct ChatSessionState {
     var stream: Bool
     var mode: GrokMode
     var outputFormat: OutputFormat
+    var rateLimitStatus: String? = nil
 
     func workspaceIds(app: GrokCLIApp) -> [String] {
         app.getCurrentWorkspaceIds()
