@@ -163,6 +163,7 @@ extension GrokCLI {
             "--raw",
             "--json",
             "--debug",
+            "--quiet",
             "--no-custom-instructions",
             "--private",
             "--stream"
@@ -170,7 +171,7 @@ extension GrokCLI {
     }
 
     private static func isTopLevelValueOption(_ arg: String) -> Bool {
-        ["--format", "--model", "--mode", "--audio", "--audio-format", "--refinement-level"].contains(arg)
+        ["--format", "--model", "--mode", "--audio", "--audio-format", "--refinement-level", "--prompt-file"].contains(arg)
     }
 
     private static func isInlineTopLevelValueOption(_ arg: String) -> Bool {
@@ -179,7 +180,8 @@ extension GrokCLI {
             arg.hasPrefix("--mode=") ||
             arg.hasPrefix("--audio=") ||
             arg.hasPrefix("--audio-format=") ||
-            arg.hasPrefix("--refinement-level=")
+            arg.hasPrefix("--refinement-level=") ||
+            arg.hasPrefix("--prompt-file=")
     }
 
 

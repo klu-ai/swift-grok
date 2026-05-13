@@ -1,7 +1,9 @@
 import Foundation
-import Network
 import XCTest
 @testable import GrokCLI
+
+#if canImport(Network)
+import Network
 
 #if os(Linux)
 import Glibc
@@ -162,6 +164,12 @@ final class GrokCLIE2ETests: XCTestCase {
         let rawMode = try environment.run(["message", "--model=custom-mode-id", "raw", "mode"])
         XCTAssertEqual(rawMode.status, 0)
         XCTAssertEqual(server.requests(matchingPath: "/rest/app-chat/conversations/new").last?.jsonString("modeId"), "custom-mode-id")
+
+        let requestCountBeforeMissingModel = server.requests(matchingPath: "/rest/app-chat/conversations/new").count
+        let missingModelValue = try environment.run(["message", "--model", "--json", "hello"])
+        XCTAssertEqual(missingModelValue.status, 2)
+        XCTAssertContains(missingModelValue.cleanOutput, "--model requires a model value")
+        XCTAssertEqual(server.requests(matchingPath: "/rest/app-chat/conversations/new").count, requestCountBeforeMissingModel)
     }
 
     func testMessageRawQuietReadsMultilinePromptFromStdin() throws {
@@ -435,6 +443,12 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertEqual(run.status, 0)
         XCTAssertEqual(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").last?.jsonString("message"), "hello")
         assertAnswerOnlyStdout(run.stdout, equals: answer)
+
+        let leadingOptions = try environment.run(["--quiet", "--raw", "message", "hello"])
+
+        XCTAssertEqual(leadingOptions.status, 0)
+        XCTAssertEqual(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").last?.jsonString("message"), "hello")
+        assertAnswerOnlyStdout(leadingOptions.stdout, equals: answer)
     }
 
     func testChatRawQuietPipedInputCreatesThenContinuesConversation() throws {
@@ -2548,3 +2562,10 @@ private func XCTAssertContains(
         line: line
     )
 }
+#else
+final class GrokCLIE2ETests: XCTestCase {
+    func testGrokCLIE2ERequiresNetworkFramework() throws {
+        throw XCTSkip("Grok CLI E2E tests require Apple's Network framework.")
+    }
+}
+#endif

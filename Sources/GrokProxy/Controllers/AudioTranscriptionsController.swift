@@ -76,7 +76,10 @@ struct AudioTranscriptionsController: RouteCollection {
             model: body.model,
             audioBase64: audioBytes.base64EncodedString(),
             responseFormat: normalizeResponseFormat(body.response_format),
-            audioFormat: body.audio_format ?? inferAudioFormat(from: body.file),
+            audioFormat: body.audio_format ?? inferAudioFormat(
+                fromFilename: body.file.filename,
+                contentType: multipartFileContentType(from: req, fieldName: "file")
+            ),
             refinementLevel: body.refinement_level,
             language: body.language,
             prompt: body.prompt
@@ -87,15 +90,42 @@ struct AudioTranscriptionsController: RouteCollection {
         responseFormat?.lowercased() ?? "json"
     }
 
-    private func inferAudioFormat(from file: File) -> String? {
-        if let extensionName = file.filename.split(separator: ".").last {
-            return String(extensionName).lowercased()
-        }
-
-        guard let contentType = file.contentType else {
+    private func multipartFileContentType(from req: Request, fieldName: String) -> HTTPMediaType? {
+        guard let boundary = req.headers.contentType?.parameters["boundary"],
+              let body = req.body.data else {
             return nil
         }
 
-        return contentType.subType.lowercased()
+        let parser = MultipartParser(boundary: boundary)
+        var headers = HTTPHeaders()
+        var matchedContentType: HTTPMediaType?
+
+        parser.onHeader = { field, value in
+            headers.replaceOrAdd(name: field, value: value)
+        }
+        parser.onBody = { _ in }
+        parser.onPartComplete = {
+            if headers.contentDisposition?.name == fieldName {
+                matchedContentType = headers.contentType
+            }
+            headers = HTTPHeaders()
+        }
+
+        do {
+            try parser.execute(body)
+            return matchedContentType
+        } catch {
+            return nil
+        }
+    }
+
+    private func inferAudioFormat(fromFilename filename: String?, contentType: HTTPMediaType?) -> String? {
+        let fileURL = URL(fileURLWithPath: filename ?? "")
+        let pathExtension = fileURL.pathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !pathExtension.isEmpty {
+            return pathExtension.lowercased()
+        }
+
+        return contentType?.subType.lowercased()
     }
 }

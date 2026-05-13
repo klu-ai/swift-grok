@@ -472,6 +472,41 @@ struct AppTests {
         }
     }
 
+    @Test("Audio transcription multipart request falls back to MIME subtype without filename extension")
+    func audioTranscriptionMultipartRequestUsesMimeTypeWhenFilenameHasNoExtension() async throws {
+        let audioBytes = Data("wav bytes".utf8)
+        try await withAudioApp(transcribe: { request in
+            #expect(request.audioBase64 == audioBytes.base64EncodedString())
+            #expect(request.audioFormat == "wav")
+            return "mime transcript"
+        }) { app in
+            let boundary = "Boundary-\(UUID().uuidString)"
+            let body = [
+                "--\(boundary)",
+                #"Content-Disposition: form-data; name="model""#,
+                "",
+                "grok-2-voice",
+                "--\(boundary)",
+                #"Content-Disposition: form-data; name="file"; filename="recording""#,
+                "Content-Type: audio/wav",
+                "",
+                "wav bytes",
+                "--\(boundary)--",
+                ""
+            ].joined(separator: "\r\n")
+
+            try await app.testing().test(.POST, "v1/audio/transcriptions") { req async throws in
+                req.headers.replaceOrAdd(name: .contentType, value: "multipart/form-data; boundary=\(boundary)")
+                req.body = ByteBuffer(data: Data(body.utf8))
+            } afterResponse: { res async in
+                #expect(res.status == .ok)
+                expectContent(AudioTranscriptionResponse.self, res) { body in
+                    #expect(body.text == "mime transcript")
+                }
+            }
+        }
+    }
+
     private func decodeChunk(from event: String) throws -> ChatCompletionChunkResponse {
         let prefix = "data: "
         #expect(event.hasPrefix(prefix))

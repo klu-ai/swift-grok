@@ -13,7 +13,9 @@ private extension String {
 extension GrokCLI {
     static func applyModelOption(_ arg: String, nextValue: String?) -> (mode: GrokMode?, consumedNext: Bool, missingValue: Bool) {
         if arg == "--model" || arg == "--mode" {
-            guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            guard let nextValue,
+                  !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !nextValue.hasPrefix("--") else {
                 return (nil, false, true)
             }
             return (GrokMode.resolve(nextValue), true, false)
