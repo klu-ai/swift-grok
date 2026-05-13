@@ -76,7 +76,7 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertContains(topLevelHelpFlag.cleanOutput, "Usage: grok [command] [options]")
     }
 
-    func testInitialChatMessageContinuesWithoutRepeatingStartupBanner() throws {
+    func testInitialChatMessageContinuesWithoutPromptBanner() throws {
         let server = try MockGrokServer()
         let environment = try TestEnvironment(server: server)
 
@@ -84,7 +84,7 @@ final class GrokCLIE2ETests: XCTestCase {
 
         XCTAssertEqual(run.status, 0)
         XCTAssertContains(run.cleanOutput, "Sending message: hello")
-        XCTAssertContains(run.cleanOutput, "Enter your message:")
+        XCTAssertFalse(run.cleanOutput.contains("Enter your message:"))
         XCTAssertFalse(run.cleanOutput.contains("Connected to Grok!"))
         XCTAssertFalse(run.cleanOutput.contains("Chat mode |"))
         XCTAssertFalse(run.cleanOutput.contains("Conversation ID:"))

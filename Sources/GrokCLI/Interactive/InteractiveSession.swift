@@ -463,10 +463,6 @@ extension GrokCLI {
                 print("Conversation ID: \(conversationId)".cyan)
             }
         }
-        if !enableQuiet {
-            print("\nEnter your message:".cyan)
-        }
-
         // Main chat loop
         var isRunning = true
 
