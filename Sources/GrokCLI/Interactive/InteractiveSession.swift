@@ -5,9 +5,6 @@ import Rainbow
 extension GrokCLI {
     static func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool, currentStream: Bool, currentFormat: OutputFormat = .defaultFormat, currentMode: GrokMode = GrokCLIApp.shared.getCurrentMode(), rateLimitStatus: String? = nil) {
         var segments = ["Model: \(currentMode.displayName)".yellow]
-        if currentReasoning {
-            segments.append("Reasoning".green)
-        }
         if currentPrivate {
             segments.append("Private".red)
         }
@@ -77,7 +74,7 @@ extension GrokCLI {
         var audioPath: String?
         var audioFormat: String?
         var refinementLevel = GrokClient.defaultSpeechRefinementLevel
-        var enableReasoning = false
+        var reasoningRequested = false
         var enableDeepSearch = false
         var outputFormat = OutputFormat.defaultFormat
         var enableDebug = false
@@ -127,7 +124,7 @@ extension GrokCLI {
             }
 
             if arg == "--reasoning" {
-                enableReasoning = true
+                reasoningRequested = true
             } else if arg == "--deep-search" {
                 enableDeepSearch = true
             } else if arg == "--debug" {
@@ -236,10 +233,13 @@ extension GrokCLI {
             deepSearchRequested: enableDeepSearch,
             noSearchRequested: enableNoSearch
         )
+        let reasoningWarnings = reasoningConfigurationWarnings(
+            reasoningRequested: reasoningRequested
+        )
         let customWarnings = customInstructionsWarnings(
             noCustomInstructionsRequested: enableNoCustomInstructions
         )
-        printSearchConfigurationWarnings(searchWarnings + customWarnings, toStderr: enableQuiet)
+        printSearchConfigurationWarnings(reasoningWarnings + searchWarnings + customWarnings, toStderr: enableQuiet)
         if let startupStatus {
             startupStatus.update(text: "Calling Grok API...".cyan)
         } else if !enableQuiet {
@@ -249,6 +249,7 @@ extension GrokCLI {
         if enableDebug {
             let debugLines = [
                 "Debug: initialMessage = \(initialMessage)",
+                "Debug: Reasoning = always enabled",
                 "Debug: Streaming = \(enableStream)",
                 "Debug: Output Format = \(outputFormat.description)",
                 "Debug: Model = \(selectedMode.displayName) (\(selectedMode.id))",
@@ -355,7 +356,7 @@ extension GrokCLI {
             do {
                 let stream = try await app.msg(
                     message: message,
-                    enableReasoning: enableReasoning,
+                    enableReasoning: true,
                     enableDeepSearch: false,
                     disableSearch: false,
                     customInstructions: "",
@@ -409,7 +410,7 @@ extension GrokCLI {
         }
 
         var state = ChatSessionState(
-            reasoning: enableReasoning,
+            reasoning: true,
             deepSearch: false,
             noSearch: false,
             privateMode: enablePrivate,
@@ -488,12 +489,12 @@ extension GrokCLI {
 
             case .some("reason"), .some("reasoning"):
                 do {
-                    state.reasoning = try GrokCLI.resolveToggle(current: state.reasoning, args: interactiveArgs, usage: interactiveCommand?.hasSlash == true ? "/reason" : "reason")
+                    _ = try GrokCLI.resolveToggle(current: true, args: interactiveArgs, usage: interactiveCommand?.hasSlash == true ? "/reason" : "reason")
                 } catch {
                     await app.handleError(error, debug: enableDebug)
                     continue
                 }
-                print(state.reasoning ? "Reasoning mode enabled".yellow : "Reasoning mode disabled".blue)
+                print("Warning: \(GrokCLI.interactiveReasoningAlwaysOnWarning)".yellow)
                 continue
 
             case .some("private"):
@@ -772,7 +773,7 @@ extension GrokCLI {
                 do {
                     let stream = try await app.msg(
                         message: ChatCommand.hiddenMode,
-                        enableReasoning: false,
+                        enableReasoning: true,
                         enableDeepSearch: false,
                         disableSearch: false,
                         customInstructions: "",
@@ -838,7 +839,7 @@ extension GrokCLI {
                 }
                 let stream = try await app.msg(
                     message: inputForSend,
-                    enableReasoning: state.reasoning,
+                    enableReasoning: true,
                     enableDeepSearch: false,
                     disableSearch: false,
                     customInstructions: "",

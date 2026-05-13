@@ -466,7 +466,7 @@ class GrokCLIApp {
     }
 
     // Send a message and get a streaming response
-    func msg(message: String, enableReasoning: Bool = false, enableDeepSearch: Bool = false, disableSearch: Bool = false, customInstructions: String = "", temporary: Bool = false, personalityType: GrokClient.PersonalityType? = nil, mode: GrokMode? = nil, fileAttachments: [String] = [], workspaceIds: [String] = [], disabledConnectorIds: [String] = [], streamOutput: Bool = true) async throws -> AsyncThrowingStream<ConversationResponse, Error> {
+    func msg(message: String, enableReasoning _: Bool = true, enableDeepSearch: Bool = false, disableSearch: Bool = false, customInstructions: String = "", temporary: Bool = false, personalityType: GrokClient.PersonalityType? = nil, mode: GrokMode? = nil, fileAttachments: [String] = [], workspaceIds: [String] = [], disabledConnectorIds: [String] = [], streamOutput: Bool = true) async throws -> AsyncThrowingStream<ConversationResponse, Error> {
         let personality = personalityType ?? currentPersonality
         let selectedMode = mode ?? currentMode
         currentMode = selectedMode
@@ -474,7 +474,7 @@ class GrokCLIApp {
         if isDebug {
             print("Debug: Sending message to Grok:")
             print("Debug: - Message: \(message)")
-            print("Debug: - Reasoning: \(enableReasoning)")
+            print("Debug: - Reasoning: always enabled")
             print("Debug: - Deep Search requested: \(enableDeepSearch) (ignored)")
             print("Debug: - Disable Search requested: \(disableSearch) (ignored)")
             print("Debug: - Instruction override requested: \(customInstructions.isEmpty ? "none" : "provided") (ignored)")
@@ -511,7 +511,7 @@ class GrokCLIApp {
                             conversationId: conversationId,
                             parentResponseId: lastResponseId,
                             message: message,
-                            enableReasoning: enableReasoning,
+                            enableReasoning: true,
                             enableDeepSearch: false,
                             disableSearch: false,
                             customInstructions: "",
@@ -526,7 +526,7 @@ class GrokCLIApp {
                         // For new conversations, use streamMessage
                         stream = try await client.streamMessage(
                             message: message,
-                            enableReasoning: enableReasoning,
+                            enableReasoning: true,
                             enableDeepSearch: false,
                             disableSearch: false,
                             customInstructions: "",

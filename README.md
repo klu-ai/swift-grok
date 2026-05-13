@@ -102,7 +102,6 @@ grok message --raw --quiet --prompt-file prompt.md
 Useful options:
 
 ```bash
-grok --reasoning solve this step by step
 grok --markdown write a checklist for release testing
 grok --raw show me the source Markdown
 grok --format raw show me the source Markdown
@@ -111,6 +110,7 @@ grok message --raw --quiet print only the answer text
 grok --private ask without saving the conversation
 ```
 
+Reasoning is always enabled for all models, including `fast`. The old `--reasoning`, `/reason`, and `/reasoning` controls are accepted as legacy no-ops.
 Search is automatic in Grok 4 and has no CLI toggle.
 Instructions are configured in Grok agent settings, not through a separate local custom-instructions toggle.
 
@@ -318,7 +318,6 @@ Interactive chat commands:
 /new
 /help
 /list
-/reason
 /model expert
 /format raw
 /raw on

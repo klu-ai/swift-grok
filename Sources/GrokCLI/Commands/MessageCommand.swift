@@ -19,6 +19,9 @@ struct MessageCommand: ParsableCommand {
         let selectedMode = GrokMode.resolve(options.model)
         app.setCurrentMode(selectedMode)
         let formatter = OutputFormatter(format: try options.resolvedOutputFormat())
+        let reasoningWarnings = GrokCLI.reasoningConfigurationWarnings(
+            reasoningRequested: options.reasoning
+        )
         let searchWarnings = GrokCLI.searchConfigurationWarnings(
             deepSearchRequested: options.deepSearch,
             noSearchRequested: options.noSearch
@@ -37,12 +40,14 @@ struct MessageCommand: ParsableCommand {
         // Debug output
         if options.debug {
             print("Debug: Sending message: \"\(message)\"")
+            print("Debug: Reasoning: always enabled")
             print("Debug: Streaming: \(options.stream)")
             print("Debug: Model: \(selectedMode.displayName) (\(selectedMode.id))")
         }
 
         // Initialization message
         if !formatter.format.isJSON {
+            GrokCLI.printSearchConfigurationWarnings(reasoningWarnings)
             GrokCLI.printSearchConfigurationWarnings(searchWarnings)
             GrokCLI.printSearchConfigurationWarnings(customWarnings)
         }
@@ -55,7 +60,7 @@ struct MessageCommand: ParsableCommand {
 
             let stream = try await app.msg(
                 message: message,
-                enableReasoning: options.reasoning,
+                enableReasoning: true,
                 enableDeepSearch: false,
                 disableSearch: false,
                 customInstructions: "",
@@ -112,7 +117,7 @@ extension GrokCLI {
         var audioPath: String?
         var audioFormat: String?
         var refinementLevel = GrokClient.defaultSpeechRefinementLevel
-        var enableReasoning = false
+        var reasoningRequested = false
         var enableDeepSearch = false
         var outputFormat = OutputFormat.defaultFormat
         var enableDebug = false
@@ -161,7 +166,7 @@ extension GrokCLI {
             }
 
             if arg == "--reasoning" {
-                enableReasoning = true
+                reasoningRequested = true
             } else if arg == "--deep-search" {
                 enableDeepSearch = true
             } else if arg == "--debug" {
@@ -333,10 +338,13 @@ extension GrokCLI {
             deepSearchRequested: enableDeepSearch,
             noSearchRequested: enableNoSearch
         )
+        let reasoningWarnings = reasoningConfigurationWarnings(
+            reasoningRequested: reasoningRequested
+        )
         let customWarnings = customInstructionsWarnings(
             noCustomInstructionsRequested: enableNoCustomInstructions
         )
-        let warnings = searchWarnings + customWarnings
+        let warnings = reasoningWarnings + searchWarnings + customWarnings
 
         // Execute the command
         if !jsonMode {
@@ -349,7 +357,7 @@ extension GrokCLI {
         if enableDebug && !jsonMode {
             let debugLines = [
                 "Debug: Message = \"\(messageText)\"",
-                "Debug: Reasoning = \(enableReasoning)",
+                "Debug: Reasoning = always enabled",
                 "Debug: DeepSearch requested = \(enableDeepSearch) (ignored)",
                 "Debug: Search disable requested = \(enableNoSearch) (ignored)",
                 "Debug: Output Format = \(outputFormat.description)",
@@ -383,7 +391,7 @@ extension GrokCLI {
             // Send message
             let stream = try await app.msg(
                 message: messageText,
-                enableReasoning: enableReasoning,
+                enableReasoning: true,
                 enableDeepSearch: false,
                 disableSearch: false,
                 customInstructions: "",
@@ -395,7 +403,7 @@ extension GrokCLI {
 
             if jsonMode {
                 let request = messageRequestJSON(
-                    reasoning: enableReasoning,
+                    reasoning: true,
                     deepSearch: false,
                     noSearch: false,
                     privateMode: enablePrivate,

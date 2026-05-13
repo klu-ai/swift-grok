@@ -21,7 +21,6 @@ struct ChatCommand: ParsableCommand {
     static func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool, currentStream: Bool, currentFormat: OutputFormat = .defaultFormat, currentMode: GrokMode = GrokCLIApp.shared.getCurrentMode()) {
         print("Chat mode".cyan + " | " +
               "Model: \(currentMode.displayName)".yellow + " | " +
-              (currentReasoning ? "Reasoning".green + " | " : "") +
               (currentPrivate ? "Private".red : "Saved".blue) + " | " +
               (currentStream ? "Streaming".green : "Not Streaming".red) + " | " +
               currentFormat.statusName.yellow)
@@ -31,7 +30,6 @@ struct ChatCommand: ParsableCommand {
     func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool, currentStream: Bool, currentFormat: OutputFormat = .defaultFormat, currentMode: GrokMode = GrokCLIApp.shared.getCurrentMode()) {
         print("Chat mode".cyan + " | " +
               "Model: \(currentMode.displayName)".yellow + " | " +
-              (currentReasoning ? "Reasoning".green + " | " : "") +
               (currentPrivate ? "Private".red : "Saved".blue) + " | " +
               (currentStream ? "Stream".green : "Not Streaming".red) + " | " +
               currentFormat.statusName.yellow)

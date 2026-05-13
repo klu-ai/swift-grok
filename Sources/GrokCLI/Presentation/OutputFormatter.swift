@@ -324,8 +324,6 @@ class OutputFormatter {
         - \("/attach".yellow): Browse files and attach one to following messages
         - \("/attach upload <path>".yellow): Upload a local file and attach it
         - \("/attach clear".yellow): Remove all attached files
-        - \("/reason [on|off]".yellow): Toggle reasoning mode on/off
-        - \("/reasoning [on|off]".yellow): Alias for /reason
         - \("/model <mode>".yellow): Switch web model/mode
         - \("/mode, /models, /modes".yellow): Model command aliases
         - \("models <mode>".yellow): Common commands also work without the slash
@@ -341,12 +339,13 @@ class OutputFormatter {
         - \("/exit, /quit".yellow): Exit the app
 
         \("Modes:".cyan.bold)
-        - \("Reasoning".yellow): Enables Grok reasoning model for hard problems
         - \("Model".yellow): auto, fast, expert, grok-4.3-beta, heavy, or a raw modeId
         - \("Private Mode".yellow): When enabled, conversations will not be saved
         - \("Streaming".yellow): Displays responses as they are generated
         - \("Output Format".yellow): Markdown is default; Raw preserves source Markdown
         - \("Agents".yellow): Configure instructions in Grok agent settings
+
+        \("Note:".cyan.bold) Reasoning is always enabled for all models; /reason is a legacy no-op.
 
         """)
     }

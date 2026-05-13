@@ -1043,7 +1043,7 @@ public class GrokClient {
     /// Prepares the default payload with the user's message
     /// - Parameters:
     ///   - message: The user's input message
-    ///   - enableReasoning: Whether to enable reasoning mode.
+    ///   - enableReasoning: Deprecated and ignored; reasoning is always enabled by Grok web modes.
     ///   - enableDeepSearch: Deprecated and ignored since Grok 4; deep research is no longer a Grok web feature.
     ///   - disableSearch: Deprecated and ignored since Grok 4; search is automatic and no longer configurable.
     ///   - customInstructions: Deprecated and ignored; configure instructions in Grok agent settings instead.
@@ -1052,7 +1052,7 @@ public class GrokClient {
     /// - Returns: A dictionary representing the payload
     internal func preparePayload(
         message: String,
-        enableReasoning: Bool = false,
+        enableReasoning: Bool = true,
         enableDeepSearch: Bool = false,
         disableSearch: Bool = false,
         customInstructions: String = "",
@@ -2540,7 +2540,7 @@ public class GrokClient {
     /// Sends a message to Grok and returns a streaming response
     /// - Parameters:
     ///   - message: The user's input message
-    ///   - enableReasoning: Whether to enable reasoning mode.
+    ///   - enableReasoning: Deprecated and ignored; reasoning is always enabled by Grok web modes.
     ///   - enableDeepSearch: Deprecated and ignored since Grok 4; deep research is no longer a Grok web feature.
     ///   - disableSearch: Deprecated and ignored since Grok 4; search is automatic and no longer configurable.
     ///   - customInstructions: Deprecated and ignored; configure instructions in Grok agent settings instead.
@@ -2550,7 +2550,7 @@ public class GrokClient {
     /// - Throws: Network, decoding, or API errors
     public func streamMessage(
         message: String,
-        enableReasoning: Bool = false,
+        enableReasoning: Bool = true,
         enableDeepSearch: Bool = false,
         disableSearch: Bool = false,
         customInstructions: String = "",
@@ -2582,7 +2582,7 @@ public class GrokClient {
     /// Sends a single message (non-streaming)
     public func sendMessage(
         message: String,
-        enableReasoning: Bool = false,
+        enableReasoning: Bool = true,
         enableDeepSearch: Bool = false,
         disableSearch: Bool = false,
         customInstructions: String = "",
@@ -2642,7 +2642,7 @@ public class GrokClient {
     ///   - conversationId: The ID of the conversation to continue
     ///   - parentResponseId: The ID of the response this message is replying to (optional)
     ///   - message: The user's input message
-    ///   - enableReasoning: Whether to enable reasoning mode
+    ///   - enableReasoning: Deprecated and ignored; reasoning is always enabled by Grok web modes.
     ///   - enableDeepSearch: Deprecated and ignored since Grok 4; deep research is no longer a Grok web feature.
     ///   - disableSearch: Deprecated and ignored since Grok 4; search is automatic and no longer configurable.
     ///   - customInstructions: Deprecated and ignored; configure instructions in Grok agent settings instead.
@@ -2654,7 +2654,7 @@ public class GrokClient {
         conversationId: String,
         parentResponseId: String? = nil,
         message: String,
-        enableReasoning: Bool = false,
+        enableReasoning: Bool = true,
         enableDeepSearch: Bool = false,
         disableSearch: Bool = false,
         customInstructions: String = "",

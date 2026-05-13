@@ -34,7 +34,6 @@ extension GrokCLI {
           help              - Show help information
 
         App Options:
-          --reasoning       - Enable reasoning mode for step-by-step explanations
           --markdown, -m    - Use markdown formatting in output (default)
           --raw             - Show raw Markdown text in output
           --json            - Emit scriptable JSON output
@@ -86,8 +85,6 @@ extension GrokCLI {
           /audio <path>     - Transcribe audio, edit the text field, then send
           /audio-send <path> - Transcribe audio and send immediately
           /transcribe <path> - Transcribe audio and print text only
-          /reason [on|off]  - Toggle reasoning mode
-          /reasoning        - Alias for /reason
           /model <mode>     - Switch model for following messages
           /mode, /models    - Model command aliases
           models <mode>     - Common commands also work without the slash
@@ -107,6 +104,7 @@ extension GrokCLI {
           - Use '/new' to start a new conversation thread
           - Use 'exit' or '/exit' to exit the app
           - The message command always starts a new conversation without context
+          - Reasoning is always enabled for all models; --reasoning and /reason are legacy no-ops
 
         Examples:
           grok                                      - Start interactive chat mode

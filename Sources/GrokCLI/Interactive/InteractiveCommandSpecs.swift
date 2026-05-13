@@ -15,7 +15,6 @@ extension GrokCLI {
         CommandSpec(command: "/exit", aliases: ["/quit"], description: "Exit the app"),
         CommandSpec(command: "/list", aliases: [], description: "List and load saved conversations"),
         CommandSpec(command: "/model", aliases: ["/mode", "/models", "/modes"], description: "Switch the active model or open the model picker"),
-        CommandSpec(command: "/reason", aliases: ["/reasoning"], description: "Toggle reasoning mode"),
         CommandSpec(command: "/stream", aliases: [], description: "Toggle streaming responses"),
         CommandSpec(command: "/format", aliases: ["/md", "/markdown", "/raw"], description: "Toggle Markdown/Raw output"),
         CommandSpec(command: "/private", aliases: [], description: "Toggle private mode"),

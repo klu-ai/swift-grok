@@ -52,7 +52,7 @@ enum OutputFormat: Equatable {
 
 // Shared options for Grok commands
 struct GrokCommandOptions: ParsableArguments {
-    @Flag(name: .long, help: "Enable reasoning mode for step-by-step explanations")
+    @Flag(name: .long, help: .hidden)
     var reasoning: Bool = false
 
     @Flag(name: .long, help: .hidden)
@@ -109,6 +109,13 @@ struct GrokCommandOptions: ParsableArguments {
 }
 
 extension GrokCLI {
+    static let reasoningAlwaysOnWarning = "--reasoning is deprecated and ignored; reasoning is always enabled for all models."
+    static let interactiveReasoningAlwaysOnWarning = "/reason is deprecated and ignored; reasoning is always enabled for all models."
+
+    static func reasoningConfigurationWarnings(reasoningRequested: Bool) -> [String] {
+        reasoningRequested ? [reasoningAlwaysOnWarning] : []
+    }
+
     static func searchConfigurationWarnings(deepSearchRequested: Bool, noSearchRequested: Bool) -> [String] {
         var warnings: [String] = []
         if deepSearchRequested {

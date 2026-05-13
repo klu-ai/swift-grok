@@ -81,10 +81,6 @@ struct ChatCompletionsController: RouteCollection {
 
         // 4. Send request to Grok
         do {
-            // Use parameters from the request
-            let temperature = chatRequest.temperature
-            let enableReasoning = temperature.map { $0 < 0.5 } ?? false
-
             // If streaming is requested, handle it differently
             if isStreaming {
 
@@ -94,15 +90,14 @@ struct ChatCompletionsController: RouteCollection {
                     req: req,
                     grokClient: grokClient,
                     model: chatRequest.model,
-                    userMessage: lastUserMessage,
-                    enableReasoning: enableReasoning
+                    userMessage: lastUserMessage
                 )
             } else {
                 // Non-streaming response
                 Self.logger.info("Non-streaming request received")
                 let response = try await grokClient.sendMessage(
                     message: lastUserMessage,
-                    enableReasoning: enableReasoning,
+                    enableReasoning: true,
                     temporary: true, // Don't save in Grok's history
                     modeId: GrokMode.resolve(chatRequest.model).id
                 )
@@ -133,12 +128,11 @@ struct ChatCompletionsController: RouteCollection {
         req: Request,
         grokClient: GrokClient,
         model: String,
-        userMessage: String,
-        enableReasoning: Bool
+        userMessage: String
     ) async throws -> Vapor.Response {
         let stream = try await grokClient.streamMessage(
             message: userMessage,
-            enableReasoning: enableReasoning,
+            enableReasoning: true,
             temporary: true,
             modeId: GrokMode.resolve(model).id
         )

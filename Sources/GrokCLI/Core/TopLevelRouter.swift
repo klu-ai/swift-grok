@@ -23,7 +23,6 @@ extension GrokCLI {
         Starts interactive chat mode. If an initial message is supplied, Grok sends it first and then keeps the prompt open.
 
         Options:
-          --reasoning                 Enable reasoning mode
           --markdown, -m              Use markdown formatting in output
           --raw                       Show raw Markdown text in output
           --format <md|raw>           Choose output format
@@ -36,6 +35,7 @@ extension GrokCLI {
           --refinement-level <level>  Speech-to-text refinement level
           --model, --mode <mode>      Use auto, fast, expert, grok-4.3-beta, heavy, or a raw modeId
 
+        Reasoning is always enabled for all models. --reasoning is accepted as a legacy no-op.
         With --json, chat sends the initial message as one JSON result and exits.
         With --raw --quiet, piped chat writes assistant answers to stdout without prompts.
         """)
@@ -48,7 +48,6 @@ extension GrokCLI {
         Sends one message to Grok and exits.
 
         Options:
-          --reasoning                 Enable reasoning mode
           --markdown, -m              Use markdown formatting in output
           --raw                       Show raw Markdown text in output
           --json                      Emit scriptable JSON output
@@ -68,6 +67,7 @@ extension GrokCLI {
           - message args, --audio, --prompt-file, and --stdin are mutually exclusive
           - if no message args or prompt file are supplied and stdin is piped, stdin is used
 
+        Reasoning is always enabled for all models. --reasoning is accepted as a legacy no-op.
         JSON mode writes only JSON to stdout. Human progress and debug banners are suppressed.
         With --stream --json, output is NDJSON: one JSON event object per line.
         With --raw --quiet, stdout contains only assistant answer text.
