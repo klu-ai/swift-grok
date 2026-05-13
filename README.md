@@ -411,7 +411,7 @@ The `proxy` executable exposes an OpenAI-compatible API backed by Grok. See [PRO
 - `Sources/GrokCLI/`: `grok` command-line interface
 - `Sources/GrokProxy/`: OpenAI-compatible proxy server
 - `Scripts/`: installer and browser authentication helper
-- `Tests/`: package tests
+- `Tests/`: package tests; see [Tests/README.md](Tests/README.md) for test and smoke commands
 
 ## License
 
