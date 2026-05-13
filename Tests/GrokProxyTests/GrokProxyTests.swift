@@ -1,4 +1,5 @@
 @testable import GrokProxy
+@testable import GrokClient
 import NIOCore
 import VaporTesting
 import Testing
@@ -33,6 +34,26 @@ struct AppTests {
         }
         try await app.asyncShutdown()
     }
+
+    private func withModelsApp(
+        modes: [GrokMode],
+        _ test: (Application) async throws -> ()
+    ) async throws {
+        let app = try await Application.make(.testing)
+        do {
+            let client = try GrokClient(cookies: ["sso": "test-cookie"])
+            try app.register(collection: ChatCompletionsController(
+                grokClient: client,
+                modeCatalog: { _ in modes }
+            ))
+            try await test(app)
+        }
+        catch {
+            try await app.asyncShutdown()
+            throw error
+        }
+        try await app.asyncShutdown()
+    }
     
     @Test("Test Hello World Route")
     func helloWorld() async throws {
@@ -46,16 +67,30 @@ struct AppTests {
 
     @Test("Models endpoints return known Grok modes")
     func modelsEndpoints() async throws {
-        try await withApp { app in
-            let expectedIds = ModelsResponse.defaultResponse().data.map(\.id)
+        let modes = [
+            GrokMode(id: "fast", displayName: "Fast", summary: "Quick responses"),
+            GrokMode(
+                id: "heavy",
+                displayName: "Heavy",
+                summary: "Team of Experts",
+                isAvailable: false,
+                minimumSubscriptionTier: "TIER_SUPERGROK_HEAVY"
+            )
+        ]
 
+        try await withModelsApp(modes: modes) { app in
             try await app.testing().test(.GET, "v1/models", afterResponse: { res async in
                 #expect(res.status == .ok)
                 expectContent(ModelsResponse.self, res) { models in
                     #expect(models.object == "list")
-                    #expect(models.data.map(\.id) == expectedIds)
+                    #expect(models.data.map(\.id) == ["fast", "heavy"])
                     #expect(models.data.allSatisfy { $0.object == "model" })
                     #expect(models.data.allSatisfy { $0.owned_by == "grok" })
+                    #expect(models.data[0].available == true)
+                    #expect(models.data[0].disabled == false)
+                    #expect(models.data[1].available == false)
+                    #expect(models.data[1].disabled == true)
+                    #expect(models.data[1].minimum_subscription_tier == "TIER_SUPERGROK_HEAVY")
                 }
             })
 
@@ -63,7 +98,7 @@ struct AppTests {
                 #expect(res.status == .ok)
                 expectContent(ModelsResponse.self, res) { models in
                     #expect(models.object == "list")
-                    #expect(models.data.map(\.id) == expectedIds)
+                    #expect(models.data.map(\.id) == ["fast", "heavy"])
                 }
             })
         }

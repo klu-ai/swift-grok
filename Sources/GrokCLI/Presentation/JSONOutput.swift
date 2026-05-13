@@ -292,17 +292,26 @@ extension GrokCLI {
     }
 
     static func modeJSON(_ mode: GrokMode) -> [String: AnyCodable] {
-        [
+        var json: [String: AnyCodable] = [
             "id": AnyCodable(mode.id),
             "displayName": AnyCodable(mode.displayName),
-            "summary": AnyCodable(mode.summary)
+            "summary": AnyCodable(mode.summary),
+            "available": AnyCodable(mode.isAvailable),
+            "disabled": AnyCodable(!mode.isAvailable)
         ]
+        if let unavailableReason = mode.unavailableReason {
+            json["unavailableReason"] = AnyCodable(unavailableReason)
+        }
+        if let minimumSubscriptionTier = mode.minimumSubscriptionTier {
+            json["minimumSubscriptionTier"] = AnyCodable(minimumSubscriptionTier)
+        }
+        return json
     }
 
-    static func selectedModelJSON(currentMode: GrokMode) -> [String: AnyCodable] {
+    static func selectedModelJSON(currentMode: GrokMode, modes: [GrokMode] = GrokMode.knownModes) -> [String: AnyCodable] {
         [
             "currentModel": AnyCodable(modeJSON(currentMode)),
-            "models": AnyCodable(GrokMode.knownModes.map { mode in
+            "models": AnyCodable(modes.map { mode in
                 var item = modeJSON(mode)
                 item["selected"] = AnyCodable(mode.id == currentMode.id)
                 return item

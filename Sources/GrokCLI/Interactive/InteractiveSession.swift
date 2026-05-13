@@ -544,18 +544,22 @@ extension GrokCLI {
 
             case .some("model"), .some("models"), .some("mode"), .some("modes"):
                 let modelCommand = interactiveModelCommand(from: input)
+                let modes = await app.loadModes()
                 switch modelCommand {
                 case .some(.select):
-                    guard let selectedMode = promptForModelSelection(currentMode: state.mode) else {
+                    guard let selectedMode = promptForModelSelection(currentMode: state.mode, modes: modes) else {
                         continue
                     }
                     state.mode = selectedMode
                 case .some(.set(let requestedMode)):
                     if requestedMode.lowercased() == "list" {
-                        printAvailableModels(currentMode: state.mode)
+                        printAvailableModels(currentMode: state.mode, modes: modes)
                         continue
                     }
-                    state.mode = GrokMode.resolve(requestedMode)
+                    guard let selectedMode = selectableResolvedMode(requestedMode, modes: modes) else {
+                        continue
+                    }
+                    state.mode = selectedMode
                 case .none:
                     continue
                 }

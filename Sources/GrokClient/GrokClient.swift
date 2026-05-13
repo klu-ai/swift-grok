@@ -1459,6 +1459,121 @@ public class GrokClient {
         return nil
     }
 
+    private struct ParsedModeAvailability {
+        let isAvailable: Bool
+        let reason: String?
+        let minimumSubscriptionTier: String?
+    }
+
+    private func modeDictionaries(from value: Any) -> [JSONDictionary] {
+        dictionaries(
+            from: value,
+            preferredKeys: [
+                "modes",
+                "modeItems",
+                "mode_items",
+                "models",
+                "data",
+                "result",
+                "items"
+            ]
+        )
+    }
+
+    private func makeMode(from dictionary: JSONDictionary) -> GrokMode? {
+        let rawJSON = anyCodableDictionary(dictionary)
+        guard let id = stringValue(rawJSON, keys: [
+            "id",
+            "modeId",
+            "mode_id",
+            "modelId",
+            "model_id",
+            "slug",
+            "value"
+        ]) else {
+            return nil
+        }
+
+        let availability = modeAvailability(from: dictionary)
+        return GrokMode(
+            id: id,
+            displayName: stringValue(rawJSON, keys: [
+                "displayName",
+                "display_name",
+                "name",
+                "title",
+                "label"
+            ]),
+            summary: stringValue(rawJSON, keys: [
+                "summary",
+                "description",
+                "subtitle"
+            ]) ?? "",
+            isAvailable: availability.isAvailable,
+            unavailableReason: availability.reason,
+            minimumSubscriptionTier: availability.minimumSubscriptionTier
+        )
+    }
+
+    private func modeAvailability(from dictionary: JSONDictionary) -> ParsedModeAvailability {
+        if let availability = self.dictionary(dictionary["availability"]) {
+            if let availableValue = availability["available"] {
+                if let available = availableValue as? Bool {
+                    return ParsedModeAvailability(
+                        isAvailable: available,
+                        reason: available ? nil : stringValue(availability, keys: ["message", "reason", "description"]),
+                        minimumSubscriptionTier: stringValue(availability, keys: ["minimumSubscriptionTier", "minimum_subscription_tier"])
+                    )
+                }
+                return ParsedModeAvailability(isAvailable: true, reason: nil, minimumSubscriptionTier: nil)
+            }
+
+            if let requiresUpgrade = self.dictionary(availability["requiresUpgrade"]) ??
+                self.dictionary(availability["requires_upgrade"]) {
+                return ParsedModeAvailability(
+                    isAvailable: false,
+                    reason: stringValue(requiresUpgrade, keys: ["message", "reason", "description"]),
+                    minimumSubscriptionTier: stringValue(requiresUpgrade, keys: ["minimumSubscriptionTier", "minimum_subscription_tier"])
+                )
+            }
+
+            if let unavailable = self.dictionary(availability["unavailable"]) ??
+                self.dictionary(availability["disabled"]) {
+                return ParsedModeAvailability(
+                    isAvailable: false,
+                    reason: stringValue(unavailable, keys: ["message", "reason", "description"]),
+                    minimumSubscriptionTier: stringValue(unavailable, keys: ["minimumSubscriptionTier", "minimum_subscription_tier"])
+                )
+            }
+
+            if boolValue(availability, keys: ["requiresUpgrade", "requires_upgrade"]) == true {
+                return ParsedModeAvailability(
+                    isAvailable: false,
+                    reason: stringValue(availability, keys: ["message", "reason", "description"]),
+                    minimumSubscriptionTier: stringValue(availability, keys: ["minimumSubscriptionTier", "minimum_subscription_tier"])
+                )
+            }
+        }
+
+        if let isAvailable = boolValue(dictionary, keys: ["available", "isAvailable", "is_available"]) {
+            return ParsedModeAvailability(
+                isAvailable: isAvailable,
+                reason: isAvailable ? nil : stringValue(dictionary, keys: ["unavailableReason", "unavailable_reason", "reason", "message"]),
+                minimumSubscriptionTier: stringValue(dictionary, keys: ["minimumSubscriptionTier", "minimum_subscription_tier"])
+            )
+        }
+
+        if let disabled = boolValue(dictionary, keys: ["disabled", "isDisabled", "is_disabled"]), disabled {
+            return ParsedModeAvailability(
+                isAvailable: false,
+                reason: stringValue(dictionary, keys: ["unavailableReason", "unavailable_reason", "reason", "message"]),
+                minimumSubscriptionTier: stringValue(dictionary, keys: ["minimumSubscriptionTier", "minimum_subscription_tier"])
+            )
+        }
+
+        return ParsedModeAvailability(isAvailable: true, reason: nil, minimumSubscriptionTier: nil)
+    }
+
     private func makeTask(from dictionary: JSONDictionary) -> GrokTask {
         let rawJSON = anyCodableDictionary(dictionary)
         return GrokTask(

@@ -6,9 +6,16 @@ import Logging
 struct ChatCompletionsController: RouteCollection {
     private static let logger = Logger(label: "ChatCompletionsController")
     private let grokClient: GrokClient
+    private let modeCatalog: @Sendable (GrokClient) async throws -> [GrokMode]
 
-    init(grokClient: GrokClient) {
+    init(
+        grokClient: GrokClient,
+        modeCatalog: @escaping @Sendable (GrokClient) async throws -> [GrokMode] = { client in
+            try await client.listModes()
+        }
+    ) {
         self.grokClient = grokClient
+        self.modeCatalog = modeCatalog
     }
 
     func boot(routes: RoutesBuilder) throws {
@@ -21,13 +28,25 @@ struct ChatCompletionsController: RouteCollection {
         }
 
         // OpenAI compatibility endpoint for models
-        v1.get("models") { req in
-            return ModelsResponse.defaultResponse()
+        v1.get("models") { [grokClient, modeCatalog] req in
+            return try await Self.models(grokClient: grokClient, modeCatalog: modeCatalog)
         }
 
         // Alternative endpoint without the v1 prefix
-        routes.get("models") { req in
-            return ModelsResponse.defaultResponse()
+        routes.get("models") { [grokClient, modeCatalog] req in
+            return try await Self.models(grokClient: grokClient, modeCatalog: modeCatalog)
+        }
+    }
+
+    private static func models(
+        grokClient: GrokClient,
+        modeCatalog: @Sendable (GrokClient) async throws -> [GrokMode]
+    ) async throws -> ModelsResponse {
+        do {
+            let modes = try await modeCatalog(grokClient)
+            return ModelsResponse.response(for: modes)
+        } catch {
+            throw Abort(.badGateway, reason: "Failed to fetch Grok modes: \(error.localizedDescription)")
         }
     }
 

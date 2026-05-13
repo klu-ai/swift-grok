@@ -205,21 +205,31 @@ struct ModelsResponse: Content {
         let object: String
         let created: Int
         let owned_by: String
+        let available: Bool
+        let disabled: Bool
+        let unavailable_reason: String?
+        let minimum_subscription_tier: String?
         
-        init(id: String, owned_by: String = "grok") {
-            self.id = id
+        init(mode: GrokMode, owned_by: String = "grok") {
+            self.id = mode.id
             self.object = "model"
             self.created = Int(Date().timeIntervalSince1970) - 86400 // Yesterday
             self.owned_by = owned_by
+            self.available = mode.isAvailable
+            self.disabled = !mode.isAvailable
+            self.unavailable_reason = mode.unavailableReason
+            self.minimum_subscription_tier = mode.minimumSubscriptionTier
         }
     }
     
-    static func defaultResponse() -> ModelsResponse {
-        let grokModels = GrokMode.knownModes.map { Model(id: $0.id) }
-        
+    static func response(for modes: [GrokMode]) -> ModelsResponse {
         return ModelsResponse(
             object: "list",
-            data: grokModels
+            data: modes.map { Model(mode: $0) }
         )
+    }
+
+    static func defaultResponse() -> ModelsResponse {
+        response(for: GrokMode.knownModes)
     }
 }

@@ -15,6 +15,7 @@ class GrokCLIApp {
     private var lastXPosts: [XPost]?
     private var currentPersonality: GrokClient.PersonalityType = .none
     private var currentMode: GrokMode = .defaultMode
+    private var cachedModes: [GrokMode]?
     private var lastRateLimit: GrokRateLimit?
     private var lastRateLimitModeId: String?
     private var currentWorkspace: GrokWorkspace?
@@ -120,6 +121,27 @@ class GrokCLIApp {
             lastRateLimitModeId = nil
         }
         self.currentMode = mode
+    }
+
+    func loadModes() async -> [GrokMode] {
+        if let cachedModes {
+            return cachedModes
+        }
+
+        do {
+            let client = try initializeClient()
+            let modes = try await client.listModes()
+            guard !modes.isEmpty else {
+                return GrokMode.knownModes
+            }
+            cachedModes = modes
+            return modes
+        } catch {
+            if isDebug {
+                print("Debug: Could not load live modes: \(error.localizedDescription)")
+            }
+            return GrokMode.knownModes
+        }
     }
 
     func refreshRateLimitStatus(for mode: GrokMode) async -> String? {
@@ -248,6 +270,7 @@ class GrokCLIApp {
         }
 
         client = nil
+        cachedModes = nil
         if let statusLine {
             statusLine.update(text: "Authentication failed; refreshing browser cookies...".yellow)
         } else {
@@ -574,6 +597,7 @@ class GrokCLIApp {
     func saveCredentials(from jsonPath: String) throws {
         try configManager.saveCredentialsPath(jsonPath)
         client = nil
+        cachedModes = nil
     }
 
     // Generate new credentials using cookie extractor
@@ -581,6 +605,7 @@ class GrokCLIApp {
         // Return path to generated credentials
         let path = try await configManager.runCookieExtractor(extraArgs: args, suppressOutput: suppressOutput)
         client = nil
+        cachedModes = nil
         return path
     }
 }

@@ -234,17 +234,18 @@ extension GrokCLI {
         case "list":
             try await handleListCommand(args: remainingArgs, exitOnError: true)
         case "models", "modes":
+            let modes = await GrokCLIApp.shared.loadModes()
             if isJSONRequested(remainingArgs) {
                 try printJSONResult(
                     command: command == "modes" ? "modes" : "models",
                     category: "model_list",
-                    data: AnyCodable(selectedModelJSON(currentMode: GrokCLIApp.shared.getCurrentMode()))
+                    data: AnyCodable(selectedModelJSON(currentMode: GrokCLIApp.shared.getCurrentMode(), modes: modes))
                 )
             } else if containsHelpArgument(remainingArgs) {
                 printModelsUsage()
-                printAvailableModels(currentMode: GrokCLIApp.shared.getCurrentMode())
+                printAvailableModels(currentMode: GrokCLIApp.shared.getCurrentMode(), modes: modes)
             } else {
-                printAvailableModels(currentMode: GrokCLIApp.shared.getCurrentMode())
+                printAvailableModels(currentMode: GrokCLIApp.shared.getCurrentMode(), modes: modes)
             }
         case "agents":
             try await handleAgentsCommand(args: remainingArgs, exitOnError: true)

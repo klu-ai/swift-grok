@@ -1006,7 +1006,7 @@ final class GrokCLIE2ETests: XCTestCase {
     }
 
     func testInteractiveModelAccessErrorDoesNotRefreshCredentials() throws {
-        let server = try MockGrokServer(accessDeniedNewConversationCount: 1)
+        let server = try MockGrokServer(accessDeniedNewConversationCount: 1, heavyRequiresUpgrade: false)
         let environment = try TestEnvironment(server: server)
         let extractor = environment.scratchURL.appendingPathComponent("unexpected_refresh_cookie_extractor.py")
         let extractorMarker = environment.scratchURL.appendingPathComponent("extractor_was_called")
@@ -1036,6 +1036,23 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: environment.credentialsURL, encoding: .utf8), originalCredentials)
         XCTAssertEqual(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").count, 1)
         XCTAssertEqual(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").last?.jsonString("modeId"), "heavy")
+    }
+
+    func testInteractiveUnavailableModelCannotBeSelected() throws {
+        let server = try MockGrokServer()
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(
+            [],
+            input: "/model heavy\nhello\nquit\n",
+            timeout: 15
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Model unavailable: Heavy (heavy) - Requires TIER_SUPERGROK_HEAVY")
+        XCTAssertFalse(run.cleanOutput.contains("Model set to: Heavy (heavy)"))
+        XCTAssertEqual(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").count, 1)
+        XCTAssertEqual(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").last?.jsonString("modeId"), "fast")
     }
 
     func testListTasksSkillsAgentsWorkspacesAndFilesCommands() throws {
@@ -2014,6 +2031,7 @@ private final class MockGrokServer {
     private let streamLines: [String]?
     private let finalMessage: String
     private let transcriptionText: String
+    private let heavyRequiresUpgrade: Bool
 
     init(
         unauthorizedNewConversationCount: Int = 0,
@@ -2023,7 +2041,8 @@ private final class MockGrokServer {
         streamTokens: [String] = ["Mock streamed ", "answer"],
         streamLines: [String]? = nil,
         finalMessage: String = "Mock final response",
-        transcriptionText: String = "mock audio transcript"
+        transcriptionText: String = "mock audio transcript",
+        heavyRequiresUpgrade: Bool = true
     ) throws {
         self.unauthorizedNewConversationCount = unauthorizedNewConversationCount
         self.accessDeniedNewConversationCount = accessDeniedNewConversationCount
@@ -2033,6 +2052,7 @@ private final class MockGrokServer {
         self.streamLines = streamLines
         self.finalMessage = finalMessage
         self.transcriptionText = transcriptionText
+        self.heavyRequiresUpgrade = heavyRequiresUpgrade
         self.listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: 0)!)
 
         let ready = DispatchSemaphore(value: 0)
@@ -2143,6 +2163,8 @@ private final class MockGrokServer {
 
     private func responseBody(for request: HTTPRequest) -> HTTPResponse {
         switch (request.method, request.path) {
+        case ("POST", "/rest/modes"):
+            return jsonResponse(["modes": modeJSON()])
         case ("POST", "/rest/voice/speech-to-text"):
             return jsonResponse([
                 "text": transcriptionText,
@@ -2301,6 +2323,46 @@ private final class MockGrokServer {
             "prompt": prompt,
             "isEnabled": isEnabled,
             "schedule": ["date": "2026-05-14", "time": "09:30", "timezone": "UTC"]
+        ]
+    }
+
+    private func modeJSON() -> [[String: Any]] {
+        [
+            [
+                "id": "auto",
+                "displayName": "Auto",
+                "summary": "Chooses Fast or Expert",
+                "availability": ["available": [:]]
+            ],
+            [
+                "id": "fast",
+                "displayName": "Fast",
+                "summary": "Quick responses",
+                "availability": ["available": [:]]
+            ],
+            [
+                "id": "expert",
+                "displayName": "Expert",
+                "summary": "Thinks hard",
+                "availability": ["available": [:]]
+            ],
+            [
+                "id": "grok-420-computer-use-sa",
+                "displayName": "Grok 4.3 (beta)",
+                "summary": "Uses Skills and Connectors",
+                "availability": ["available": [:]]
+            ],
+            [
+                "id": "heavy",
+                "displayName": "Heavy",
+                "summary": "Team of Experts",
+                "availability": heavyRequiresUpgrade ? [
+                    "requiresUpgrade": [
+                        "message": "",
+                        "minimumSubscriptionTier": "TIER_SUPERGROK_HEAVY"
+                    ]
+                ] : ["available": [:]]
+            ]
         ]
     }
 

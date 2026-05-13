@@ -65,6 +65,56 @@ final class GrokClientTests: XCTestCase {
         XCTAssertNil(json["fileName"])
     }
 
+    func testListModesUsesRootModesEndpointAndParsesAvailability() async throws {
+        let responseData = """
+        {
+          "modes": [
+            {
+              "id": "fast",
+              "displayName": "Fast",
+              "summary": "Quick responses",
+              "availability": { "available": {} }
+            },
+            {
+              "modeId": "heavy",
+              "name": "Heavy",
+              "description": "Team of Experts",
+              "availability": {
+                "requiresUpgrade": {
+                  "message": "",
+                  "minimumSubscriptionTier": "TIER_SUPERGROK_HEAVY"
+                }
+              }
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+        let session = makeMockSession(data: responseData, statusCode: 200)
+        let client = try GrokClient(
+            cookies: ["sso": "test-cookie"],
+            baseURL: "https://example.test/rest",
+            session: session
+        )
+
+        let modes = try await client.listModes()
+
+        XCTAssertEqual(modes.count, 2)
+        XCTAssertEqual(modes[0].id, "fast")
+        XCTAssertTrue(modes[0].isAvailable)
+        XCTAssertEqual(modes[1].id, "heavy")
+        XCTAssertEqual(modes[1].displayName, "Heavy")
+        XCTAssertFalse(modes[1].isAvailable)
+        XCTAssertEqual(modes[1].minimumSubscriptionTier, "TIER_SUPERGROK_HEAVY")
+        XCTAssertEqual(modes[1].unavailableDescription, "Requires TIER_SUPERGROK_HEAVY")
+
+        let request = try XCTUnwrap(MockURLProtocol.lastRequest)
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.url?.absoluteString, "https://example.test/rest/modes")
+        let body = try XCTUnwrap(MockURLProtocol.lastRequestBody)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertTrue(json.isEmpty)
+    }
+
     func testRateLimitsRequestUsesRootEndpointAndModelName() async throws {
         let responseData = #"{"remainingResponses":9,"resetAfterSeconds":300}"#.data(using: .utf8)!
         let session = makeMockSession(data: responseData, statusCode: 200)
