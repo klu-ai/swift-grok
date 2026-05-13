@@ -46,6 +46,9 @@ let package = Package(
         .testTarget(
             name: "GrokClientTests",
             dependencies: ["GrokClient", "GrokCLI"]),
+        .testTarget(
+            name: "GrokCLIE2ETests",
+            dependencies: ["GrokCLI"]),
         .executableTarget(
             name: "GrokProxy",
             dependencies: [
@@ -72,4 +75,4 @@ let package = Package(
 var swiftSettings: [SwiftSetting] { [
     .enableUpcomingFeature("DisableOutwardActorInference"),
     .enableExperimentalFeature("StrictConcurrency"),
-] } 
+] }
