@@ -6,32 +6,9 @@
 //
 
 import XCTest
-import ObjectiveC
 @testable import GrokClient 
 
 final class GrokClientTests: XCTestCase {
-    
-    // MARK: - Testable Extensions
-    
-    /// Extension to allow session injection for testing
-    extension GrokClient {
-        /// Sets the URLSession for testing purposes
-        /// This is only intended to be used in tests
-        func setSessionForTesting(_ newSession: URLSession) {
-            // Using Objective-C runtime to set the private property
-            let sessionIvar = class_getInstanceVariable(GrokClient.self, "_session")
-            if let sessionIvar = sessionIvar {
-                // Use withUnsafeMutablePointer to avoid direct ivar access warnings
-                withUnsafeMutablePointer(to: &self) { selfPtr in
-                    let sessionPtr = UnsafeMutableRawPointer(selfPtr)
-                        .advanced(by: ivar_getOffset(sessionIvar))
-                        .assumingMemoryBound(to: URLSession.self)
-                    sessionPtr.pointee = newSession
-                }
-            }
-        }
-    }
-    
     // MARK: - Model Tests
     
     func testGrokErrorEquatable() {
@@ -50,7 +27,7 @@ final class GrokClientTests: XCTestCase {
         let json = """
         {
           "message": "Hello world",
-          "timestamp": "2025-03-15T13:24:00Z"
+          "timestamp": 1742045040
         }
         """.data(using: .utf8)!
         
@@ -102,7 +79,7 @@ final class GrokClientTests: XCTestCase {
           "message": "Hello from Grok",
           "conversationId": "convo123",
           "responseId": "resp456",
-          "timestamp": "2025-03-15T13:24:00Z",
+          "timestamp": 1742045040,
           "webSearchResults": [
             {
               "url": "https://example.com",
@@ -117,7 +94,9 @@ final class GrokClientTests: XCTestCase {
               "text": "Post content here",
               "postId": "xyz789"
             }
-          ]
+          ],
+          "isSoftStop": false,
+          "isFinal": true
         }
         """.data(using: .utf8)!
         
@@ -299,13 +278,21 @@ final class GrokClientTests: XCTestCase {
             disableSearch: false,
             customInstructions: "Custom instructions",
             temporary: true,
-            personalityType: .romance
+            personalityType: .romance,
+            modeId: GrokMode.expert.id
         )
         
         XCTAssertEqual(payload["message"] as? String, "test")
-        XCTAssertTrue(payload["isReasoning"] as? Bool ?? false)
+        XCTAssertEqual(payload["modeId"] as? String, "expert")
         XCTAssertEqual(payload["customPersonality"] as? String, "Custom instructions")
-        XCTAssertEqual(payload["systemPromptName"] as? String, "grok3_personality_romance_me")
+        XCTAssertNil(payload["systemPromptName"])
+    }
+
+    func testGrokModeAliases() {
+        XCTAssertEqual(GrokMode.resolve(nil).id, "fast")
+        XCTAssertEqual(GrokMode.resolve("expert").id, "expert")
+        XCTAssertEqual(GrokMode.resolve("grok-4.3-beta").id, "grok-420-computer-use-sa")
+        XCTAssertEqual(GrokMode.resolve("new-web-mode").id, "new-web-mode")
     }
     
     func testInitGrokClient_withValidCookies() {
@@ -347,14 +334,14 @@ final class GrokClientTests: XCTestCase {
               "mediaTypes": []
             }
           ],
-          "nextPageToken": "nextPage"
+          "nextPageToken": "nextPage",
+          "textSearchMatches": []
         }
         """.data(using: .utf8)!
         
         let mockSession = makeMockSession(data: mockData, statusCode: 200)
         let cookies = ["test": "cookieVal", "x-anonuserid": "test123"]
-        let client = try GrokClient(cookies: cookies)
-        client.setSessionForTesting(mockSession)
+        let client = try GrokClient(cookies: cookies, session: mockSession)
         
         let conversations = try await client.listConversations()
         XCTAssertEqual(conversations.count, 1)
@@ -369,13 +356,92 @@ final class GrokClientTests: XCTestCase {
         """.data(using: .utf8)!
         
         let mockSession = makeMockSession(data: streamingData, statusCode: 200, useStreaming: true)
-        let client = try GrokClient(cookies: ["x-anonuserid":"123"])
-        client.setSessionForTesting(mockSession)
+        let client = try GrokClient(cookies: ["x-anonuserid":"123"], session: mockSession)
         
         let response = try await client.sendMessage(message: "Hi Grok")
         XCTAssertEqual(response.message, "Hello World")
         XCTAssertEqual(response.conversationId, "convo123")
         XCTAssertEqual(response.responseId, "resp777")
+    }
+
+    func testStreamParserYieldsFirstTokenBeforeLineSourceCompletes() async throws {
+        let client = try GrokClient(cookies: ["x-anonuserid":"123"])
+        let lines = AsyncThrowingStream<String, Error> { continuation in
+            continuation.yield(#"{"result":{"conversation":{"conversationId":"convo123"},"response":{"responseId":"resp777","token":"Hello "}}}"#)
+            Task {
+                try await Task.sleep(nanoseconds: 500_000_000)
+                continuation.yield(#"{"result":{"response":{"responseId":"resp777","token":"World"}}}"#)
+                continuation.yield(#"{"result":{"response":{"modelResponse":{"message":"Hello World","responseId":"resp777"}}}}"#)
+                continuation.finish()
+            }
+        }
+
+        let stream = client.streamResponses(from: lines)
+        var iterator = stream.makeAsyncIterator()
+        let start = Date()
+
+        let first = try await iterator.next()
+        let elapsed = Date().timeIntervalSince(start)
+
+        XCTAssertEqual(first?.message, "Hello ")
+        XCTAssertFalse(first?.isFinal ?? true)
+        XCTAssertLessThan(elapsed, 0.2, "Expected first streamed token before later chunks completed.")
+
+        var finalResponse: ConversationResponse?
+        while let response = try await iterator.next() {
+            if response.isFinal {
+                finalResponse = response
+                break
+            }
+        }
+        XCTAssertEqual(finalResponse?.message, "Hello World")
+    }
+
+    func testStreamMessageYieldsFallbackFinalWhenNoModelResponseArrives() async throws {
+        let streamingData = """
+        {"result":{"conversation":{"conversationId":"convo123"},"response":{"responseId":"resp777","token":"Hello "}}}
+        {"result":{"response":{"responseId":"resp777","token":"World"}}}
+        """.data(using: .utf8)!
+
+        let mockSession = makeMockSession(data: streamingData, statusCode: 200, useStreaming: true)
+        let client = try GrokClient(cookies: ["x-anonuserid":"123"], session: mockSession)
+
+        let stream = try await client.streamMessage(message: "Hi Grok")
+        var responses: [ConversationResponse] = []
+        for try await response in stream {
+            responses.append(response)
+        }
+
+        XCTAssertEqual(responses.map(\.message), ["Hello ", "World", "Hello World"])
+        XCTAssertEqual(responses.last?.conversationId, "convo123")
+        XCTAssertEqual(responses.last?.responseId, "resp777")
+        XCTAssertEqual(responses.last?.isFinal, true)
+    }
+
+    func testStreamParserKeepsThinkingTokensOutOfFallbackFinal() async throws {
+        let client = try GrokClient(cookies: ["x-anonuserid":"123"])
+        let lines = AsyncThrowingStream<String, Error> { continuation in
+            continuation.yield(#"{"result":{"conversation":{"conversationId":"convo123"},"response":{"responseId":"resp777","token":"long silk"}}}"#)
+            continuation.yield(#"{"result":{"response":{"responseId":"resp777","token":"Responding as a beautiful Asian woman","isThinking":true}}}"#)
+            continuation.yield(#"{"result":{"response":{"responseId":"resp777","token":"y black hair"}}}"#)
+            continuation.finish()
+        }
+
+        let stream = client.streamResponses(from: lines)
+        var responses: [ConversationResponse] = []
+        for try await response in stream {
+            responses.append(response)
+        }
+
+        XCTAssertEqual(responses.count, 4)
+        XCTAssertEqual(responses[0].message, "long silk")
+        XCTAssertFalse(responses[0].isThinking)
+        XCTAssertEqual(responses[1].message, "Responding as a beautiful Asian woman")
+        XCTAssertTrue(responses[1].isThinking)
+        XCTAssertEqual(responses[2].message, "y black hair")
+        XCTAssertFalse(responses[2].isThinking)
+        XCTAssertEqual(responses[3].message, "long silky black hair")
+        XCTAssertTrue(responses[3].isFinal)
     }
     
     func testContinueConversation_success() async throws {
@@ -384,19 +450,25 @@ final class GrokClientTests: XCTestCase {
         """.data(using: .utf8)!
         
         let mockSession = makeMockSession(data: streamingData, statusCode: 200, useStreaming: true)
-        let client = try GrokClient(cookies: ["x-anonuserid":"123"])
-        client.setSessionForTesting(mockSession)
+        let client = try GrokClient(cookies: ["x-anonuserid":"123"], session: mockSession)
         
-        let (message, responseId, webResults, xposts) = try await client.continueConversation(
+        let stream = try await client.continueConversation(
             conversationId: "convo123",
             parentResponseId: "resp777",
             message: "Continue from there"
         )
+
+        var finalResponse: ConversationResponse?
+        for try await response in stream {
+            if response.isFinal {
+                finalResponse = response
+            }
+        }
         
-        XCTAssertEqual(message, "Continued")
-        XCTAssertEqual(responseId, "resp888")
-        XCTAssertNil(webResults)
-        XCTAssertNil(xposts)
+        XCTAssertEqual(finalResponse?.message, "Continued")
+        XCTAssertEqual(finalResponse?.responseId, "resp888")
+        XCTAssertNil(finalResponse?.webSearchResults)
+        XCTAssertNil(finalResponse?.xposts)
     }
     
     func testGetResponseNodes_success() async throws {
@@ -413,8 +485,7 @@ final class GrokClientTests: XCTestCase {
         """.data(using: .utf8)!
         
         let mockSession = makeMockSession(data: mockData, statusCode: 200)
-        let client = try GrokClient(cookies: ["x-anonuserid":"123"])
-        client.setSessionForTesting(mockSession)
+        let client = try GrokClient(cookies: ["x-anonuserid":"123"], session: mockSession)
         
         let nodes = try await client.getResponseNodes(conversationId: "convoABC")
         XCTAssertEqual(nodes.count, 1)
@@ -436,8 +507,7 @@ final class GrokClientTests: XCTestCase {
         """.data(using: .utf8)!
         
         let mockSession = makeMockSession(data: mockData, statusCode: 200)
-        let client = try GrokClient(cookies: ["x-anonuserid":"123"])
-        client.setSessionForTesting(mockSession)
+        let client = try GrokClient(cookies: ["x-anonuserid":"123"], session: mockSession)
         
         let responses = try await client.loadResponses(conversationId: "convoXYZ")
         XCTAssertEqual(responses.count, 1)
@@ -447,7 +517,7 @@ final class GrokClientTests: XCTestCase {
     
     // MARK: - Helpers
     
-    private func makeMockSession(data: Data, statusCode: Int, useStreaming: Bool = false) -> URLSession {
+    private func makeMockSession(data: Data, statusCode: Int, useStreaming: Bool = false, chunkDelay: TimeInterval = 0.01) -> URLSession {
         let url = URL(string: "https://mocked.url")!
         let response = HTTPURLResponse(url: url, statusCode: statusCode, httpVersion: nil, headerFields: nil)!
         
@@ -462,6 +532,7 @@ final class GrokClientTests: XCTestCase {
         if let streamingProto = protocolClass as? StreamingURLProtocol.Type {
             streamingProto.mockData = data
             streamingProto.mockResponse = response
+            streamingProto.chunkDelay = chunkDelay
         } else if let mockProto = protocolClass as? MockURLProtocol.Type {
             mockProto.mockData = data
             mockProto.mockResponse = response
@@ -497,6 +568,8 @@ class MockURLProtocol: URLProtocol {
 class StreamingURLProtocol: URLProtocol {
     static var mockData: Data?
     static var mockResponse: URLResponse?
+    static var chunkDelay: TimeInterval = 0.01
+    private var stopped = false
     
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -508,19 +581,29 @@ class StreamingURLProtocol: URLProtocol {
         }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         
-        if let data = StreamingURLProtocol.mockData {
+        guard let data = StreamingURLProtocol.mockData else {
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
+
+        DispatchQueue.global().async { [weak self] in
+            guard let self else { return }
             // Split the data on newline boundaries to simulate line-by-line streaming
             let lines = data.split(separator: UInt8(ascii: "\n"))
             for line in lines {
-                let chunkData = Data(line)
-                client?.urlProtocol(self, didLoad: chunkData)
+                guard !self.stopped else { return }
+                var chunkData = Data(line)
+                chunkData.append(UInt8(ascii: "\n"))
+                self.client?.urlProtocol(self, didLoad: chunkData)
                 // Small delay to simulate streaming
-                Thread.sleep(forTimeInterval: 0.01)
+                Thread.sleep(forTimeInterval: StreamingURLProtocol.chunkDelay)
             }
+            guard !self.stopped else { return }
+            self.client?.urlProtocolDidFinishLoading(self)
         }
-        
-        client?.urlProtocolDidFinishLoading(self)
     }
     
-    override func stopLoading() {}
+    override func stopLoading() {
+        stopped = true
+    }
 }
