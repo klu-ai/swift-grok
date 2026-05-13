@@ -14,7 +14,7 @@ GrokProxy requires valid Grok credentials to function. There are several ways to
 ### Option 1: Use an existing credentials.json file (Recommended)
 
 1. Generate a credentials file using one of these methods:
-   - Run `swift run grok auth generate` on your host machine
+   - Run `swift run grok auth` on your host machine
    - Run the proxy's setup script: `Scripts/setup_proxy.sh`
 
 2. Place the `credentials.json` file in the project root directory
@@ -30,31 +30,9 @@ environment:
   GROK_COOKIES: '{"x-anonuserid":"your-id","x-challenge":"your-challenge","x-signature":"your-signature","sso":"your-sso","sso-rw":"your-sso-rw"}'
 ```
 
-### Option 3: Auto-generate credentials from browser cookies (Advanced)
+### Option 3: Generate on the host, then mount
 
-This option allows the container to access your browser's cookies to extract Grok credentials:
-
-1. Uncomment the appropriate browser cookie mount in `docker-compose.yml` for your browser and OS:
-
-```yaml
-volumes:
-  # Choose ONE of these options based on your browser and OS:
-  # For Chrome on Linux:
-  - ~/.config/google-chrome:/browser-cookies/chrome:ro
-  # For Chrome on macOS:
-  - ~/Library/Application\ Support/Google/Chrome:/browser-cookies/chrome:ro
-  # For Firefox on macOS:
-  - ~/Library/Application\ Support/Firefox/Profiles:/browser-cookies/firefox:ro
-```
-
-2. Enable auto-generation by uncommenting the `GENERATE_CREDENTIALS` environment variable:
-
-```yaml
-environment:
-  GENERATE_CREDENTIALS: "true"
-```
-
-3. Ensure you're logged into Grok in your browser before building/starting the container
+Browser-cookie extraction runs on the host. Generate or import `credentials.json` before starting Docker, then mount it into the container as `/app/credentials.json`.
 
 ## Building and Running
 
@@ -69,14 +47,13 @@ docker compose build
 docker compose up
 ```
 
-## How Credential Generation Works
+## How Credentials Are Loaded
 
-The GrokProxy Docker image includes the following credential handling:
+The proxy reads credentials when the process starts:
 
-1. At container startup, the entrypoint script checks for credentials in this order:
+1. At startup, the proxy checks for credentials in this order:
    - Mounted `/app/credentials.json` file
    - `GROK_COOKIES` environment variable
-   - Auto-generation from mounted browser cookies (if `GENERATE_CREDENTIALS=true`)
 
 2. If no valid credentials are found, the proxy will start with mock credentials
    and display warning messages in the logs, but API requests will likely fail.
@@ -103,20 +80,19 @@ The current configuration does not persist Grok conversations. Each Docker conta
 If you see errors like "Invalid credentials" or API requests failing:
 
 1. Verify your credentials.json file contains valid cookies
-2. Try regenerating the credentials with `swift run grok auth generate`
+2. Try regenerating the credentials with `swift run grok auth`
 3. Check the container logs for error messages:
    ```bash
-   docker compose -f Sources/GrokProxy/docker-compose.yml logs
+   docker compose logs app
    ```
 
 ### Cookie Extraction Fails
 
-If automatic cookie extraction fails:
+If host-side cookie extraction fails:
 
 1. Ensure your browser has an active Grok session
-2. Verify the correct browser cookie path is mounted
-3. Check that browsercookie package can access your cookies (some browsers encrypt cookies)
-4. Try generating credentials on the host machine instead
+2. Run `Scripts/setup_proxy.sh` or `swift run grok auth` on the host
+3. Check that the generated `credentials.json` exists in the project root
 
 ### Permission Issues
 
