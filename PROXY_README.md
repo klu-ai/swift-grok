@@ -7,6 +7,7 @@ This project implements an OpenAI-compatible reverse proxy server for Grok, allo
 - OpenAI-compatible API endpoints
   - `/v1/chat/completions` - For generating chat responses
   - `/v1/models` - For listing available models
+  - `/models` - Compatibility alias for model listing
 - Conversion between OpenAI format and Grok format
 - Support for system messages (as custom instructions for Grok)
 - Mapping of temperature to reasoning mode
@@ -26,13 +27,13 @@ This project implements an OpenAI-compatible reverse proxy server for Grok, allo
 1. Clone the repository
 2. Configure Grok credentials by either:
    - Setting a `GROK_COOKIES` environment variable with a JSON string of cookie key-values
-   - Creating a `credentials.json` file in the parent directory with Grok cookies
+   - Creating a `credentials.json` file in the current working directory with Grok cookies
    - Required cookies: `x-anonuserid`, `x-challenge`, `x-signature`, `sso`, `sso-rw`
 3. Build and run the application:
 
 ```bash
 swift build
-swift run
+swift run proxy serve
 ```
 
 ### Running with Verbose Logging
@@ -41,15 +42,24 @@ For debugging purposes, you can enable verbose logging to see detailed request a
 
 ```bash
 # Using command line flag
-swift run App --verbose
+swift run proxy serve --verbose
+
+# With explicit bind settings
+swift run proxy serve --hostname 0.0.0.0 --port 8080 --verbose
 
 # Or using environment variable
-VERBOSE=true swift run
+VERBOSE=true swift run proxy serve
 ```
 
 ## Usage
 
 The server exposes OpenAI-compatible endpoints:
+
+- `GET /`
+- `GET /hello`
+- `POST /v1/chat/completions`
+- `GET /v1/models`
+- `GET /models`
 
 ### Chat Completions
 
@@ -61,7 +71,7 @@ Example request:
 
 ```json
 {
-  "model": "gpt-3.5-turbo",
+  "model": "fast",
   "messages": [
     {"role": "system", "content": "You are a helpful assistant."},
     {"role": "user", "content": "Hello, who are you?"}
@@ -77,7 +87,7 @@ Response:
   "id": "chatcmpl-123abc",
   "object": "chat.completion",
   "created": 1677858242,
-  "model": "gpt-3.5-turbo",
+  "model": "fast",
   "choices": [
     {
       "index": 0,
@@ -100,6 +110,7 @@ Response:
 
 ```
 GET /v1/models
+GET /models
 ```
 
 Response:
@@ -109,19 +120,31 @@ Response:
   "object": "list",
   "data": [
     {
-      "id": "gpt-3.5-turbo",
+      "id": "auto",
       "object": "model",
       "created": 1677858242,
       "owned_by": "grok"
     },
     {
-      "id": "gpt-4",
+      "id": "fast",
       "object": "model",
       "created": 1677858242,
       "owned_by": "grok"
     },
     {
-      "id": "grok-3",
+      "id": "expert",
+      "object": "model",
+      "created": 1677858242,
+      "owned_by": "grok"
+    },
+    {
+      "id": "grok-420-computer-use-sa",
+      "object": "model",
+      "created": 1677858242,
+      "owned_by": "grok"
+    },
+    {
+      "id": "heavy",
       "object": "model",
       "created": 1677858242,
       "owned_by": "grok"
@@ -137,7 +160,7 @@ Response:
 The application will try to find Grok credentials in the following order:
 
 1. `GROK_COOKIES` environment variable (JSON string)
-2. `../credentials.json` file (JSON object)
+2. `credentials.json` file in the process current working directory (JSON object)
 3. Fallback to mock cookies (which will likely fail with the actual API)
 
 Example `credentials.json` file:
