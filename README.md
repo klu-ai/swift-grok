@@ -386,7 +386,7 @@ Add the library to another Swift package:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/klu-ai/swift-grok", from: "1.0.0")
+    .package(url: "https://github.com/klu-ai/swift-grok", from: "0.2.0")
 ]
 ```
 

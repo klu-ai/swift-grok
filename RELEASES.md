@@ -1,6 +1,6 @@
 # Releases
 
-## 2026-05-13
+## 0.2.0 - 2026-05-13
 
 - Added and documented CLI JSON mode across commands, including `--json`, `--format json`, JSON-only stdout, NDJSON streaming for `grok message --stream --json`, command examples, and auth generate/import JSON results.
 
