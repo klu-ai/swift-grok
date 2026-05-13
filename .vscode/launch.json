@@ -1,0 +1,40 @@
+{
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:swift-grok}",
+            "name": "Debug grok",
+            "program": "${workspaceFolder:swift-grok}/.build/debug/grok",
+            "preLaunchTask": "swift: Build Debug grok"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:swift-grok}",
+            "name": "Release grok",
+            "program": "${workspaceFolder:swift-grok}/.build/release/grok",
+            "preLaunchTask": "swift: Build Release grok"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:swift-grok}",
+            "name": "Debug proxy",
+            "program": "${workspaceFolder:swift-grok}/.build/debug/proxy",
+            "preLaunchTask": "swift: Build Debug proxy"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:swift-grok}",
+            "name": "Release proxy",
+            "program": "${workspaceFolder:swift-grok}/.build/release/proxy",
+            "preLaunchTask": "swift: Build Release proxy"
+        }
+    ]
+}

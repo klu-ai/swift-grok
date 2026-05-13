@@ -107,7 +107,7 @@ struct VerboseLoggingMiddleware: AsyncMiddleware {
         }
         
         do {
-            let json = try JSONSerialization.jsonObject(with: jsonData)
+            let json = redactSensitiveJSONFields(try JSONSerialization.jsonObject(with: jsonData))
             let prettyData = try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
             
             if let prettyString = String(data: prettyData, encoding: .utf8) {
@@ -119,4 +119,35 @@ struct VerboseLoggingMiddleware: AsyncMiddleware {
         
         return jsonString
     }
-} 
+
+    private func redactSensitiveJSONFields(_ value: Any) -> Any {
+        if let dictionary = value as? [String: Any] {
+            return dictionary.reduce(into: [String: Any]()) { result, element in
+                if shouldRedactJSONField(named: element.key) {
+                    result[element.key] = "<redacted>"
+                } else {
+                    result[element.key] = redactSensitiveJSONFields(element.value)
+                }
+            }
+        }
+
+        if let array = value as? [Any] {
+            return array.map(redactSensitiveJSONFields)
+        }
+
+        return value
+    }
+
+    private func shouldRedactJSONField(named name: String) -> Bool {
+        let normalizedName = name
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+
+        if normalizedName == "audiobase64" || normalizedName == "content" || normalizedName == "data" {
+            return true
+        }
+
+        return normalizedName.contains("file")
+    }
+}

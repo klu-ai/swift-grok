@@ -18,12 +18,12 @@ if [ -f "$SETUP_SCRIPT" ]; then
 else
     echo "Warning: Setup script not found at $SETUP_SCRIPT"
     
-    # Check if credentials.json exists in the root directory
-    CREDENTIALS_FILE="../credentials.json"
+    # Check if credentials.json exists in the project root directory
+    CREDENTIALS_FILE="$(dirname "$SCRIPT_DIR")/credentials.json"
     if [ ! -f "$CREDENTIALS_FILE" ]; then
         echo "Warning: credentials.json not found."
         echo "The proxy will start with mock credentials which will likely fail with real requests."
-        echo "You may need to run 'swift run grok auth generate' to create credentials."
+        echo "You may need to run 'swift run grok auth' to create credentials."
     fi
 fi
 
@@ -39,4 +39,4 @@ swift build || {
     exit 1
 }
 
-echo "Build successful! You can now run the proxy with 'swift run proxy'" 
+echo "Build successful! You can now run the proxy with 'swift run proxy serve'" 

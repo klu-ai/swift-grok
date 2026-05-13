@@ -8,7 +8,4 @@ func routes(_ app: Application) throws {
     app.get("hello") { req async -> String in
         "Hello, world!"
     }
-    
-    // Register the Grok routes
-    try GrokConfiguration.register(app)
 }

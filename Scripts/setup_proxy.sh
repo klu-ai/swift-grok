@@ -22,13 +22,17 @@ if ! python3 -c "import browsercookie" &> /dev/null; then
     echo "Successfully installed browsercookie."
 fi
 
-# Check if credentials.json exists in the root directory
-CREDENTIALS_FILE="../credentials.json"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Check if credentials.json exists in the project root directory.
+# GrokProxy reads credentials.json from its current working directory.
+CREDENTIALS_FILE="$PROJECT_ROOT/credentials.json"
 if [ ! -f "$CREDENTIALS_FILE" ]; then
     echo "credentials.json not found. Attempting to generate it..."
     
     # Check if the cookie_extractor.py script exists
-    COOKIE_EXTRACTOR="cookie_extractor.py"
+    COOKIE_EXTRACTOR="$SCRIPT_DIR/cookie_extractor.py"
     if [ ! -f "$COOKIE_EXTRACTOR" ]; then
         echo "Error: cookie_extractor.py not found at $COOKIE_EXTRACTOR"
         exit 1
