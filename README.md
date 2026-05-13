@@ -118,6 +118,63 @@ Human mode may print status text and terminal UI on stdout. JSON mode reserves s
 
 `grok message` uses exactly one prompt source: inline message arguments, `--prompt-file <path>`, or stdin. If no inline message or prompt file is supplied and stdin is piped, stdin is used automatically. `--stdin` is also available when you want to make that choice explicit.
 
+## Audio And Transcription
+
+Use `--audio` when the prompt should come from a local audio file:
+
+```bash
+grok message --audio recording.webm
+grok message --audio recording.webm --audio-format webm
+grok chat --audio recording.webm
+```
+
+In non-interactive commands, audio is transcribed first and the transcript is then automatically sent to Grok as the message. Use `grok transcribe` when you only want the transcript and do not want to create or continue a chat:
+
+```bash
+grok transcribe recording.webm
+grok transcribe recording.webm --json
+```
+
+`--audio` is mutually exclusive with inline message text, `--stdin`, and `--prompt-file`. To read binary audio from stdin, pass `--audio -` and provide `--audio-format` because there is no filename extension to inspect:
+
+```bash
+cat recording.webm | grok message --audio - --audio-format webm
+cat recording.webm | grok transcribe - --audio-format webm
+```
+
+Supported audio formats are inferred from common extensions such as `webm`, `wav`, `mp3`, `m4a`, `ogg`, and `flac`. If inference fails, pass `--audio-format`.
+
+Interactive chat supports audio slash commands:
+
+```text
+/audio recording.webm
+/audio-send recording.webm
+/transcribe recording.webm
+```
+
+`/audio` transcribes and pre-fills the editable prompt so you can revise it before sending. `/audio-send` transcribes and sends immediately. `/transcribe` prints the transcript without sending it.
+
+Swift callers can use the speech-to-text helpers directly:
+
+```swift
+let client = try GrokClient(cookies: cookies)
+
+let fileTranscript = try await client.speechToText(
+    at: "/path/to/recording.webm"
+).text
+
+let dataTranscript = try await client.speechToText(
+    audioData: audioData,
+    audioFormat: "webm"
+).text
+
+let base64Transcript = try await client.speechToText(
+    audioBase64: audioData.base64EncodedString(),
+    audioFormat: "webm",
+    refinementLevel: GrokClient.defaultSpeechRefinementLevel
+).text
+```
+
 ## JSON Output
 
 JSON mode reserves stdout for machine-readable JSON. Human progress/status banners are suppressed so stdout can be piped safely to tools such as `jq`; the `--debug` flag is reflected in result metadata instead of human debug lines.

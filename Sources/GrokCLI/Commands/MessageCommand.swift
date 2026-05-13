@@ -109,6 +109,9 @@ extension GrokCLI {
         var message: [String] = []
         var promptFile: String?
         var explicitStdin = false
+        var audioPath: String?
+        var audioFormat: String?
+        var refinementLevel = GrokClient.defaultSpeechRefinementLevel
         var enableReasoning = false
         var enableDeepSearch = false
         var outputFormat = OutputFormat.defaultFormat
@@ -175,6 +178,66 @@ extension GrokCLI {
                 enableQuiet = true
             } else if arg == "--stdin" {
                 explicitStdin = true
+            } else if arg == "--audio" {
+                guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
+                    reportMessageUsageError("--audio requires a path or -", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    if exitOnError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                audioPath = nextValue
+                index += 1
+            } else if arg.hasPrefix("--audio=") {
+                let value = String(arg.dropFirst("--audio=".count))
+                guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    reportMessageUsageError("--audio requires a path or -", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    if exitOnError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                audioPath = value
+            } else if arg == "--audio-format" {
+                guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
+                    reportMessageUsageError("--audio-format requires a value", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    if exitOnError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                audioFormat = nextValue
+                index += 1
+            } else if arg.hasPrefix("--audio-format=") {
+                let value = String(arg.dropFirst("--audio-format=".count))
+                guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    reportMessageUsageError("--audio-format requires a value", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    if exitOnError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                audioFormat = value
+            } else if arg == "--refinement-level" {
+                guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
+                    reportMessageUsageError("--refinement-level requires a value", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    if exitOnError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                refinementLevel = nextValue
+                index += 1
+            } else if arg.hasPrefix("--refinement-level=") {
+                let value = String(arg.dropFirst("--refinement-level=".count))
+                guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    reportMessageUsageError("--refinement-level requires a value", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    if exitOnError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                refinementLevel = value
             } else if arg == "--prompt-file" {
                 guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
                     reportMessageUsageError("--prompt-file requires a path", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
@@ -202,19 +265,38 @@ extension GrokCLI {
         }
 
         let jsonMode = outputFormat.isJSON
-        let promptSourceCount = (message.isEmpty ? 0 : 1) + (promptFile == nil ? 0 : 1) + (explicitStdin ? 1 : 0)
+        let promptSourceCount = (message.isEmpty ? 0 : 1) + (promptFile == nil ? 0 : 1) + (explicitStdin ? 1 : 0) + (audioPath == nil ? 0 : 1)
         guard promptSourceCount <= 1 else {
-            reportMessageUsageError("Inline message arguments cannot be combined with --prompt-file or --stdin", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: enableQuiet)
+            reportMessageUsageError("Inline message arguments, --audio, --prompt-file, and --stdin are mutually exclusive", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: enableQuiet)
             if exitOnError {
                 exit(with: 2)
             }
             return
         }
 
+        let app = GrokCLIApp.shared
+        app.setQuietMode(enableQuiet && !jsonMode)
+        app.setDebugMode(enableDebug && !jsonMode && !enableQuiet)
+        app.setCurrentMode(selectedMode)
+
         let messageText: String
         let messageCameFromStdin: Bool
+        var resolvedAudioInput: ResolvedAudioInput?
         do {
-            if let promptFile {
+            if let audioPath {
+                if !jsonMode && !enableQuiet {
+                    print("Transcribing audio...".cyan)
+                }
+                let audioOptions = AudioInputRequestOptions(
+                    path: audioPath,
+                    audioFormat: audioFormat,
+                    refinementLevel: refinementLevel
+                )
+                let resolved = try await resolveAudioInput(audioOptions, app: app)
+                resolvedAudioInput = resolved
+                messageText = resolved.transcript
+                messageCameFromStdin = audioPath == "-"
+            } else if let promptFile {
                 do {
                     messageText = try readPromptFile(promptFile)
                     messageCameFromStdin = false
@@ -284,11 +366,6 @@ extension GrokCLI {
             }
         }
 
-        let app = GrokCLIApp.shared
-        app.setQuietMode(enableQuiet && !jsonMode)
-        app.setDebugMode(enableDebug && !jsonMode && !enableQuiet)
-        app.setCurrentMode(selectedMode)
-
         // For single message commands, always reset the conversation
         app.resetConversation()
 
@@ -332,6 +409,7 @@ extension GrokCLI {
                         message: messageText,
                         mode: selectedMode,
                         request: request,
+                        input: resolvedAudioInput?.json,
                         debug: enableDebug,
                         warnings: warnings
                     )
@@ -345,7 +423,7 @@ extension GrokCLI {
                     try printJSONResult(
                         command: "message",
                         category: "assistant_response",
-                        data: AnyCodable(assistantResponseJSON(response: response, mode: selectedMode, request: request)),
+                        data: AnyCodable(assistantResponseJSON(response: response, mode: selectedMode, request: request, input: resolvedAudioInput?.json)),
                         debug: enableDebug,
                         warnings: warnings
                     )
@@ -478,6 +556,7 @@ extension GrokCLI {
         message: String,
         mode: GrokMode,
         request: [String: AnyCodable],
+        input: [String: AnyCodable]? = nil,
         debug: Bool = false,
         warnings: [String] = []
     ) async throws -> Bool {
@@ -487,6 +566,11 @@ extension GrokCLI {
             "model": AnyCodable(modeJSON(mode)),
             "request": AnyCodable(request)
         ]
+        if let input {
+            requestData["input"] = AnyCodable(input)
+            try printJSONEvent(sequence: sequence, event: "transcription", data: AnyCodable(input))
+            sequence += 1
+        }
         if !warnings.isEmpty {
             requestData["warnings"] = AnyCodable(warnings)
         }
@@ -532,7 +616,7 @@ extension GrokCLI {
                         thinkingActive = false
                     }
                     try emitDisplayEvents(answerParser.finish(), textEvent: "assistant_delta")
-                    let data = assistantResponseJSON(response: response, mode: mode, request: request)
+                    let data = assistantResponseJSON(response: response, mode: mode, request: request, input: input)
                     try printJSONEvent(sequence: sequence, event: "assistant_final", data: AnyCodable(data))
                     sequence += 1
                     try printJSONEvent(sequence: sequence, event: "done", data: AnyCodable([

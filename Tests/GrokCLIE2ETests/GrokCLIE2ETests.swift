@@ -177,6 +177,168 @@ final class GrokCLIE2ETests: XCTestCase {
         assertAnswerOnlyStdout(run.stdout, equals: answer)
     }
 
+    func testMessageAudioTranscribesThenSendsTranscript() throws {
+        let answer = "audio answer"
+        let transcript = "mock audio transcript"
+        let server = try MockGrokServer(finalMessage: answer, transcriptionText: transcript)
+        let environment = try TestEnvironment(server: server)
+        let audioURL = environment.scratchURL.appendingPathComponent("note.webm")
+        try Data("audio bytes".utf8).write(to: audioURL)
+
+        let run = try environment.run(["message", "--audio", audioURL.path, "--raw", "--quiet"])
+
+        XCTAssertEqual(run.status, 0)
+        let transcription = try XCTUnwrap(server.requests(matchingPath: "/rest/voice/speech-to-text", method: "POST").last)
+        XCTAssertEqual(transcription.jsonString("audioFormat"), "webm")
+        XCTAssertEqual(transcription.jsonString("audioBase64"), Data("audio bytes".utf8).base64EncodedString())
+        let chatRequest = try XCTUnwrap(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").last)
+        XCTAssertEqual(chatRequest.jsonString("message"), transcript)
+        assertAnswerOnlyStdout(run.stdout, equals: answer)
+    }
+
+    func testTranscribeCommandPrintsTranscriptOnly() throws {
+        let transcript = "standalone transcript"
+        let server = try MockGrokServer(transcriptionText: transcript)
+        let environment = try TestEnvironment(server: server)
+        let audioURL = environment.scratchURL.appendingPathComponent("clip.wav")
+        try Data("wav bytes".utf8).write(to: audioURL)
+
+        let run = try environment.run(["transcribe", "--raw", "--quiet", audioURL.path])
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertEqual(run.stdout, transcript + "\n")
+        XCTAssertTrue(run.stderr.isEmpty)
+        XCTAssertEqual(server.requests(matchingPath: "/rest/voice/speech-to-text", method: "POST").count, 1)
+        XCTAssertTrue(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").isEmpty)
+    }
+
+    func testMessageAudioJSONIncludesInputMetadata() throws {
+        let transcript = "json audio transcript"
+        let server = try MockGrokServer(finalMessage: "json answer", transcriptionText: transcript)
+        let environment = try TestEnvironment(server: server)
+        let audioURL = environment.scratchURL.appendingPathComponent("json-note.webm")
+        try Data("audio bytes".utf8).write(to: audioURL)
+
+        let run = try environment.run(["message", "--audio", audioURL.path, "--json"])
+
+        XCTAssertEqual(run.status, 0)
+        assertNoHumanJSONBanners(in: run.stdout)
+
+        let data = try assertResultEnvelope(
+            try jsonObject(from: run),
+            command: "message",
+            category: "assistant_response"
+        )
+        XCTAssertEqual(data["message"] as? String, "json answer")
+
+        let input = try XCTUnwrap(data["input"] as? [String: Any])
+        XCTAssertEqual(input["kind"] as? String, "audio")
+        XCTAssertEqual(input["transcript"] as? String, transcript)
+        let audio = try XCTUnwrap(input["audio"] as? [String: Any])
+        XCTAssertEqual(audio["path"] as? String, audioURL.path)
+        XCTAssertEqual(audio["format"] as? String, "webm")
+    }
+
+    func testMessageAudioStreamingJSONEmitsTranscriptionBeforeRequest() throws {
+        let transcript = "stream audio transcript"
+        let server = try MockGrokServer(finalMessage: "stream answer", transcriptionText: transcript)
+        let environment = try TestEnvironment(server: server)
+        let audioURL = environment.scratchURL.appendingPathComponent("stream-note.webm")
+        try Data("audio bytes".utf8).write(to: audioURL)
+
+        let run = try environment.run(["message", "--audio", audioURL.path, "--stream", "--json"])
+
+        XCTAssertEqual(run.status, 0)
+        assertNoHumanJSONBanners(in: run.stdout)
+
+        let events = try jsonLines(from: run)
+        XCTAssertGreaterThanOrEqual(events.count, 4)
+        for (index, event) in events.enumerated() {
+            XCTAssertEqual(event["schema"] as? String, "grok.cli.event.v1")
+            XCTAssertEqual(event["sequence"] as? Int, index + 1)
+        }
+
+        XCTAssertEqual(events[0]["event"] as? String, "transcription")
+        let transcriptionData = try XCTUnwrap(events[0]["data"] as? [String: Any])
+        XCTAssertEqual(transcriptionData["kind"] as? String, "audio")
+        XCTAssertEqual(transcriptionData["transcript"] as? String, transcript)
+
+        XCTAssertEqual(events[1]["event"] as? String, "request")
+        let requestData = try XCTUnwrap(events[1]["data"] as? [String: Any])
+        XCTAssertEqual(requestData["message"] as? String, transcript)
+        XCTAssertNotNil(requestData["input"] as? [String: Any])
+
+        let finalEvent = try XCTUnwrap(events.last { $0["event"] as? String == "assistant_final" })
+        let finalData = try XCTUnwrap(finalEvent["data"] as? [String: Any])
+        XCTAssertNotNil(finalData["input"] as? [String: Any])
+    }
+
+    func testChatAudioUsesTranscriptAsInitialMessage() throws {
+        let answer = "chat audio answer"
+        let transcript = "chat audio transcript"
+        let server = try MockGrokServer(streamTokens: [answer], finalMessage: answer, transcriptionText: transcript)
+        let environment = try TestEnvironment(server: server)
+        let audioURL = environment.scratchURL.appendingPathComponent("chat-note.webm")
+        try Data("audio bytes".utf8).write(to: audioURL)
+
+        let run = try environment.run(["chat", "--audio", audioURL.path, "--raw", "--quiet"], input: "/quit\n")
+
+        XCTAssertEqual(run.status, 0)
+        let transcription = try XCTUnwrap(server.requests(matchingPath: "/rest/voice/speech-to-text", method: "POST").last)
+        XCTAssertEqual(transcription.jsonString("audioFormat"), "webm")
+        let chatRequest = try XCTUnwrap(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").last)
+        XCTAssertEqual(chatRequest.jsonString("message"), transcript)
+        assertNoQuietUI(in: run.stdout)
+        XCTAssertContains(run.stdout, answer)
+    }
+
+    func testTranscribeCommandJSONIncludesAudioMetadata() throws {
+        let transcript = "standalone json transcript"
+        let server = try MockGrokServer(transcriptionText: transcript)
+        let environment = try TestEnvironment(server: server)
+        let audioURL = environment.scratchURL.appendingPathComponent("clip.m4a")
+        try Data("m4a bytes".utf8).write(to: audioURL)
+
+        let run = try environment.run(["transcribe", "--json", audioURL.path])
+
+        XCTAssertEqual(run.status, 0)
+        assertNoHumanJSONBanners(in: run.stdout)
+        let data = try assertResultEnvelope(
+            try jsonObject(from: run),
+            command: "transcribe",
+            category: "transcription"
+        )
+        XCTAssertEqual(data["kind"] as? String, "audio")
+        XCTAssertEqual(data["transcript"] as? String, transcript)
+        let audio = try XCTUnwrap(data["audio"] as? [String: Any])
+        XCTAssertEqual(audio["path"] as? String, audioURL.path)
+        XCTAssertEqual(audio["format"] as? String, "m4a")
+        XCTAssertTrue(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").isEmpty)
+    }
+
+    func testInteractiveAudioCommandsTranscribeAndSend() throws {
+        let answer = "interactive audio answer"
+        let transcript = "interactive audio transcript"
+        let server = try MockGrokServer(streamTokens: [answer], finalMessage: answer, transcriptionText: transcript)
+        let environment = try TestEnvironment(server: server)
+        let audioURL = environment.scratchURL.appendingPathComponent("interactive-note.webm")
+        try Data("audio bytes".utf8).write(to: audioURL)
+
+        let run = try environment.run(
+            ["chat", "--raw", "--quiet"],
+            input: "/audio \(audioURL.path)\n/audio-send \(audioURL.path)\n/transcribe \(audioURL.path)\n/quit\n"
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertEqual(server.requests(matchingPath: "/rest/voice/speech-to-text", method: "POST").count, 3)
+        let chatMessages = server.requests(method: "POST")
+            .filter { $0.path.contains("/rest/app-chat/conversations") }
+            .compactMap { $0.jsonString("message") }
+        XCTAssertEqual(chatMessages.filter { $0 == transcript }.count, 2)
+        XCTAssertContains(run.stdout, answer)
+        XCTAssertContains(run.stdout, transcript)
+    }
+
     func testMessagePromptInputUsageErrors() throws {
         let server = try MockGrokServer()
         let environment = try TestEnvironment(server: server)
@@ -199,6 +361,18 @@ final class GrokCLIE2ETests: XCTestCase {
             "inline"
         ])
         assertUsageError(promptFileWithInlineArgs, mentions: ["prompt-file", "inline"])
+
+        let audioURL = environment.scratchURL.appendingPathComponent("conflict.webm")
+        try Data("audio bytes".utf8).write(to: audioURL)
+        let audioWithInlineArgs = try environment.run([
+            "message",
+            "--raw",
+            "--quiet",
+            "--audio",
+            audioURL.path,
+            "inline"
+        ])
+        assertUsageError(audioWithInlineArgs, mentions: ["audio", "inline", "exclusive"])
 
         let emptyPipedStdin = try environment.run(["message", "--raw", "--quiet"], input: "")
         assertUsageError(emptyPipedStdin, mentions: ["stdin"])
@@ -1806,6 +1980,7 @@ private final class MockGrokServer {
     private let streamTokens: [String]
     private let streamLines: [String]?
     private let finalMessage: String
+    private let transcriptionText: String
 
     init(
         unauthorizedNewConversationCount: Int = 0,
@@ -1813,7 +1988,8 @@ private final class MockGrokServer {
         rateLimitedNewConversationCount: Int = 0,
         streamTokens: [String] = ["Mock streamed ", "answer"],
         streamLines: [String]? = nil,
-        finalMessage: String = "Mock final response"
+        finalMessage: String = "Mock final response",
+        transcriptionText: String = "mock audio transcript"
     ) throws {
         self.unauthorizedNewConversationCount = unauthorizedNewConversationCount
         self.accessDeniedNewConversationCount = accessDeniedNewConversationCount
@@ -1821,6 +1997,7 @@ private final class MockGrokServer {
         self.streamTokens = streamTokens
         self.streamLines = streamLines
         self.finalMessage = finalMessage
+        self.transcriptionText = transcriptionText
         self.listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: 0)!)
 
         let ready = DispatchSemaphore(value: 0)
@@ -1931,6 +2108,11 @@ private final class MockGrokServer {
 
     private func responseBody(for request: HTTPRequest) -> HTTPResponse {
         switch (request.method, request.path) {
+        case ("POST", "/rest/voice/speech-to-text"):
+            return jsonResponse([
+                "text": transcriptionText,
+                "transcript": transcriptionText
+            ])
         case ("POST", "/rest/app-chat/conversations/new"):
             if unauthorizedNewConversationCount > 0 {
                 unauthorizedNewConversationCount -= 1

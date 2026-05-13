@@ -3,7 +3,7 @@ import GrokClient
 import Rainbow
 
 extension GrokCLI {
-    static func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool, currentStream: Bool, currentFormat: OutputFormat = .defaultFormat, currentMode: GrokMode = GrokCLIApp.shared.getCurrentMode()) {
+    static func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool, currentStream: Bool, currentFormat: OutputFormat = .defaultFormat, currentMode: GrokMode = GrokCLIApp.shared.getCurrentMode(), rateLimitStatus: String? = nil) {
         var segments = ["Model: \(currentMode.displayName)".yellow]
         if currentReasoning {
             segments.append("Reasoning".green)
@@ -15,6 +15,9 @@ extension GrokCLI {
             segments.append("No Stream".red)
         }
         segments.append(currentFormat.statusName.yellow)
+        if let rateLimitStatus {
+            segments.append(rateLimitStatus.yellow)
+        }
 
         print("Settings > ".cyan + segments.joined(separator: " | "))
     }
@@ -28,8 +31,25 @@ extension GrokCLI {
             currentPrivate: state.privateMode,
             currentStream: state.stream,
             currentFormat: state.outputFormat,
-            currentMode: state.mode
+            currentMode: state.mode,
+            rateLimitStatus: state.rateLimitStatus
         )
+    }
+
+    private static func refreshRateLimitStatus(
+        state: inout ChatSessionState,
+        app: GrokCLIApp,
+        enableQuiet: Bool,
+        printWarning: Bool = false
+    ) async {
+        guard !enableQuiet else {
+            return
+        }
+
+        state.rateLimitStatus = await app.refreshRateLimitStatus(for: state.mode)
+        if printWarning, let warning = app.currentRateLimitWarning(for: state.mode) {
+            print(warning.yellow)
+        }
     }
 
     static func handleChatCommand(args: [String], exitOnParseError: Bool = false) async throws {
@@ -54,6 +74,9 @@ extension GrokCLI {
 
         // Parse options
         var initialMessage: [String] = []
+        var audioPath: String?
+        var audioFormat: String?
+        var refinementLevel = GrokClient.defaultSpeechRefinementLevel
         var enableReasoning = false
         var enableDeepSearch = false
         var outputFormat = OutputFormat.defaultFormat
@@ -119,10 +142,78 @@ extension GrokCLI {
                 enableStream = true
             } else if arg == "--quiet" {
                 enableQuiet = true
+            } else if arg == "--audio" {
+                guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
+                    printParseError("--audio requires a path or -")
+                    if exitOnParseError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                audioPath = nextValue
+                index += 1
+            } else if arg.hasPrefix("--audio=") {
+                let value = String(arg.dropFirst("--audio=".count))
+                guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    printParseError("--audio requires a path or -")
+                    if exitOnParseError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                audioPath = value
+            } else if arg == "--audio-format" {
+                guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
+                    printParseError("--audio-format requires a value")
+                    if exitOnParseError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                audioFormat = nextValue
+                index += 1
+            } else if arg.hasPrefix("--audio-format=") {
+                let value = String(arg.dropFirst("--audio-format=".count))
+                guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    printParseError("--audio-format requires a value")
+                    if exitOnParseError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                audioFormat = value
+            } else if arg == "--refinement-level" {
+                guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
+                    printParseError("--refinement-level requires a value")
+                    if exitOnParseError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                refinementLevel = nextValue
+                index += 1
+            } else if arg.hasPrefix("--refinement-level=") {
+                let value = String(arg.dropFirst("--refinement-level=".count))
+                guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    printParseError("--refinement-level requires a value")
+                    if exitOnParseError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                refinementLevel = value
             } else {
                 initialMessage.append(arg)
             }
             index += 1
+        }
+
+        if audioPath != nil, !initialMessage.isEmpty {
+            printParseError("Initial message arguments and --audio are mutually exclusive")
+            if exitOnParseError {
+                exit(with: 2)
+            }
+            return
         }
 
         let app = GrokCLIApp.shared
@@ -213,7 +304,8 @@ extension GrokCLI {
 
         // If there's an initial message, send it immediately
         var sentInitialMessage = false
-        if !initialMessage.isEmpty && !canSendInitialMessage {
+        let hasInitialInput = !initialMessage.isEmpty || audioPath != nil
+        if hasInitialInput && !canSendInitialMessage {
             if enableQuiet {
                 CLIOutput.stderr("Initial message was not sent because authentication is not ready.")
                 CLIOutput.stderr("After auth succeeds, send it again from the prompt.")
@@ -221,8 +313,40 @@ extension GrokCLI {
                 print("Initial message was not sent because authentication is not ready.".yellow)
                 print("After auth succeeds, send it again from the prompt.".yellow)
             }
-        } else if !initialMessage.isEmpty {
-            let message = initialMessage.joined(separator: " ")
+        } else if hasInitialInput {
+            let message: String
+            if let audioPath {
+                do {
+                    if !enableQuiet {
+                        print("Transcribing audio...".cyan)
+                    }
+                    let resolved = try await resolveAudioInput(
+                        AudioInputRequestOptions(
+                            path: audioPath,
+                            audioFormat: audioFormat,
+                            refinementLevel: refinementLevel
+                        ),
+                        app: app
+                    )
+                    message = resolved.transcript
+                } catch {
+                    _ = await app.handleError(error, debug: enableDebug)
+                    if !app.isAuthenticationError(error) {
+                        return
+                    }
+                    message = ""
+                }
+            } else {
+                message = initialMessage.joined(separator: " ")
+            }
+            guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                if enableQuiet {
+                    CLIOutput.stderr("Initial audio did not produce text.")
+                } else {
+                    print("Initial audio did not produce text.".yellow)
+                }
+                return
+            }
             if !enableQuiet {
                 startupStatus?.finish(finalText: "Authentication successful".green)
                 print("Sending message: \(message)".cyan)
@@ -295,6 +419,9 @@ extension GrokCLI {
         )
         if !sentInitialMessage && !enableQuiet {
             if canSendInitialMessage {
+                await refreshRateLimitStatus(state: &state, app: app, enableQuiet: enableQuiet)
+            }
+            if canSendInitialMessage {
                 if let startupStatus {
                     startupStatus.finish(finalText: connectedMessage.green)
                 } else {
@@ -334,6 +461,7 @@ extension GrokCLI {
                 await app.handleError(error, debug: enableDebug)
                 continue
             }
+            var inputForSend = input
 
             // Process commands
             switch interactiveCommand?.name {
@@ -410,6 +538,7 @@ extension GrokCLI {
                     continue
                 }
                 print("Output format: \(state.outputFormat.description)".green)
+                await refreshRateLimitStatus(state: &state, app: app, enableQuiet: enableQuiet)
                 printSettingsStatus(state: state)
                 continue
 
@@ -432,6 +561,7 @@ extension GrokCLI {
                 }
                 app.setCurrentMode(state.mode)
                 print("Model set to: \(state.mode.displayName) (\(state.mode.id))".green)
+                await refreshRateLimitStatus(state: &state, app: app, enableQuiet: enableQuiet)
                 printSettingsStatus(state: state)
                 continue
 
@@ -552,6 +682,72 @@ extension GrokCLI {
                 }
                 continue
 
+            case .some("audio"):
+                do {
+                    let options = try parseAudioInputOptions(
+                        args: interactiveArgs,
+                        usage: "/audio [--audio-format <format>] [--refinement-level <level>] <path>"
+                    )
+                    guard options.path != "-" else {
+                        throw GrokError.apiError("Audio stdin is only supported by non-interactive message/transcribe commands")
+                    }
+                    if !enableQuiet {
+                        print("Transcribing audio...".cyan)
+                    }
+                    let resolved = try await resolveAudioInput(options, app: app)
+                    if !enableQuiet {
+                        print("Edit transcript, then press Enter to send.".yellow)
+                    }
+                    guard let edited = inputReader.readLine(prompt: enableQuiet ? "" : "> ", prefill: resolved.transcript) else {
+                        continue
+                    }
+                    guard !edited.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        continue
+                    }
+                    inputForSend = edited
+                } catch {
+                    await app.handleError(error, debug: enableDebug)
+                    continue
+                }
+
+            case .some("audio-send"):
+                do {
+                    let options = try parseAudioInputOptions(
+                        args: interactiveArgs,
+                        usage: "/audio-send [--audio-format <format>] [--refinement-level <level>] <path>"
+                    )
+                    guard options.path != "-" else {
+                        throw GrokError.apiError("Audio stdin is only supported by non-interactive message/transcribe commands")
+                    }
+                    if !enableQuiet {
+                        print("Transcribing audio...".cyan)
+                    }
+                    let resolved = try await resolveAudioInput(options, app: app)
+                    inputForSend = resolved.transcript
+                } catch {
+                    await app.handleError(error, debug: enableDebug)
+                    continue
+                }
+
+            case .some("transcribe"):
+                do {
+                    let options = try parseAudioInputOptions(
+                        args: interactiveArgs,
+                        usage: "/transcribe [--audio-format <format>] [--refinement-level <level>] <path>"
+                    )
+                    guard options.path != "-" else {
+                        throw GrokError.apiError("Audio stdin is only supported by non-interactive message/transcribe commands")
+                    }
+                    if !enableQuiet {
+                        print("Transcribing audio...".cyan)
+                    }
+                    let resolved = try await resolveAudioInput(options, app: app)
+                    CLIOutput.stdout(resolved.transcript, terminator: resolved.transcript.hasSuffix("\n") ? "" : "\n")
+                } catch {
+                    await app.handleError(error, debug: enableDebug)
+                }
+                continue
+
             case .some("reset-conversation"):
                 app.resetConversation()
                 print("Conversation reset. Starting a new conversation.".yellow)
@@ -632,11 +828,12 @@ extension GrokCLI {
             // show thinking indicator
             do {
                 let pendingFileAttachments = app.getAttachedFileIds()
+                let wasMultiTurnConversation = app.getCurrentConversationId() != nil
                 if !enableQuiet {
                     formatter.printThinkingStatus()
                 }
                 let stream = try await app.msg(
-                    message: input,
+                    message: inputForSend,
                     enableReasoning: state.reasoning,
                     enableDeepSearch: false,
                     disableSearch: false,
@@ -681,6 +878,12 @@ extension GrokCLI {
                 if !pendingFileAttachments.isEmpty {
                     app.clearAttachedFiles()
                 }
+                await refreshRateLimitStatus(
+                    state: &state,
+                    app: app,
+                    enableQuiet: enableQuiet,
+                    printWarning: wasMultiTurnConversation
+                )
             } catch {
                 await app.handleError(error, debug: enableDebug)
             }

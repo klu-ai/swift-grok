@@ -6,6 +6,7 @@ This project implements an OpenAI-compatible reverse proxy server for Grok, allo
 
 - OpenAI-compatible API endpoints
   - `/v1/chat/completions` - For generating chat responses
+  - `/v1/audio/transcriptions` - For transcribing audio files
   - `/v1/models` - For listing available models
   - `/models` - Compatibility alias for model listing
 - Conversion between OpenAI format and Grok format
@@ -57,6 +58,7 @@ The server exposes OpenAI-compatible endpoints:
 - `GET /`
 - `GET /hello`
 - `POST /v1/chat/completions`
+- `POST /v1/audio/transcriptions`
 - `GET /v1/models`
 - `GET /models`
 
@@ -104,6 +106,54 @@ Response:
   }
 }
 ```
+
+### Audio Transcriptions
+
+```
+POST /v1/audio/transcriptions
+```
+
+The proxy accepts OpenAI-style multipart uploads and returns an OpenAI-style transcription response:
+
+```bash
+curl http://127.0.0.1:8080/v1/audio/transcriptions \
+  -F file=@recording.webm \
+  -F model=whisper-1
+```
+
+Response:
+
+```json
+{
+  "text": "transcribed text"
+}
+```
+
+Optional multipart fields:
+
+| Field | Description |
+|-------|-------------|
+| `audio_format` | Overrides format inference from the filename or content type, for example `webm`, `wav`, `mp3`, `m4a`, `ogg`, or `flac`. |
+| `refinement_level` | Passes the requested Grok transcription refinement level. |
+| `response_format` | Supports `json` (default) and `text`. Other formats return `400`. |
+| `language` | Accepted for OpenAI compatibility. |
+| `prompt` | Accepted for OpenAI compatibility. |
+
+The proxy can also accept JSON with raw base64 audio for clients that cannot send multipart form data:
+
+```bash
+AUDIO_BASE64="$(base64 < recording.webm | tr -d '\n')"
+
+curl http://127.0.0.1:8080/v1/audio/transcriptions \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"model\": \"whisper-1\",
+    \"audioBase64\": \"${AUDIO_BASE64}\",
+    \"audioFormat\": \"webm\"
+  }"
+```
+
+Do not include a data URL prefix in `audioBase64`; send only the raw base64 audio bytes.
 
 ### Models
 
@@ -184,6 +234,7 @@ Example `credentials.json` file:
 
 - **temperature**: Values < 0.5 enable "reasoning mode" in Grok
 - **system message**: Accepted for OpenAI compatibility but not forwarded as custom instructions; configure instructions in Grok agent settings
+- **audio transcription model**: Accepted for OpenAI compatibility but Grok performs the transcription
 - Other parameters (max_tokens, etc.) are currently ignored
 
 ## Limitations

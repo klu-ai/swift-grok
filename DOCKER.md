@@ -47,13 +47,39 @@ docker compose build
 docker compose up
 ```
 
+## Testing Audio Transcription
+
+When testing `POST /v1/audio/transcriptions` from your host, pass the host path to `curl` and Docker does not need to see the audio file:
+
+```bash
+Scripts/test_proxy_transcription.sh ./recording.webm
+```
+
+If you run curl or another client from inside the container, mount the audio directory first so the file exists in the container filesystem:
+
+```yaml
+services:
+  app:
+    volumes:
+      - ./credentials.json:/app/credentials.json:ro
+      - ./test-runs/audio:/audio:ro
+```
+
+Then reference the mounted path from inside the container:
+
+```bash
+curl http://127.0.0.1:8080/v1/audio/transcriptions \
+  -F file=@/audio/recording.webm \
+  -F model=whisper-1
+```
+
 ## How Credentials Are Loaded
 
 The proxy reads credentials when the process starts:
 
 1. At startup, the proxy checks for credentials in this order:
-   - Mounted `/app/credentials.json` file
    - `GROK_COOKIES` environment variable
+   - Mounted `/app/credentials.json` file
 
 2. If no valid credentials are found, the proxy will start with mock credentials
    and display warning messages in the logs, but API requests will likely fail.

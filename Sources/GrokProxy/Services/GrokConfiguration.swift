@@ -9,6 +9,7 @@ enum GrokConfigurationError: Error {
 
 struct GrokConfiguration {
     let grokClient: GrokClient
+    let audioTranscriber: GrokAudioTranscriber
     
     init(from environment: Environment) throws {
         // Try to load credentials from environment variables first
@@ -17,7 +18,9 @@ struct GrokConfiguration {
            let cookies = try? JSONSerialization.jsonObject(with: cookiesData) as? [String: String],
            !cookies.isEmpty {
             // Create the GrokClient with cookies from environment
-            self.grokClient = try GrokClient(cookies: cookies)
+            let client = try GrokClient(cookies: cookies)
+            self.grokClient = client
+            self.audioTranscriber = GrokAudioTranscriber(grokClient: client)
             return
         }
         
@@ -29,7 +32,9 @@ struct GrokConfiguration {
             do {
                 let data = try Data(contentsOf: URL(fileURLWithPath: credentialsPath))
                 if let cookies = try JSONSerialization.jsonObject(with: data) as? [String: String], !cookies.isEmpty {
-                    self.grokClient = try GrokClient(cookies: cookies)
+                    let client = try GrokClient(cookies: cookies)
+                    self.grokClient = client
+                    self.audioTranscriber = GrokAudioTranscriber(grokClient: client)
                     return
                 } else {
                     throw GrokConfigurationError.invalidCredentialsFile
@@ -50,14 +55,46 @@ struct GrokConfiguration {
         ]
         
         // This will likely fail in a real environment, but allows for compilation
-        self.grokClient = try GrokClient(cookies: mockCookies, isDebug: true)
+        let client = try GrokClient(cookies: mockCookies, isDebug: true)
+        self.grokClient = client
+        self.audioTranscriber = GrokAudioTranscriber(grokClient: client)
     }
     
     static func register(_ app: Application) throws {
         let config = try GrokConfiguration(from: app.environment)
         
         // Register the chat completions controller
-        let controller = ChatCompletionsController(grokClient: config.grokClient)
-        try app.register(collection: controller)
+        try app.register(collection: ChatCompletionsController(grokClient: config.grokClient))
+        try app.register(collection: AudioTranscriptionsController { [audioTranscriber = config.audioTranscriber] request in
+            try await audioTranscriber.transcribe(request)
+        })
     }
-} 
+}
+
+final class GrokAudioTranscriber: @unchecked Sendable {
+    private let grokClient: GrokClient
+
+    init(grokClient: GrokClient) {
+        self.grokClient = grokClient
+    }
+
+    func transcribe(_ request: AudioTranscriptionRequest) async throws -> String {
+        guard let audioFormat = request.audioFormat?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !audioFormat.isEmpty else {
+            throw Abort(.badRequest, reason: "audio_format is required when the audio format cannot be inferred")
+        }
+
+        do {
+            let response = try await grokClient.speechToText(
+                audioBase64: request.audioBase64,
+                audioFormat: audioFormat,
+                refinementLevel: request.refinementLevel ?? GrokClient.defaultSpeechRefinementLevel
+            )
+            return response.text
+        } catch let abort as AbortError {
+            throw abort
+        } catch {
+            throw Abort(.badGateway, reason: error.localizedDescription)
+        }
+    }
+}

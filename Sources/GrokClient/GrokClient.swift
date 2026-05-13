@@ -64,11 +64,37 @@ public struct GrokMode: Hashable, Sendable {
     public let id: String
     public let displayName: String
     public let summary: String
+    public let isAvailable: Bool
+    public let unavailableReason: String?
+    public let minimumSubscriptionTier: String?
 
-    public init(id: String, displayName: String? = nil, summary: String = "") {
+    public init(
+        id: String,
+        displayName: String? = nil,
+        summary: String = "",
+        isAvailable: Bool = true,
+        unavailableReason: String? = nil,
+        minimumSubscriptionTier: String? = nil
+    ) {
         self.id = id
         self.displayName = displayName ?? id
         self.summary = summary
+        self.isAvailable = isAvailable
+        self.unavailableReason = unavailableReason
+        self.minimumSubscriptionTier = minimumSubscriptionTier
+    }
+
+    public var unavailableDescription: String? {
+        guard !isAvailable else {
+            return nil
+        }
+        if let unavailableReason, !unavailableReason.isEmpty {
+            return unavailableReason
+        }
+        if let minimumSubscriptionTier, !minimumSubscriptionTier.isEmpty {
+            return "Requires \(minimumSubscriptionTier)"
+        }
+        return "Unavailable for this account"
     }
 
     public static let auto = GrokMode(
@@ -114,10 +140,7 @@ public struct GrokMode: Hashable, Sendable {
             return defaultMode
         }
 
-        let normalized = trimmed
-            .lowercased()
-            .replacingOccurrences(of: "_", with: "-")
-            .replacingOccurrences(of: " ", with: "-")
+        let normalized = normalizedToken(trimmed)
 
         switch normalized {
         case "auto":
@@ -134,6 +157,38 @@ public struct GrokMode: Hashable, Sendable {
             return GrokMode(id: trimmed, displayName: trimmed, summary: "Custom web mode ID")
         }
     }
+
+    public static func resolve(_ rawValue: String?, modes: [GrokMode]) -> GrokMode {
+        guard let rawValue else {
+            return modes.first { $0.id == defaultMode.id } ?? defaultMode
+        }
+
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return modes.first { $0.id == defaultMode.id } ?? defaultMode
+        }
+
+        let normalized = normalizedToken(trimmed)
+        if let exactMode = modes.first(where: { mode in
+            normalizedToken(mode.id) == normalized ||
+                normalizedToken(mode.displayName) == normalized
+        }) {
+            return exactMode
+        }
+
+        let resolved = resolve(trimmed)
+        if let catalogMode = modes.first(where: { $0.id == resolved.id }) {
+            return catalogMode
+        }
+        return resolved
+    }
+
+    private static func normalizedToken(_ value: String) -> String {
+        value
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "-")
+            .replacingOccurrences(of: " ", with: "-")
+    }
 }
 
 // MARK: - Response Models
@@ -144,6 +199,61 @@ public struct MessageResponse: Codable {
     public init(message: String, timestamp: Date? = nil) {
         self.message = message
         self.timestamp = timestamp
+    }
+}
+
+public struct GrokSpeechToTextResponse: Codable {
+    public let text: String
+    public let rawJSON: AnyCodable
+
+    public init(text: String, rawJSON: AnyCodable) {
+        self.text = text
+        self.rawJSON = rawJSON
+    }
+}
+
+public struct GrokRateLimit: Codable {
+    public let modelName: String?
+    public let remainingResponses: Int?
+    public let resetAt: Date?
+    public let resetAfterSeconds: Int?
+    public let fetchedAt: Date
+    public let rawJSON: AnyCodable
+
+    public init(
+        modelName: String? = nil,
+        remainingResponses: Int? = nil,
+        resetAt: Date? = nil,
+        resetAfterSeconds: Int? = nil,
+        fetchedAt: Date = Date(),
+        rawJSON: AnyCodable
+    ) {
+        self.modelName = modelName
+        self.remainingResponses = remainingResponses
+        self.resetAt = resetAt
+        self.resetAfterSeconds = resetAfterSeconds
+        self.fetchedAt = fetchedAt
+        self.rawJSON = rawJSON
+    }
+
+    public var isLow: Bool {
+        guard let remainingResponses else {
+            return false
+        }
+        return remainingResponses < 10
+    }
+
+    public func secondsUntilReset(from now: Date = Date()) -> Int? {
+        if let resetAt {
+            return max(0, Int(ceil(resetAt.timeIntervalSince(now))))
+        }
+
+        if let resetAfterSeconds {
+            let elapsed = now.timeIntervalSince(fetchedAt)
+            return max(0, Int(ceil(TimeInterval(resetAfterSeconds) - elapsed)))
+        }
+
+        return nil
     }
 }
 
@@ -298,6 +408,16 @@ public struct ConversationsResponse: Codable {
         self.conversations = conversations
         self.nextPageToken = nextPageToken
         self.textSearchMatches = textSearchMatches
+    }
+}
+
+public struct GrokModesResponse {
+    public let modes: [GrokMode]
+    public let rawJSON: AnyCodable
+
+    public init(modes: [GrokMode], rawJSON: AnyCodable) {
+        self.modes = modes
+        self.rawJSON = rawJSON
     }
 }
 
@@ -1166,6 +1286,37 @@ public class GrokClient {
     }
 
     private typealias JSONDictionary = [String: Any]
+    private static let rateLimitRemainingKeys = [
+        "remainingResponses",
+        "remainingResponseCount",
+        "responsesRemaining",
+        "remainingMessages",
+        "messagesRemaining",
+        "remainingRequests",
+        "requestsRemaining",
+        "remainingQueries",
+        "queriesRemaining",
+        "remaining"
+    ]
+    private static let rateLimitResetAtKeys = [
+        "resetAt",
+        "resetsAt",
+        "resetTime",
+        "resetTimestamp",
+        "windowResetAt",
+        "rateLimitResetAt",
+        "expiresAt",
+        "reset"
+    ]
+    private static let rateLimitResetAfterKeys = [
+        "resetAfterSeconds",
+        "secondsUntilReset",
+        "resetInSeconds",
+        "timeUntilResetSeconds",
+        "resetAfter",
+        "resetIn",
+        "ttlSeconds"
+    ]
 
     private func dictionary(_ value: Any?) -> JSONDictionary? {
         value as? JSONDictionary
@@ -1493,6 +1644,361 @@ public class GrokClient {
             asset: asset,
             rawJSON: AnyCodable(json)
         )
+    }
+
+    private func makeSpeechToTextResponse(from json: Any) throws -> GrokSpeechToTextResponse {
+        if let text = firstString(in: json, keys: ["text", "transcript", "message"]) {
+            return GrokSpeechToTextResponse(text: text, rawJSON: AnyCodable(json))
+        }
+
+        throw GrokError.apiError("Speech-to-text response did not include a transcript")
+    }
+
+    private func makeRateLimitResponse(
+        from json: Any,
+        requestedModelName: String,
+        fetchedAt: Date = Date()
+    ) -> GrokRateLimit {
+        let rateLimit = rateLimitDictionary(from: json, requestedModelName: requestedModelName) ?? [:]
+        let modelName = firstString(in: rateLimit, keys: ["modelName", "model", "modelId", "modeId"])
+            ?? (requestedModelName.isEmpty ? nil : requestedModelName)
+
+        return GrokRateLimit(
+            modelName: modelName,
+            remainingResponses: firstInt(in: rateLimit, keys: Self.rateLimitRemainingKeys),
+            resetAt: firstDate(in: rateLimit, keys: Self.rateLimitResetAtKeys, fetchedAt: fetchedAt),
+            resetAfterSeconds: firstDurationSeconds(in: rateLimit, keys: Self.rateLimitResetAfterKeys),
+            fetchedAt: fetchedAt,
+            rawJSON: AnyCodable(json)
+        )
+    }
+
+    private func rateLimitDictionary(from value: Any, requestedModelName: String) -> JSONDictionary? {
+        if let dictionary = value as? JSONDictionary {
+            if !requestedModelName.isEmpty,
+               let nested = dictionary[requestedModelName],
+               let found = rateLimitDictionary(from: nested, requestedModelName: requestedModelName) {
+                return found
+            }
+
+            if matchesRateLimitModel(dictionary, requestedModelName: requestedModelName) {
+                return dictionary
+            }
+
+            for key in ["rateLimit", "rateLimits", "limits", "usage", "data", "result", "models", "items", "values"] {
+                guard let nested = dictionary[key],
+                      let found = rateLimitDictionary(from: nested, requestedModelName: requestedModelName) else {
+                    continue
+                }
+                return found
+            }
+
+            if containsAnyKey(dictionary, keys: Self.rateLimitRemainingKeys) {
+                return dictionary
+            }
+
+            for nested in dictionary.values {
+                if let found = rateLimitDictionary(from: nested, requestedModelName: requestedModelName) {
+                    return found
+                }
+            }
+        }
+
+        if let array = value as? [Any] {
+            for nested in array {
+                if let found = rateLimitDictionary(from: nested, requestedModelName: requestedModelName) {
+                    return found
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func matchesRateLimitModel(_ dictionary: JSONDictionary, requestedModelName: String) -> Bool {
+        guard !requestedModelName.isEmpty else {
+            return false
+        }
+
+        for key in ["modelName", "model", "modelId", "modeId", "name"] {
+            guard let value = dictionary[key] else {
+                continue
+            }
+            if stringMatchesRequestedModel(value, requestedModelName: requestedModelName) {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private func stringMatchesRequestedModel(_ value: Any, requestedModelName: String) -> Bool {
+        if let string = value as? String {
+            return string.caseInsensitiveCompare(requestedModelName) == .orderedSame
+        }
+
+        if let array = value as? [Any] {
+            return array.contains { stringMatchesRequestedModel($0, requestedModelName: requestedModelName) }
+        }
+
+        return false
+    }
+
+    private func containsAnyKey(_ dictionary: JSONDictionary, keys: [String]) -> Bool {
+        keys.contains { dictionary[$0] != nil }
+    }
+
+    private func firstInt(in value: Any, keys: [String]) -> Int? {
+        if let dictionary = value as? JSONDictionary {
+            for key in keys {
+                if let int = intFromRateLimitValue(dictionary[key]) {
+                    return int
+                }
+            }
+
+            for nested in dictionary.values {
+                if let int = firstInt(in: nested, keys: keys) {
+                    return int
+                }
+            }
+        }
+
+        if let array = value as? [Any] {
+            for nested in array {
+                if let int = firstInt(in: nested, keys: keys) {
+                    return int
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func firstDate(in value: Any, keys: [String], fetchedAt: Date) -> Date? {
+        if let dictionary = value as? JSONDictionary {
+            for key in keys {
+                if let date = dateFromRateLimitValue(dictionary[key], fetchedAt: fetchedAt) {
+                    return date
+                }
+            }
+
+            for nested in dictionary.values {
+                if let date = firstDate(in: nested, keys: keys, fetchedAt: fetchedAt) {
+                    return date
+                }
+            }
+        }
+
+        if let array = value as? [Any] {
+            for nested in array {
+                if let date = firstDate(in: nested, keys: keys, fetchedAt: fetchedAt) {
+                    return date
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func firstDurationSeconds(in value: Any, keys: [String]) -> Int? {
+        if let dictionary = value as? JSONDictionary {
+            for key in keys {
+                if let seconds = durationSecondsFromRateLimitValue(dictionary[key]) {
+                    return seconds
+                }
+            }
+
+            for nested in dictionary.values {
+                if let seconds = firstDurationSeconds(in: nested, keys: keys) {
+                    return seconds
+                }
+            }
+        }
+
+        if let array = value as? [Any] {
+            for nested in array {
+                if let seconds = firstDurationSeconds(in: nested, keys: keys) {
+                    return seconds
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func intFromRateLimitValue(_ value: Any?) -> Int? {
+        guard let value else {
+            return nil
+        }
+
+        if value is Bool {
+            return nil
+        }
+
+        if let int = value as? Int {
+            return int
+        }
+
+        if let double = value as? Double, double.isFinite {
+            return Int(double)
+        }
+
+        if let string = value as? String {
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let int = Int(trimmed) {
+                return int
+            }
+            if let double = Double(trimmed), double.isFinite {
+                return Int(double)
+            }
+        }
+
+        return nil
+    }
+
+    private func doubleFromRateLimitValue(_ value: Any?) -> Double? {
+        guard let value else {
+            return nil
+        }
+
+        if value is Bool {
+            return nil
+        }
+
+        if let double = value as? Double, double.isFinite {
+            return double
+        }
+
+        if let int = value as? Int {
+            return Double(int)
+        }
+
+        if let string = value as? String {
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let double = Double(trimmed), double.isFinite {
+                return double
+            }
+        }
+
+        return nil
+    }
+
+    private func dateFromRateLimitValue(_ value: Any?, fetchedAt: Date) -> Date? {
+        guard let value else {
+            return nil
+        }
+
+        if let dictionary = value as? JSONDictionary {
+            for key in ["at", "time", "timestamp", "date", "value", "resetAt", "resetTime"] {
+                if let date = dateFromRateLimitValue(dictionary[key], fetchedAt: fetchedAt) {
+                    return date
+                }
+            }
+        }
+
+        if let seconds = doubleFromRateLimitValue(value) {
+            if seconds > 10_000_000_000 {
+                return Date(timeIntervalSince1970: seconds / 1_000)
+            }
+            if seconds > 1_000_000_000 {
+                return Date(timeIntervalSince1970: seconds)
+            }
+            if seconds >= 0 {
+                return fetchedAt.addingTimeInterval(seconds)
+            }
+        }
+
+        guard let string = value as? String else {
+            return nil
+        }
+
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        let formatterWithFractions = ISO8601DateFormatter()
+        formatterWithFractions.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatterWithFractions.date(from: trimmed) {
+            return date
+        }
+
+        let formatter = ISO8601DateFormatter()
+        if let date = formatter.date(from: trimmed) {
+            return date
+        }
+
+        if let duration = durationSecondsFromString(trimmed) {
+            return fetchedAt.addingTimeInterval(TimeInterval(duration))
+        }
+
+        return nil
+    }
+
+    private func durationSecondsFromRateLimitValue(_ value: Any?) -> Int? {
+        if let int = intFromRateLimitValue(value) {
+            return max(0, int)
+        }
+
+        if let string = value as? String {
+            return durationSecondsFromString(string)
+        }
+
+        if let dictionary = value as? JSONDictionary {
+            for key in ["seconds", "second", "value", "duration"] {
+                if let seconds = durationSecondsFromRateLimitValue(dictionary[key]) {
+                    return seconds
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func durationSecondsFromString(_ value: String) -> Int? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        if let seconds = Double(trimmed), seconds.isFinite {
+            return max(0, Int(seconds))
+        }
+
+        guard let regex = try? NSRegularExpression(
+            pattern: #"(\d+(?:\.\d+)?)\s*(days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b"#
+        ) else {
+            return nil
+        }
+
+        let matches = regex.matches(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed))
+        guard !matches.isEmpty else {
+            return nil
+        }
+
+        let total = matches.reduce(0.0) { total, match in
+            guard let numberRange = Range(match.range(at: 1), in: trimmed),
+                  let unitRange = Range(match.range(at: 2), in: trimmed),
+                  let number = Double(trimmed[numberRange]) else {
+                return total
+            }
+
+            let unit = String(trimmed[unitRange])
+            let multiplier: Double
+            if unit.hasPrefix("d") {
+                multiplier = 86_400
+            } else if unit.hasPrefix("h") {
+                multiplier = 3_600
+            } else if unit.hasPrefix("m") {
+                multiplier = 60
+            } else {
+                multiplier = 1
+            }
+
+            return total + number * multiplier
+        }
+
+        return max(0, Int(total.rounded(.up)))
     }
 
     private func makeConversationV2Response(from json: Any) -> GrokConversationV2Response {
@@ -2393,6 +2899,111 @@ public class GrokClient {
         return response
     }
 
+    public func rateLimits(modelName: String = GrokClient.defaultModeId) async throws -> GrokRateLimit {
+        let trimmedModelName = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedModelName = trimmedModelName.isEmpty ? GrokClient.defaultModeId : trimmedModelName
+        let request = try makeRequest(
+            path: "/rate-limits",
+            payload: ["modelName": resolvedModelName],
+            namespace: .root
+        )
+        let json = try await jsonObject(for: request)
+        return makeRateLimitResponse(from: json, requestedModelName: resolvedModelName)
+    }
+
+    public func rateLimits(mode: GrokMode) async throws -> GrokRateLimit {
+        try await rateLimits(modelName: mode.id)
+    }
+
+    public static let defaultSpeechRefinementLevel = "REFINEMENT_LEVEL_POLISH"
+
+    public static func inferAudioFormat(fromFileName fileName: String) -> String? {
+        let ext = URL(fileURLWithPath: fileName)
+            .pathExtension
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        guard !ext.isEmpty else {
+            return nil
+        }
+
+        switch ext {
+        case "webm", "wav", "mp3", "m4a", "ogg", "flac", "mp4", "mpeg", "mpga":
+            return ext
+        default:
+            return nil
+        }
+    }
+
+    public func speechToText(
+        audioBase64: String,
+        audioFormat: String,
+        refinementLevel: String = GrokClient.defaultSpeechRefinementLevel
+    ) async throws -> GrokSpeechToTextResponse {
+        let trimmedAudioBase64 = audioBase64.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAudioFormat = audioFormat.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedRefinementLevel = refinementLevel.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !trimmedAudioBase64.isEmpty else {
+            throw GrokError.apiError("Audio input is empty")
+        }
+
+        guard !trimmedAudioFormat.isEmpty else {
+            throw GrokError.apiError("Audio format is required")
+        }
+
+        guard !trimmedRefinementLevel.isEmpty else {
+            throw GrokError.apiError("Speech refinement level is required")
+        }
+
+        let payload: [String: Any] = [
+            "audioBase64": trimmedAudioBase64,
+            "audioFormat": trimmedAudioFormat,
+            "refinementLevel": trimmedRefinementLevel
+        ]
+
+        let request = try makeRequest(path: "/voice/speech-to-text", payload: payload, namespace: .root)
+        let json = try await jsonObject(for: request)
+        return try makeSpeechToTextResponse(from: json)
+    }
+
+    public func speechToText(
+        audioData: Data,
+        audioFormat: String,
+        refinementLevel: String = GrokClient.defaultSpeechRefinementLevel
+    ) async throws -> GrokSpeechToTextResponse {
+        guard !audioData.isEmpty else {
+            throw GrokError.apiError("Audio input is empty")
+        }
+
+        return try await speechToText(
+            audioBase64: audioData.base64EncodedString(),
+            audioFormat: audioFormat,
+            refinementLevel: refinementLevel
+        )
+    }
+
+    public func speechToText(
+        at path: String,
+        audioFormat: String? = nil,
+        refinementLevel: String = GrokClient.defaultSpeechRefinementLevel
+    ) async throws -> GrokSpeechToTextResponse {
+        let expandedPath = NSString(string: path).expandingTildeInPath
+        let fileURL = URL(fileURLWithPath: expandedPath)
+        let data = try Data(contentsOf: fileURL)
+        let resolvedFormat = audioFormat ?? GrokClient.inferAudioFormat(fromFileName: fileURL.lastPathComponent)
+
+        guard let resolvedFormat else {
+            throw GrokError.apiError("Could not infer audio format for \(fileURL.lastPathComponent). Pass an explicit audio format.")
+        }
+
+        return try await speechToText(
+            audioData: data,
+            audioFormat: resolvedFormat,
+            refinementLevel: refinementLevel
+        )
+    }
+
     public func uploadFile(
         fileName: String,
         fileMimeType: String,
@@ -2420,6 +3031,25 @@ public class GrokClient {
             fileMimeType: resolvedMimeType,
             contentBase64: data.base64EncodedString()
         )
+    }
+
+    public func listModesResponse() async throws -> GrokModesResponse {
+        let request = try makeRequest(path: "/modes", payload: [:], namespace: .root)
+        let json = try await jsonObject(for: request)
+        let modes = modeDictionaries(from: json)
+            .compactMap { makeMode(from: $0) }
+            .reduce(into: [GrokMode]()) { uniqueModes, mode in
+                guard !uniqueModes.contains(where: { $0.id == mode.id }) else {
+                    return
+                }
+                uniqueModes.append(mode)
+            }
+
+        return GrokModesResponse(modes: modes, rawJSON: AnyCodable(json))
+    }
+
+    public func listModes() async throws -> [GrokMode] {
+        try await listModesResponse().modes
     }
 
     public func listAssetsResponse(
@@ -2555,7 +3185,7 @@ extension URLRequest {
                 components.append("-H \"\(key): \(headerValue)\"")
             }
         }
-        if let bodyData = self.httpBody, let body = String(data: bodyData, encoding: .utf8) {
+        if let bodyData = self.httpBody, let body = redactedBodyString(from: bodyData) {
             // Escape single quotes in the body
             let escapedBody = body.replacingOccurrences(of: "'", with: "'\\''")
             components.append("--data '\(escapedBody)'")
@@ -2564,5 +3194,81 @@ extension URLRequest {
             components.append("\"\(url.absoluteString)\"")
         }
         return components.joined(separator: " ")
+    }
+
+    private func redactedBodyString(from bodyData: Data) -> String? {
+        guard let body = String(data: bodyData, encoding: .utf8) else {
+            return nil
+        }
+
+        guard
+            let json = try? JSONSerialization.jsonObject(with: bodyData, options: []),
+            let redacted = redactedJSONValue(json),
+            JSONSerialization.isValidJSONObject(redacted),
+            let redactedData = try? JSONSerialization.data(withJSONObject: redacted, options: []),
+            let redactedBody = String(data: redactedData, encoding: .utf8)
+        else {
+            return body
+        }
+
+        return redactedBody
+    }
+
+    private func redactedJSONValue(_ value: Any) -> Any? {
+        let sensitiveKeys = Set(["audiobase64", "content", "data", "file"])
+
+        if let dictionary = value as? [String: Any] {
+            var redacted = [String: Any]()
+            var changed = false
+
+            for (key, nestedValue) in dictionary {
+                if sensitiveKeys.contains(key.lowercased()) {
+                    redacted[key] = redactedDescription(for: nestedValue)
+                    changed = true
+                } else if let nestedRedacted = redactedJSONValue(nestedValue) {
+                    redacted[key] = nestedRedacted
+                    changed = true
+                } else {
+                    redacted[key] = nestedValue
+                }
+            }
+
+            return changed ? redacted : nil
+        }
+
+        if let array = value as? [Any] {
+            var changed = false
+            let redacted = array.map { nestedValue -> Any in
+                if let nestedRedacted = redactedJSONValue(nestedValue) {
+                    changed = true
+                    return nestedRedacted
+                }
+                return nestedValue
+            }
+
+            return changed ? redacted : nil
+        }
+
+        return nil
+    }
+
+    private func redactedDescription(for value: Any) -> String {
+        if let string = value as? String {
+            return "<redacted \(string.count) chars>"
+        }
+
+        if let data = value as? Data {
+            return "<redacted \(data.count) bytes>"
+        }
+
+        if let array = value as? [Any] {
+            return "<redacted \(array.count) items>"
+        }
+
+        if let dictionary = value as? [String: Any] {
+            return "<redacted \(dictionary.count) fields>"
+        }
+
+        return "<redacted>"
     }
 }

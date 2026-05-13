@@ -2,6 +2,8 @@
 
 Date: 2026-05-14
 
+Execution status: implemented and verified on 2026-05-14. Fresh verification included `swift build`, focused client/CLI/proxy tests, full `swift test`, `Scripts/install_cli.sh --user`, and installed CLI help checks for `grok message --audio`, `grok chat --audio`, and `grok transcribe`.
+
 ## Objective
 
 Implement speech-to-text support across the Swift Grok client, Grok CLI, and OpenAI-compatible Vapor proxy so audio files can be transcribed through Grok's `/rest/voice/speech-to-text` endpoint and then used naturally as chat input.
@@ -557,11 +559,11 @@ Dependencies:
 
 Required automated gates:
 
-- [ ] `swift test --filter GrokClientTests`
-- [ ] `swift test --filter GrokCLIE2ETests`
-- [ ] `swift test --filter GrokProxyTests`
-- [ ] `swift test`
-- [ ] `swift build`
+- [x] `swift test --filter GrokClientTests`
+- [x] `swift test --filter GrokCLIE2ETests`
+- [x] `swift test --filter GrokProxyTests`
+- [x] `swift test`
+- [x] `swift build`
 
 Required manual gates after implementation:
 
@@ -581,7 +583,7 @@ curl http://127.0.0.1:8080/v1/audio/transcriptions \
 ```
 
 - [ ] Debug/verbose logs do not contain the full base64 audio body.
-- [ ] The final implementation branch has run the repo install step after build so the user can test from the installed path.
+- [x] The final implementation branch has run the repo install step after build so the user can test from the installed path.
 
 ## Risks And Edge Cases
 
@@ -607,26 +609,26 @@ curl http://127.0.0.1:8080/v1/audio/transcriptions \
 
 ## Final Completion Checklist
 
-- [ ] Requirement: "The server supports speech to text."
+- [x] Requirement: "The server supports speech to text."
   - Evidence: `GrokClient.speechToText` calls `/rest/voice/speech-to-text` with the captured JSON contract and has request-shape tests.
 
-- [ ] Requirement: "What's the right way to implement this into the product so that it works."
+- [x] Requirement: "What's the right way to implement this into the product so that it works."
   - Evidence: Client, CLI, proxy, tests, docs, and scripts are implemented as separate workstreams with shared client API and no duplicate Grok request logic.
 
-- [ ] Requirement: "Can the CLI take audio input?"
+- [x] Requirement: "Can the CLI take audio input?"
   - Evidence: `grok message --audio`, `grok chat --audio`, `grok transcribe`, `/audio`, `/audio-send`, and `/transcribe` are documented and tested.
 
-- [ ] Requirement: "How to input file into the API?"
+- [x] Requirement: "How to input file into the API?"
   - Evidence: Client path/data helpers read audio bytes, base64-encode them, infer/accept audio format, and send JSON to Grok; proxy multipart converts `file` to the same base64 JSON request.
 
-- [ ] Requirement: "What does the API need as an input?"
+- [x] Requirement: "What does the API need as an input?"
   - Evidence: Docs and tests show `audioBase64`, `audioFormat`, and `refinementLevel` for Grok; proxy docs show multipart `file`, `model`, and optional `response_format` for OpenAI-compatible clients.
 
-- [ ] Requirement: "How to return the text to the text field in CLI?"
+- [x] Requirement: "How to return the text to the text field in CLI?"
   - Evidence: `InputReader.readLine(prompt:prefill:)` preloads the transcript for `/audio`, allowing the user to edit before pressing Enter.
 
-- [ ] Requirement: "When not in interactive mode, the audio input should automatically be sent to the API for a response."
+- [x] Requirement: "When not in interactive mode, the audio input should automatically be sent to the API for a response."
   - Evidence: `message --audio` and `chat --audio` transcribe first and then call the existing `app.msg(message:)` path automatically; transcript-only behavior is isolated to the explicit `transcribe` command.
 
-- [ ] Requirement: Build/install after implementation so user can test on path.
-  - Evidence: `swift build`, full tests, and the repo install path are run after implementation, with the installed CLI manually tested using an audio fixture.
+- [x] Requirement: Build/install after implementation so user can test on path.
+- Evidence: `swift build`, full tests, and the repo install path were run after implementation; installed CLI help was checked, and audio flows are covered by mocked E2E tests.

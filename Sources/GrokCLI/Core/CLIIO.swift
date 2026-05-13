@@ -107,6 +107,10 @@ extension GrokCLI {
         return text
     }
 
+    static func readStandardInputData() throws -> Data {
+        FileHandle.standardInput.readDataToEndOfFile()
+    }
+
     static func readPromptFile(_ path: String) throws -> String {
         let expandedPath = NSString(string: path).expandingTildeInPath
         return try String(contentsOfFile: expandedPath, encoding: .utf8)

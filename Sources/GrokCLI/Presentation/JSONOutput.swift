@@ -313,7 +313,8 @@ extension GrokCLI {
     static func assistantResponseJSON(
         response: ConversationResponse,
         mode: GrokMode,
-        request: [String: AnyCodable]
+        request: [String: AnyCodable],
+        input: [String: AnyCodable]? = nil
     ) -> [String: AnyCodable] {
         var data: [String: AnyCodable] = [
             "message": AnyCodable(response.message),
@@ -326,6 +327,9 @@ extension GrokCLI {
             ]),
             "request": AnyCodable(request)
         ]
+        if let input {
+            data["input"] = AnyCodable(input)
+        }
         if let timestamp = response.timestamp {
             data["timestamp"] = AnyCodable(timestamp.timeIntervalSince1970)
         }

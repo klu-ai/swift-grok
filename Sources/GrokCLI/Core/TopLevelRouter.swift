@@ -31,6 +31,9 @@ extension GrokCLI {
           --private                   Do not save the conversation
           --stream                    Stream responses
           --quiet                     Suppress UI/status output for piped raw scripting
+          --audio <path|->            Transcribe audio and send the transcript as the initial message
+          --audio-format <format>     Required with --audio - or unknown file extensions
+          --refinement-level <level>  Speech-to-text refinement level
           --model, --mode <mode>      Use auto, fast, expert, grok-4.3-beta, heavy, or a raw modeId
 
         With --json, chat sends the initial message as one JSON result and exits.
@@ -56,15 +59,40 @@ extension GrokCLI {
           --quiet                     Suppress UI/status output; useful with --raw in scripts
           --stdin                     Read the message from stdin
           --prompt-file <path>        Read the message from a UTF-8 text file
+          --audio <path|->            Transcribe audio and send the transcript as the message
+          --audio-format <format>     Required with --audio - or unknown file extensions
+          --refinement-level <level>  Speech-to-text refinement level
           --model, --mode <mode>      Use auto, fast, expert, grok-4.3-beta, heavy, or a raw modeId
 
         Message input:
-          - message args, --prompt-file, and --stdin are mutually exclusive
+          - message args, --audio, --prompt-file, and --stdin are mutually exclusive
           - if no message args or prompt file are supplied and stdin is piped, stdin is used
 
         JSON mode writes only JSON to stdout. Human progress and debug banners are suppressed.
         With --stream --json, output is NDJSON: one JSON event object per line.
         With --raw --quiet, stdout contains only assistant answer text.
+        """)
+    }
+
+    static func printTranscribeUsage() {
+        print("""
+        Usage: grok transcribe [options] <path|->
+
+        Transcribes an audio file and prints only the transcript by default.
+
+        Options:
+          --raw                       Print transcript text (default)
+          --json                      Emit scriptable JSON output
+          --format <raw|json>         Choose output format
+          --audio-format <format>     Required with - or unknown file extensions
+          --refinement-level <level>  Speech-to-text refinement level
+          --debug                     Show debug information
+          --quiet                     Suppress status output
+
+        Examples:
+          grok transcribe note.webm
+          grok transcribe --audio-format webm -
+          grok transcribe --json meeting.m4a
         """)
     }
 
@@ -87,7 +115,7 @@ extension GrokCLI {
 
     static let recognizedTopLevelCommands: Set<String> = [
         "chat", "message", "auth", "help", "list", "models", "modes", "agents", "tasks",
-        "skills", "workspaces", "workspace", "files", "test"
+        "skills", "workspaces", "workspace", "files", "transcribe", "test"
     ]
 
     static func normalizedTopLevelArguments(_ arguments: [String]) -> [String] {
@@ -142,11 +170,16 @@ extension GrokCLI {
     }
 
     private static func isTopLevelValueOption(_ arg: String) -> Bool {
-        ["--format", "--model", "--mode"].contains(arg)
+        ["--format", "--model", "--mode", "--audio", "--audio-format", "--refinement-level"].contains(arg)
     }
 
     private static func isInlineTopLevelValueOption(_ arg: String) -> Bool {
-        arg.hasPrefix("--format=") || arg.hasPrefix("--model=") || arg.hasPrefix("--mode=")
+        arg.hasPrefix("--format=") ||
+            arg.hasPrefix("--model=") ||
+            arg.hasPrefix("--mode=") ||
+            arg.hasPrefix("--audio=") ||
+            arg.hasPrefix("--audio-format=") ||
+            arg.hasPrefix("--refinement-level=")
     }
 
 
@@ -189,6 +222,8 @@ extension GrokCLI {
             try await handleChatCommand(args: remainingArgs, exitOnParseError: true)
         case "message":
             try await handleMessageCommand(args: remainingArgs, exitOnError: true)
+        case "transcribe":
+            try await handleTranscribeCommand(args: remainingArgs, exitOnError: true)
         case "auth":
             try await handleAuthCommand(
                 args: remainingArgs,

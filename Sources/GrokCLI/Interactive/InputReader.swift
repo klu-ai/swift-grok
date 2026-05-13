@@ -38,12 +38,16 @@ class InputReader {
     }
 
     func readLine(prompt: String = "") -> String? {
+        readLine(prompt: prompt, prefill: "")
+    }
+
+    func readLine(prompt: String = "", prefill: String) -> String? {
         guard isatty(stdinFileDescriptor) == 1, isatty(stdoutFileDescriptor) == 1 else {
             if !prompt.isEmpty && showsPromptWhenNotTTY {
                 print(prompt.green, terminator: "")
                 fflush(stdout)
             }
-            return readFallbackLine()
+            return readFallbackLine(defaultValue: prefill)
         }
 
         var originalTermios = termios()
@@ -52,7 +56,7 @@ class InputReader {
                 print(prompt.green, terminator: "")
                 fflush(stdout)
             }
-            return readFallbackLine()
+            return readFallbackLine(defaultValue: prefill)
         }
 
         var rawTermios = originalTermios
@@ -67,7 +71,7 @@ class InputReader {
                 print(prompt.green, terminator: "")
                 fflush(stdout)
             }
-            return readFallbackLine()
+            return readFallbackLine(defaultValue: prefill)
         }
 
         defer {
@@ -75,8 +79,8 @@ class InputReader {
             clearRenderedBlock()
         }
 
-        var buffer = ""
-        var cursorIndex = 0
+        var buffer = prefill
+        var cursorIndex = buffer.count
         selectedSuggestionIndex = nil
         historyIndex = history.count
         render(prompt: prompt, buffer: buffer, cursorIndex: cursorIndex)
@@ -137,7 +141,11 @@ class InputReader {
         }
     }
 
-    private func readFallbackLine() -> String? {
+    private func readFallbackLine(defaultValue: String = "") -> String? {
+        if !defaultValue.isEmpty {
+            addToHistory(defaultValue)
+            return defaultValue
+        }
         guard let input = Swift.readLine() else {
             return nil
         }
