@@ -257,6 +257,94 @@ public struct GrokRateLimit: Codable {
     }
 }
 
+public struct GrokSubscription {
+    public let tier: String?
+    public let name: String?
+    public let status: String?
+    public let isActive: Bool
+    public let rawJSON: [String: AnyCodable]
+
+    public init(
+        tier: String? = nil,
+        name: String? = nil,
+        status: String? = nil,
+        isActive: Bool = true,
+        rawJSON: [String: AnyCodable] = [:]
+    ) {
+        self.tier = tier
+        self.name = name
+        self.status = status
+        self.isActive = isActive
+        self.rawJSON = rawJSON
+    }
+
+    public var displayName: String {
+        Self.displayName(tier: tier, name: name, rawJSON: rawJSON)
+    }
+
+    public static func displayName(
+        tier: String?,
+        name: String? = nil,
+        rawJSON: [String: AnyCodable] = [:]
+    ) -> String {
+        let rawValues = [
+            "subscriptionTier",
+            "subscription_tier",
+            "tier",
+            "tierName",
+            "tier_name",
+            "plan",
+            "planName",
+            "plan_name",
+            "productName",
+            "product_name",
+            "displayName",
+            "display_name",
+            "name",
+            "title",
+            "sku"
+        ].compactMap { rawJSON[$0]?.value as? String }
+
+        let tokens = ([tier, name].compactMap { $0 } + rawValues)
+            .map(normalizedPlanToken)
+            .filter { !$0.isEmpty }
+
+        if tokens.contains(where: { $0.contains("heavy") }) {
+            return "SuperGrok Heavy"
+        }
+        if tokens.contains(where: { $0.contains("supergrok") || ($0.contains("super") && $0.contains("grok")) }) {
+            return "SuperGrok"
+        }
+        return "Grok"
+    }
+
+    private static func normalizedPlanToken(_ value: String) -> String {
+        value
+            .lowercased()
+            .replacingOccurrences(of: #"[^a-z0-9]"#, with: "", options: .regularExpression)
+    }
+}
+
+public struct GrokSubscriptionsResponse {
+    public let subscriptions: [GrokSubscription]
+    public let currentSubscription: GrokSubscription?
+    public let rawJSON: AnyCodable
+
+    public init(
+        subscriptions: [GrokSubscription],
+        currentSubscription: GrokSubscription?,
+        rawJSON: AnyCodable
+    ) {
+        self.subscriptions = subscriptions
+        self.currentSubscription = currentSubscription
+        self.rawJSON = rawJSON
+    }
+
+    public var displayName: String {
+        currentSubscription?.displayName ?? "Grok"
+    }
+}
+
 // Add WebSearchResult struct
 public struct WebSearchResult: Codable {
     public let url: String
@@ -1317,6 +1405,22 @@ public class GrokClient {
         "resetIn",
         "ttlSeconds"
     ]
+    private static let activeSubscriptionStatuses: Set<String> = [
+        "active",
+        "trialing",
+        "current",
+        "subscribed",
+        "paid"
+    ]
+    private static let inactiveSubscriptionStatuses: Set<String> = [
+        "canceled",
+        "cancelled",
+        "expired",
+        "inactive",
+        "pastdue",
+        "past_due",
+        "unpaid"
+    ]
 
     private func dictionary(_ value: Any?) -> JSONDictionary? {
         value as? JSONDictionary
@@ -1339,6 +1443,59 @@ public class GrokClient {
                 return value
             }
         }
+        return nil
+    }
+
+    private func firstBool(in value: Any, keys: [String]) -> Bool? {
+        if let dictionary = value as? JSONDictionary {
+            for key in keys {
+                if let bool = boolFromSubscriptionValue(dictionary[key]) {
+                    return bool
+                }
+            }
+
+            for nested in dictionary.values {
+                if let bool = firstBool(in: nested, keys: keys) {
+                    return bool
+                }
+            }
+        }
+
+        if let array = value as? [Any] {
+            for nested in array {
+                if let bool = firstBool(in: nested, keys: keys) {
+                    return bool
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func boolFromSubscriptionValue(_ value: Any?) -> Bool? {
+        guard let value else {
+            return nil
+        }
+
+        if let bool = value as? Bool {
+            return bool
+        }
+
+        if let int = value as? Int {
+            return int != 0
+        }
+
+        if let string = value as? String {
+            switch string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "true", "yes", "1", "active", "current", "subscribed":
+                return true
+            case "false", "no", "0", "inactive", "expired", "canceled", "cancelled":
+                return false
+            default:
+                return nil
+            }
+        }
+
         return nil
     }
 
@@ -1625,6 +1782,165 @@ public class GrokClient {
             agentCustomizations: customizations.sorted { $0.agentId < $1.agentId },
             rawJSON: AnyCodable(json)
         )
+    }
+
+    private func makeSubscriptionsResponse(from json: Any) -> GrokSubscriptionsResponse {
+        let subscriptions = subscriptionDictionaries(from: json)
+            .map { makeSubscription(from: $0) }
+
+        return GrokSubscriptionsResponse(
+            subscriptions: subscriptions,
+            currentSubscription: subscriptions.first(where: \.isActive),
+            rawJSON: AnyCodable(json)
+        )
+    }
+
+    private func makeSubscription(from dictionary: JSONDictionary) -> GrokSubscription {
+        let rawJSON = anyCodableDictionary(dictionary)
+        return GrokSubscription(
+            tier: firstString(in: dictionary, keys: [
+                "subscriptionTier",
+                "subscription_tier",
+                "tier",
+                "tierName",
+                "tier_name",
+                "planTier",
+                "plan_tier",
+                "sku"
+            ]),
+            name: firstString(in: dictionary, keys: [
+                "displayName",
+                "display_name",
+                "name",
+                "title",
+                "planName",
+                "plan_name",
+                "productName",
+                "product_name"
+            ]),
+            status: firstString(in: dictionary, keys: [
+                "status",
+                "subscriptionStatus",
+                "subscription_status",
+                "state"
+            ]),
+            isActive: isActiveSubscription(dictionary),
+            rawJSON: rawJSON
+        )
+    }
+
+    private func subscriptionDictionaries(from value: Any) -> [JSONDictionary] {
+        if let array = value as? [Any] {
+            return array.flatMap { nested -> [JSONDictionary] in
+                if let dictionary = nested as? JSONDictionary {
+                    return [dictionary]
+                }
+                return subscriptionDictionaries(from: nested)
+            }
+        }
+
+        guard let dictionary = value as? JSONDictionary else {
+            return []
+        }
+
+        let preferredKeys = [
+            "currentSubscription",
+            "current_subscription",
+            "activeSubscription",
+            "active_subscription",
+            "subscription",
+            "subscriptions",
+            "activeSubscriptions",
+            "active_subscriptions",
+            "userSubscriptions",
+            "user_subscriptions",
+            "accountSubscriptions",
+            "account_subscriptions",
+            "data",
+            "result",
+            "items"
+        ]
+
+        for key in preferredKeys {
+            guard let nested = dictionary[key] else {
+                continue
+            }
+
+            let found = subscriptionDictionaries(from: nested)
+            if !found.isEmpty {
+                return found
+            }
+        }
+
+        if looksLikeSubscription(dictionary) {
+            return [dictionary]
+        }
+
+        for nested in dictionary.values {
+            let found = subscriptionDictionaries(from: nested)
+            if !found.isEmpty {
+                return found
+            }
+        }
+
+        return []
+    }
+
+    private func looksLikeSubscription(_ dictionary: JSONDictionary) -> Bool {
+        containsAnyKey(dictionary, keys: [
+            "subscriptionTier",
+            "subscription_tier",
+            "tier",
+            "tierName",
+            "tier_name",
+            "planName",
+            "plan_name",
+            "productName",
+            "product_name",
+            "subscriptionStatus",
+            "subscription_status",
+            "currentPeriodEnd",
+            "current_period_end"
+        ])
+    }
+
+    private func isActiveSubscription(_ dictionary: JSONDictionary) -> Bool {
+        if let isActive = firstBool(in: dictionary, keys: [
+            "isActive",
+            "is_active",
+            "active",
+            "current",
+            "isCurrent",
+            "is_current",
+            "subscribed",
+            "isSubscribed",
+            "is_subscribed",
+            "hasActiveSubscription",
+            "has_active_subscription"
+        ]) {
+            return isActive
+        }
+
+        if let status = firstString(in: dictionary, keys: [
+            "status",
+            "subscriptionStatus",
+            "subscription_status",
+            "state"
+        ]) {
+            let normalized = status
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+                .replacingOccurrences(of: " ", with: "_")
+
+            if Self.activeSubscriptionStatuses.contains(normalized) {
+                return true
+            }
+            if Self.inactiveSubscriptionStatuses.contains(normalized) {
+                return false
+            }
+        }
+
+        return true
     }
 
     private func agentCustomizationDictionaries(from value: Any) -> [JSONDictionary] {
@@ -3017,6 +3333,16 @@ public class GrokClient {
         let request = try makeRequest(path: "/user-settings", method: "GET", namespace: .root)
         let json = try await jsonObject(for: request)
         return makeAgentCustomizationsResponse(from: json)
+    }
+
+    public func subscriptionsResponse() async throws -> GrokSubscriptionsResponse {
+        let request = try makeRequest(path: "/subscriptions", method: "GET", namespace: .root)
+        let json = try await jsonObject(for: request)
+        return makeSubscriptionsResponse(from: json)
+    }
+
+    public func currentSubscription() async throws -> GrokSubscription? {
+        try await subscriptionsResponse().currentSubscription
     }
 
     public func updateAgentCustomizations(

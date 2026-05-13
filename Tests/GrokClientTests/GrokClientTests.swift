@@ -172,6 +172,45 @@ final class GrokClientTests: XCTestCase {
         XCTAssertEqual(response.resetAfterSeconds, 5_400)
     }
 
+    func testSubscriptionsRequestUsesRootEndpointAndParsesCurrentPlan() async throws {
+        let responseData = """
+        {
+          "subscriptions": [
+            {
+              "subscriptionTier": "TIER_SUPERGROK",
+              "status": "canceled"
+            },
+            {
+              "subscriptionTier": "TIER_SUPERGROK_HEAVY",
+              "planName": "SuperGrok Heavy",
+              "status": "active"
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+        let session = makeMockSession(data: responseData, statusCode: 200)
+        let client = try GrokClient(
+            cookies: ["sso": "test-cookie"],
+            baseURL: "https://example.test/rest",
+            session: session
+        )
+
+        let response = try await client.subscriptionsResponse()
+
+        XCTAssertEqual(response.subscriptions.count, 2)
+        XCTAssertEqual(response.currentSubscription?.tier, "TIER_SUPERGROK_HEAVY")
+        XCTAssertEqual(response.currentSubscription?.displayName, "SuperGrok Heavy")
+        XCTAssertEqual(response.displayName, "SuperGrok Heavy")
+
+        let current = try await client.currentSubscription()
+        XCTAssertEqual(current?.displayName, "SuperGrok Heavy")
+
+        let request = try XCTUnwrap(MockURLProtocol.lastRequest)
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertEqual(request.url?.absoluteString, "https://example.test/rest/subscriptions")
+        XCTAssertNil(MockURLProtocol.lastRequestBody)
+    }
+
     func testSpeechToTextInfersSupportedFileExtensions() {
         XCTAssertEqual(GrokClient.inferAudioFormat(fromFileName: "voice.webm"), "webm")
         XCTAssertEqual(GrokClient.inferAudioFormat(fromFileName: "VOICE.WAV"), "wav")

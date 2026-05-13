@@ -94,6 +94,22 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertTrue(requests.contains { $0.path.hasSuffix("/responses") && $0.jsonString("message") == "follow up" })
     }
 
+    func testInteractiveStartupUsesCurrentSubscriptionDisplayName() throws {
+        let server = try MockGrokServer(subscriptionResponse: [
+            "subscriptions": [[
+                "subscriptionTier": "TIER_SUPERGROK_HEAVY",
+                "status": "active"
+            ]]
+        ])
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run([], input: "/quit\n")
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Connected to SuperGrok Heavy!")
+        XCTAssertEqual(server.requests(matchingPath: "/rest/subscriptions", method: "GET").count, 1)
+    }
+
     func testMessageCommandCoversOptionsStreamingAndModelAliases() throws {
         let server = try MockGrokServer()
         let environment = try TestEnvironment(server: server)
@@ -1785,7 +1801,7 @@ final class GrokCLIE2ETests: XCTestCase {
         line: UInt = #line
     ) {
         XCTAssertFalse(stdout.contains("\u{001B}"), "JSON stdout should not include ANSI escapes", file: file, line: line)
-        for banner in ["Calling Grok API", "Sending:", "Thinking", "Grok:", "Available conversations:", "Select a conversation"] {
+        for banner in ["Calling Grok API", "Connected to ", "Sending:", "Thinking", "Grok:", "Available conversations:", "Select a conversation"] {
             XCTAssertFalse(stdout.contains(banner), "JSON stdout should not include human banner '\(banner)'", file: file, line: line)
         }
     }
@@ -1829,7 +1845,7 @@ final class GrokCLIE2ETests: XCTestCase {
             "Grok:",
             "Sources:",
             "Authentication successful",
-            "Connected to Grok!",
+            "Connected to ",
             "Chat mode",
             "Enter your message:",
             "Available conversations:",
@@ -2032,6 +2048,7 @@ private final class MockGrokServer {
     private let streamLines: [String]?
     private let finalMessage: String
     private let transcriptionText: String
+    private let subscriptionResponse: [String: Any]
     private let heavyRequiresUpgrade: Bool
 
     init(
@@ -2043,6 +2060,7 @@ private final class MockGrokServer {
         streamLines: [String]? = nil,
         finalMessage: String = "Mock final response",
         transcriptionText: String = "mock audio transcript",
+        subscriptionResponse: [String: Any] = ["subscriptions": []],
         heavyRequiresUpgrade: Bool = true
     ) throws {
         self.unauthorizedNewConversationCount = unauthorizedNewConversationCount
@@ -2053,6 +2071,7 @@ private final class MockGrokServer {
         self.streamLines = streamLines
         self.finalMessage = finalMessage
         self.transcriptionText = transcriptionText
+        self.subscriptionResponse = subscriptionResponse
         self.heavyRequiresUpgrade = heavyRequiresUpgrade
         self.listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: 0)!)
 
@@ -2175,6 +2194,8 @@ private final class MockGrokServer {
             var response = rateLimitResponse
             response["modelName"] = response["modelName"] ?? request.jsonString("modelName") ?? "fast"
             return jsonResponse(response)
+        case ("GET", "/rest/subscriptions"):
+            return jsonResponse(subscriptionResponse)
         case ("POST", "/rest/app-chat/conversations/new"):
             if unauthorizedNewConversationCount > 0 {
                 unauthorizedNewConversationCount -= 1

@@ -226,7 +226,22 @@ extension GrokCLI {
         let startupStatus = !enableQuiet && !enableDebug && stdoutIsTTY()
             ? CLIOutput.TransientStatusLine()
             : nil
-        let connectedMessage = "Connected to Grok! Use / for commands, or type help."
+        var connectedServiceName = "Grok"
+        let hasInitialInput = !initialMessage.isEmpty || audioPath != nil
+
+        func loadConnectedServiceName() async throws -> String {
+            do {
+                return try await app.refreshSubscriptionDisplayName()
+            } catch {
+                if app.isAuthenticationError(error) {
+                    throw error
+                }
+                if enableDebug && !enableQuiet {
+                    print("Debug: Could not fetch subscription: \(error.localizedDescription)")
+                }
+                return app.currentSubscriptionDisplayName()
+            }
+        }
 
         // Initialization message
         let searchWarnings = searchConfigurationWarnings(
@@ -272,6 +287,9 @@ extension GrokCLI {
         var canSendInitialMessage = true
         do {
             _ = try app.initializeClient()
+            if !hasInitialInput {
+                connectedServiceName = try await loadConnectedServiceName()
+            }
             if let startupStatus {
                 startupStatus.update(text: "Authentication successful".green)
             } else if !enableQuiet {
@@ -282,6 +300,9 @@ extension GrokCLI {
             if recovered {
                 do {
                     _ = try app.initializeClient()
+                    if !hasInitialInput {
+                        connectedServiceName = try await loadConnectedServiceName()
+                    }
                     if let startupStatus {
                         startupStatus.update(text: "Authentication successful".green)
                     } else if !enableQuiet {
@@ -305,7 +326,6 @@ extension GrokCLI {
 
         // If there's an initial message, send it immediately
         var sentInitialMessage = false
-        let hasInitialInput = !initialMessage.isEmpty || audioPath != nil
         if hasInitialInput && !canSendInitialMessage {
             if enableQuiet {
                 CLIOutput.stderr("Initial message was not sent because authentication is not ready.")
@@ -424,9 +444,9 @@ extension GrokCLI {
             }
             if canSendInitialMessage {
                 if let startupStatus {
-                    startupStatus.finish(finalText: connectedMessage.green)
+                    startupStatus.finish(finalText: "Connected to \(connectedServiceName)! Use / for commands, or type help.".green)
                 } else {
-                    print(connectedMessage.green)
+                    print("Connected to \(connectedServiceName)! Use / for commands, or type help.".green)
                 }
             } else {
                 startupStatus?.clear()

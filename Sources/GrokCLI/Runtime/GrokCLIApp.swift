@@ -16,6 +16,7 @@ class GrokCLIApp {
     private var currentPersonality: GrokClient.PersonalityType = .none
     private var currentMode: GrokMode = .defaultMode
     private var cachedModes: [GrokMode]?
+    private var cachedSubscriptionDisplayName: String?
     private var lastRateLimit: GrokRateLimit?
     private var lastRateLimitModeId: String?
     private var currentWorkspace: GrokWorkspace?
@@ -142,6 +143,22 @@ class GrokCLIApp {
             }
             return GrokMode.knownModes
         }
+    }
+
+    func refreshSubscriptionDisplayName() async throws -> String {
+        if let cachedSubscriptionDisplayName {
+            return cachedSubscriptionDisplayName
+        }
+
+        let client = try initializeClient()
+        let response = try await client.subscriptionsResponse()
+        let displayName = response.displayName
+        cachedSubscriptionDisplayName = displayName
+        return displayName
+    }
+
+    func currentSubscriptionDisplayName() -> String {
+        cachedSubscriptionDisplayName ?? "Grok"
     }
 
     func refreshRateLimitStatus(for mode: GrokMode) async -> String? {
@@ -271,6 +288,7 @@ class GrokCLIApp {
 
         client = nil
         cachedModes = nil
+        cachedSubscriptionDisplayName = nil
         if let statusLine {
             statusLine.update(text: "Authentication failed; refreshing browser cookies...".yellow)
         } else {
@@ -598,6 +616,7 @@ class GrokCLIApp {
         try configManager.saveCredentialsPath(jsonPath)
         client = nil
         cachedModes = nil
+        cachedSubscriptionDisplayName = nil
     }
 
     // Generate new credentials using cookie extractor
@@ -606,6 +625,7 @@ class GrokCLIApp {
         let path = try await configManager.runCookieExtractor(extraArgs: args, suppressOutput: suppressOutput)
         client = nil
         cachedModes = nil
+        cachedSubscriptionDisplayName = nil
         return path
     }
 }
