@@ -87,7 +87,8 @@ struct ChatCompletionsController: RouteCollection {
                     message: lastUserMessage,
                     enableReasoning: enableReasoning,
                     customInstructions: systemMessage ?? "",
-                    temporary: true // Don't save in Grok's history
+                    temporary: true, // Don't save in Grok's history
+                    modeId: GrokMode.resolve(chatRequest.model).id
                 )
                 
                 Self.logger.info("result from grok: \(response.message)")
@@ -124,7 +125,8 @@ struct ChatCompletionsController: RouteCollection {
             message: userMessage,
             enableReasoning: enableReasoning,
             customInstructions: customInstructions,
-            temporary: true
+            temporary: true,
+            modeId: GrokMode.resolve(model).id
         )
         
         let responseId = UUID().uuidString
