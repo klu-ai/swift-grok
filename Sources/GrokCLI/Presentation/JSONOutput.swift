@@ -221,6 +221,8 @@ extension GrokCLI {
         switch grokError {
         case .invalidCredentials, .unauthorized:
             return "auth_error"
+        case .accessDenied:
+            return "access_denied"
         case .networkError:
             return "network_error"
         case .decodingError:
@@ -241,6 +243,8 @@ extension GrokCLI {
         switch grokError {
         case .invalidCredentials, .unauthorized:
             return true
+        case .accessDenied:
+            return false
         default:
             return false
         }

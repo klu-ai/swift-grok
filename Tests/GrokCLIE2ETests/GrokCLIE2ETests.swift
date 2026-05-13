@@ -831,6 +831,39 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertEqual(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").count, 2)
     }
 
+    func testInteractiveModelAccessErrorDoesNotRefreshCredentials() throws {
+        let server = try MockGrokServer(accessDeniedNewConversationCount: 1)
+        let environment = try TestEnvironment(server: server)
+        let extractor = environment.scratchURL.appendingPathComponent("unexpected_refresh_cookie_extractor.py")
+        let extractorMarker = environment.scratchURL.appendingPathComponent("extractor_was_called")
+        let extractorScript = """
+        import pathlib
+        import sys
+        pathlib.Path("\(extractorMarker.path)").write_text("\\n".join(sys.argv[1:]))
+        raise SystemExit(1)
+        """
+        try extractorScript.write(to: extractor, atomically: true, encoding: .utf8)
+        let originalCredentials = try String(contentsOf: environment.credentialsURL, encoding: .utf8)
+
+        let run = try environment.run(
+            [],
+            input: "/model heavy\nhello\nquit\n",
+            timeout: 15,
+            extraEnvironment: ["GROK_COOKIE_EXTRACTOR": extractor.path]
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Model set to: Heavy (heavy)")
+        XCTAssertContains(run.cleanOutput, "Grok denied access to Heavy (heavy)")
+        XCTAssertContains(run.cleanOutput, "Switch models")
+        XCTAssertFalse(run.cleanOutput.contains("Authentication failed. Your saved Grok browser cookies may have expired."))
+        XCTAssertFalse(run.cleanOutput.contains("Trying to refresh credentials from your browser..."))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: extractorMarker.path))
+        XCTAssertEqual(try String(contentsOf: environment.credentialsURL, encoding: .utf8), originalCredentials)
+        XCTAssertEqual(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").count, 1)
+        XCTAssertEqual(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").last?.jsonString("modeId"), "heavy")
+    }
+
     func testListTasksSkillsAgentsWorkspacesAndFilesCommands() throws {
         let server = try MockGrokServer()
         let environment = try TestEnvironment(server: server)
@@ -1768,6 +1801,7 @@ private final class MockGrokServer {
     private let lock = NSLock()
     private var recordedRequests: [RecordedRequest] = []
     private var unauthorizedNewConversationCount: Int
+    private var accessDeniedNewConversationCount: Int
     private var rateLimitedNewConversationCount: Int
     private let streamTokens: [String]
     private let streamLines: [String]?
@@ -1775,12 +1809,14 @@ private final class MockGrokServer {
 
     init(
         unauthorizedNewConversationCount: Int = 0,
+        accessDeniedNewConversationCount: Int = 0,
         rateLimitedNewConversationCount: Int = 0,
         streamTokens: [String] = ["Mock streamed ", "answer"],
         streamLines: [String]? = nil,
         finalMessage: String = "Mock final response"
     ) throws {
         self.unauthorizedNewConversationCount = unauthorizedNewConversationCount
+        self.accessDeniedNewConversationCount = accessDeniedNewConversationCount
         self.rateLimitedNewConversationCount = rateLimitedNewConversationCount
         self.streamTokens = streamTokens
         self.streamLines = streamLines
@@ -1899,6 +1935,15 @@ private final class MockGrokServer {
             if unauthorizedNewConversationCount > 0 {
                 unauthorizedNewConversationCount -= 1
                 return jsonResponse(["error": "unauthorized"], status: 401)
+            }
+            if accessDeniedNewConversationCount > 0 {
+                accessDeniedNewConversationCount -= 1
+                return jsonResponse([
+                    "error": [
+                        "code": "model_access_denied",
+                        "message": "Your account does not have access to Grok Heavy."
+                    ]
+                ], status: 403)
             }
             if rateLimitedNewConversationCount > 0 {
                 rateLimitedNewConversationCount -= 1

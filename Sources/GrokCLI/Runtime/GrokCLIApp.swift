@@ -242,13 +242,20 @@ class GrokCLIApp {
         switch grokError {
         case .invalidCredentials, .unauthorized:
             return true
+        case .accessDenied:
+            return false
         case .apiError(let message):
             let normalized = message.lowercased()
             return normalized.contains("http error: 401") ||
-                normalized.contains("http error: 403") ||
                 normalized.contains("unauthorized") ||
-                normalized.contains("forbidden") ||
-                normalized.contains("not authenticated")
+                normalized.contains("unauthenticated") ||
+                normalized.contains("not authenticated") ||
+                normalized.contains("authentication required") ||
+                normalized.contains("login required") ||
+                normalized.contains("log in") ||
+                (normalized.contains("cookie") && (normalized.contains("invalid") || normalized.contains("expired"))) ||
+                normalized.contains("csrf") ||
+                normalized.contains("sso")
         default:
             return false
         }
