@@ -70,6 +70,37 @@ You can also import an existing JSON credential export:
 grok auth import /path/to/credentials.json
 ```
 
+The credential JSON contains browser cookies, so keep it private and do not commit it.
+See [Advanced Configuration](#advanced-configuration) for the exact credential rules and storage paths.
+
+## Advanced Configuration
+
+Most installs do not need these settings, but they are useful for custom installs,
+test fixtures, and local mock servers.
+
+| Environment variable | Applies to | Behavior |
+|----------------------|------------|----------|
+| `GROK_CONFIG_DIR` | CLI | Overrides the directory where `grok auth` saves `credentials.json`. Defaults to `$HOME/.config/grok-cli` on macOS and `$HOME/.grok-cli` on other platforms. |
+| `GROK_COOKIE_EXTRACTOR` | CLI | Overrides the path to `cookie_extractor.py` for `grok auth` and `grok auth generate`. Useful when the helper is installed outside the checkout or when tests need a fixture helper. |
+| `GROK_BASE_URL` | Swift client, CLI, proxy | Overrides the Grok REST base URL. Values may be a host, a `/rest` URL, or a `/rest/app-chat` URL; the client normalizes them to the app-chat and root REST endpoints. Useful for local mock servers and tests. |
+
+Credential handling has three related paths:
+
+- CLI import validation: `grok auth import` expects a JSON object with string
+  cookie names and string cookie values. It rejects empty values and requires at
+  least one Grok auth cookie: `sso`, `sso-rw`, `x-userid`, or `x-anonuserid`.
+  Valid imports are saved as `credentials.json` under `GROK_CONFIG_DIR` or the
+  default config directory.
+- Cookie extractor generated credentials: `grok auth` and `grok auth generate`
+  run `cookie_extractor.py --required` and save the generated browser-cookie JSON
+  to the CLI config directory. Generated credentials normally include the browser
+  session cookies Grok expects, such as `sso`, `sso-rw`, `x-anonuserid`,
+  `x-challenge`, and `x-signature`.
+- Proxy runtime credentials: the `proxy` executable does not read the CLI config
+  directory. It reads `GROK_COOKIES` first, then `credentials.json` from the
+  process current working directory. Each source must be a non-empty JSON object
+  of string key/value cookies.
+
 ## Basic Usage
 
 Start chat with an initial message:

@@ -26,9 +26,9 @@ This project implements an OpenAI-compatible reverse proxy server for Grok, allo
 
 1. Clone the repository
 2. Configure Grok credentials by either:
-   - Setting a `GROK_COOKIES` environment variable with a JSON string of cookie key-values
-   - Creating a `credentials.json` file in the current working directory with Grok cookies
-   - Required cookies: `x-anonuserid`, `x-challenge`, `x-signature`, `sso`, `sso-rw`
+   - Setting `GROK_COOKIES` to a JSON object of cookie key-values
+   - Creating a `credentials.json` file in the process current working directory with the same JSON shape
+   - Keeping credential files private; they contain browser cookies and should not be committed
 3. Build and run the application:
 
 ```bash
@@ -211,6 +211,10 @@ The application will try to find Grok credentials in the following order:
 1. `GROK_COOKIES` environment variable (JSON string)
 2. `credentials.json` file in the process current working directory (JSON object)
 3. Fallback to mock cookies (which will likely fail with the actual API)
+
+Both runtime credential sources must decode to a non-empty JSON object with string keys and string values. The proxy does not search the CLI config directory and does not run the CLI import or cookie-extractor validators at startup.
+
+Generated browser credentials normally include the cookies Grok expects for a logged-in web session, such as `sso`, `sso-rw`, `x-anonuserid`, `x-challenge`, and `x-signature`. If you generate credentials with the CLI, use the saved JSON file itself by copying it to the proxy working directory as `credentials.json` or by passing its contents through `GROK_COOKIES`.
 
 Example `credentials.json` file:
 
