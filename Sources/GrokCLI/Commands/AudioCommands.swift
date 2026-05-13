@@ -1,12 +1,29 @@
 import Foundation
 import GrokClient
 import Rainbow
+#if os(macOS)
+import CoreAudio
+#endif
 
 extension GrokCLI {
+    private static let audioRecordingFixtureEnvironmentKey = "GROK_CLI_AUDIO_RECORD_FIXTURE"
+    private static let audioRecordingDeviceEnvironmentKey = "GROK_CLI_AUDIO_DEVICE"
+
     struct AudioInputRequestOptions {
         let path: String
         let audioFormat: String?
         let refinementLevel: String
+    }
+
+    struct ParsedAudioInputOptions {
+        let path: String?
+        let audioFormat: String?
+        let refinementLevel: String
+    }
+
+    struct InteractiveAudioInputOptions {
+        let sendImmediately: Bool
+        let input: ParsedAudioInputOptions
     }
 
     struct ResolvedAudioInput {
@@ -29,6 +46,20 @@ extension GrokCLI {
     }
 
     static func parseAudioInputOptions(args: [String], usage: String) throws -> AudioInputRequestOptions {
+        let parsed = try parseOptionalAudioInputOptions(args: args, usage: usage)
+
+        guard let path = parsed.path, !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw GrokError.apiError("Usage: \(usage)")
+        }
+
+        return AudioInputRequestOptions(
+            path: path,
+            audioFormat: parsed.audioFormat,
+            refinementLevel: parsed.refinementLevel
+        )
+    }
+
+    static func parseOptionalAudioInputOptions(args: [String], usage: String) throws -> ParsedAudioInputOptions {
         var path: String?
         var audioFormat: String?
         var refinementLevel = GrokClient.defaultSpeechRefinementLevel
@@ -60,10 +91,6 @@ extension GrokCLI {
             index += 1
         }
 
-        guard let path, !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw GrokError.apiError("Usage: \(usage)")
-        }
-
         guard !refinementLevel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw GrokError.apiError("--refinement-level requires a value")
         }
@@ -72,11 +99,36 @@ extension GrokCLI {
             throw GrokError.apiError("--audio-format requires a value")
         }
 
-        return AudioInputRequestOptions(
+        return ParsedAudioInputOptions(
             path: path,
             audioFormat: audioFormat,
             refinementLevel: refinementLevel
         )
+    }
+
+    static func parseInteractiveAudioInputOptions(args: [String], usage: String) throws -> InteractiveAudioInputOptions {
+        var audioArgs = args
+        var sendImmediately = false
+
+        if let first = audioArgs.first?.lowercased() {
+            switch first {
+            case "send":
+                sendImmediately = true
+                audioArgs.removeFirst()
+            case "file":
+                audioArgs.removeFirst()
+            case "record":
+                audioArgs.removeFirst()
+                if audioArgs.contains(where: { !$0.hasPrefix("--") }) {
+                    throw GrokError.apiError("Usage: \(usage)")
+                }
+            default:
+                break
+            }
+        }
+
+        let parsed = try parseOptionalAudioInputOptions(args: audioArgs, usage: usage)
+        return InteractiveAudioInputOptions(sendImmediately: sendImmediately, input: parsed)
     }
 
     static func resolveAudioInput(
@@ -131,6 +183,192 @@ extension GrokCLI {
             refinementLevel: options.refinementLevel
         )
     }
+
+    static func resolveInteractiveAudioInput(
+        _ options: InteractiveAudioInputOptions,
+        app: GrokCLIApp,
+        waitForRecordingStop: () -> Void
+    ) async throws -> ResolvedAudioInput {
+        if let path = options.input.path {
+            let request = AudioInputRequestOptions(
+                path: path,
+                audioFormat: options.input.audioFormat,
+                refinementLevel: options.input.refinementLevel
+            )
+            return try await resolveAudioInput(request, app: app)
+        }
+
+        let requestedFormat = options.input.audioFormat?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if let requestedFormat, requestedFormat != "webm" {
+            throw GrokError.apiError("Recording creates webm audio; omit --audio-format or use --audio-format webm.")
+        }
+
+        let recordingURL = try recordAudioToTemporaryWebM(waitForStop: waitForRecordingStop)
+        return try await resolveAudioInput(
+            AudioInputRequestOptions(
+                path: recordingURL.path,
+                audioFormat: "webm",
+                refinementLevel: options.input.refinementLevel
+            ),
+            app: app
+        )
+    }
+
+    static func recordAudioToTemporaryWebM(waitForStop: () -> Void) throws -> URL {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grok-audio-\(UUID().uuidString)")
+            .appendingPathExtension("webm")
+
+        if let fixturePath = ProcessInfo.processInfo.environment[audioRecordingFixtureEnvironmentKey],
+           !fixturePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let fixtureURL = URL(fileURLWithPath: NSString(string: fixturePath).expandingTildeInPath)
+            do {
+                try FileManager.default.copyItem(at: fixtureURL, to: outputURL)
+                return outputURL
+            } catch {
+                throw GrokError.apiError("Could not use recording fixture \(fixturePath): \(error.localizedDescription)")
+            }
+        }
+
+        #if os(macOS)
+        guard let ffmpegPath = findExecutableInPATH(named: "ffmpeg") else {
+            throw GrokError.apiError("Recording from /audio requires ffmpeg on macOS. Install it with `brew install ffmpeg`, then run /audio again.")
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ffmpegPath)
+        let audioDevice = preferredAVFoundationAudioDeviceSpecifier()
+        process.arguments = [
+            "-hide_banner",
+            "-loglevel", "error",
+            "-nostdin",
+            "-f", "avfoundation",
+            "-i", avFoundationAudioInputArgument(for: audioDevice),
+            "-vn",
+            "-ac", "1",
+            "-ar", "48000",
+            "-c:a", "libopus",
+            "-b:a", "64k",
+            "-f", "webm",
+            "-y",
+            outputURL.path
+        ]
+
+        let stderr = Pipe()
+        process.standardOutput = Pipe()
+        process.standardError = stderr
+
+        do {
+            try process.run()
+        } catch {
+            throw GrokError.apiError("Could not start audio recording: \(error.localizedDescription)")
+        }
+
+        waitForStop()
+
+        if process.isRunning {
+            process.interrupt()
+        }
+        process.waitUntilExit()
+
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: outputURL.path),
+           let size = attributes[.size] as? NSNumber,
+           size.intValue > 0 {
+            return outputURL
+        }
+
+        let stderrText = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let detail = stderrText?.isEmpty == false ? ": \(stderrText!)" : "."
+        throw GrokError.apiError("Audio recording failed\(detail)")
+        #else
+        throw GrokError.apiError("Recording from /audio is currently supported on macOS with ffmpeg installed.")
+        #endif
+    }
+
+    static func findExecutableInPATH(named executableName: String) -> String? {
+        let pathValue = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        for directory in pathValue.split(separator: ":") {
+            let candidate = URL(fileURLWithPath: String(directory)).appendingPathComponent(executableName).path
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    static func preferredAVFoundationAudioDeviceSpecifier() -> String {
+        if let override = ProcessInfo.processInfo.environment[audioRecordingDeviceEnvironmentKey]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !override.isEmpty {
+            return override
+        }
+
+        #if os(macOS)
+        if let deviceName = defaultAudioInputDeviceName(),
+           !deviceName.contains(":") {
+            return deviceName
+        }
+        #endif
+
+        return "default"
+    }
+
+    static func avFoundationAudioInputArgument(for deviceSpecifier: String) -> String {
+        let trimmed = deviceSpecifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix(":") {
+            return trimmed
+        }
+        return ":\(trimmed.isEmpty ? "default" : trimmed)"
+    }
+
+    #if os(macOS)
+    static func defaultAudioInputDeviceName() -> String? {
+        var defaultInputAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var deviceID = AudioDeviceID()
+        var deviceIDSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let deviceStatus = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &defaultInputAddress,
+            0,
+            nil,
+            &deviceIDSize,
+            &deviceID
+        )
+        guard deviceStatus == noErr, deviceID != kAudioObjectUnknown else {
+            return nil
+        }
+
+        var nameAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var unmanagedName: Unmanaged<CFString>?
+        var nameSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        let nameStatus = AudioObjectGetPropertyData(
+            deviceID,
+            &nameAddress,
+            0,
+            nil,
+            &nameSize,
+            &unmanagedName
+        )
+        guard nameStatus == noErr,
+              let deviceName = unmanagedName?.takeUnretainedValue() as String? else {
+            return nil
+        }
+
+        let trimmed = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+    #endif
 
     static func handleTranscribeCommand(args: [String], exitOnError: Bool = false) async throws {
         let jsonRequested = isJSONRequested(args)

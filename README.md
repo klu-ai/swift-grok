@@ -147,12 +147,15 @@ Supported audio formats are inferred from common extensions such as `webm`, `wav
 Interactive chat supports audio slash commands:
 
 ```text
+/audio
 /audio recording.webm
+/audio file recording.webm
+/audio send recording.webm
 /audio-send recording.webm
 /transcribe recording.webm
 ```
 
-`/audio` transcribes and pre-fills the editable prompt so you can revise it before sending. `/audio-send` transcribes and sends immediately. `/transcribe` prints the transcript without sending it.
+`/audio` with no path records WebM/Opus audio from the macOS default input microphone, transcribes the recording, and pre-fills the editable prompt so you can revise it before sending. `/audio <path>` and `/audio file <path>` use an existing audio file instead. `/audio send <path>` transcribes and sends immediately; `/audio-send <path>` remains as a legacy alias. Local recording currently uses `ffmpeg` on macOS. If you need to force a specific AVFoundation input, set `GROK_CLI_AUDIO_DEVICE` to a device name such as `MacBook Pro Microphone`, an index such as `1`, or `default`.
 
 Swift callers can use the speech-to-text helpers directly:
 

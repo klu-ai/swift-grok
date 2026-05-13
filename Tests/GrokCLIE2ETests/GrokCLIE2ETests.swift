@@ -343,17 +343,45 @@ final class GrokCLIE2ETests: XCTestCase {
 
         let run = try environment.run(
             ["chat", "--raw", "--quiet"],
-            input: "/audio \(audioURL.path)\n/audio-send \(audioURL.path)\n/transcribe \(audioURL.path)\n/quit\n"
+            input: "/audio \(audioURL.path)\n/audio file \(audioURL.path)\n/audio send \(audioURL.path)\n/audio-send \(audioURL.path)\n/transcribe \(audioURL.path)\n/quit\n"
         )
 
         XCTAssertEqual(run.status, 0)
-        XCTAssertEqual(server.requests(matchingPath: "/rest/voice/speech-to-text", method: "POST").count, 3)
+        XCTAssertEqual(server.requests(matchingPath: "/rest/voice/speech-to-text", method: "POST").count, 5)
+        let chatMessages = server.requests(method: "POST")
+            .filter { $0.path.contains("/rest/app-chat/conversations") }
+            .compactMap { $0.jsonString("message") }
+        XCTAssertEqual(chatMessages.filter { $0 == transcript }.count, 4)
+        XCTAssertContains(run.stdout, answer)
+        XCTAssertContains(run.stdout, transcript)
+    }
+
+    func testInteractiveAudioRecordsWhenNoPathIsProvided() throws {
+        let answer = "recorded audio answer"
+        let transcript = "recorded audio transcript"
+        let server = try MockGrokServer(streamTokens: [answer], finalMessage: answer, transcriptionText: transcript)
+        let environment = try TestEnvironment(server: server)
+        let fixtureURL = environment.scratchURL.appendingPathComponent("recording-fixture.webm")
+        try Data("recorded bytes".utf8).write(to: fixtureURL)
+
+        let run = try environment.run(
+            ["chat", "--raw", "--quiet"],
+            input: "/audio\n/audio send\n/quit\n",
+            extraEnvironment: ["GROK_CLI_AUDIO_RECORD_FIXTURE": fixtureURL.path]
+        )
+
+        XCTAssertEqual(run.status, 0)
+        let transcriptionRequests = server.requests(matchingPath: "/rest/voice/speech-to-text", method: "POST")
+        XCTAssertEqual(transcriptionRequests.count, 2)
+        for request in transcriptionRequests {
+            XCTAssertEqual(request.jsonString("audioFormat"), "webm")
+            XCTAssertEqual(request.jsonString("audioBase64"), Data("recorded bytes".utf8).base64EncodedString())
+        }
         let chatMessages = server.requests(method: "POST")
             .filter { $0.path.contains("/rest/app-chat/conversations") }
             .compactMap { $0.jsonString("message") }
         XCTAssertEqual(chatMessages.filter { $0 == transcript }.count, 2)
         XCTAssertContains(run.stdout, answer)
-        XCTAssertContains(run.stdout, transcript)
     }
 
     func testMessagePromptInputUsageErrors() throws {

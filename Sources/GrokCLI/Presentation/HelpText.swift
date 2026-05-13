@@ -82,8 +82,11 @@ extension GrokCLI {
           /attach           - Browse files and attach one to following messages
           /attach upload    - Upload a local file and attach it
           /attach clear     - Remove all attached files
+          /audio            - Record audio, edit the transcript, then send
           /audio <path>     - Transcribe audio, edit the text field, then send
-          /audio-send <path> - Transcribe audio and send immediately
+          /audio file <path> - Same as /audio <path>
+          /audio send <path> - Transcribe audio and send immediately
+          /audio-send <path> - Legacy alias for /audio send <path>
           /transcribe <path> - Transcribe audio and print text only
           /model <mode>     - Switch model for following messages
           /mode, /models    - Model command aliases

@@ -705,27 +705,37 @@ extension GrokCLI {
 
             case .some("audio"):
                 do {
-                    let options = try parseAudioInputOptions(
+                    let options = try parseInteractiveAudioInputOptions(
                         args: interactiveArgs,
-                        usage: "/audio [--audio-format <format>] [--refinement-level <level>] <path>"
+                        usage: "/audio [send|file|record] [--audio-format <format>] [--refinement-level <level>] [path]"
                     )
-                    guard options.path != "-" else {
+                    if options.input.path == "-" {
                         throw GrokError.apiError("Audio stdin is only supported by non-interactive message/transcribe commands")
                     }
                     if !enableQuiet {
-                        print("Transcribing audio...".cyan)
+                        if options.input.path == nil {
+                            print("Recording audio...".cyan)
+                        } else {
+                            print("Transcribing audio...".cyan)
+                        }
                     }
-                    let resolved = try await resolveAudioInput(options, app: app)
-                    if !enableQuiet {
+                    let resolved = try await resolveInteractiveAudioInput(options, app: app) {
+                        _ = inputReader.readLine(prompt: enableQuiet ? "" : "Press Enter to stop recording... ")
+                    }
+                    if !options.sendImmediately && !enableQuiet {
                         print("Edit transcript, then press Enter to send.".yellow)
                     }
-                    guard let edited = inputReader.readLine(prompt: enableQuiet ? "" : "> ", prefill: resolved.transcript) else {
-                        continue
+                    if options.sendImmediately {
+                        inputForSend = resolved.transcript
+                    } else {
+                        guard let edited = inputReader.readLine(prompt: enableQuiet ? "" : "> ", prefill: resolved.transcript) else {
+                            continue
+                        }
+                        guard !edited.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                            continue
+                        }
+                        inputForSend = edited
                     }
-                    guard !edited.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                        continue
-                    }
-                    inputForSend = edited
                 } catch {
                     await app.handleError(error, debug: enableDebug)
                     continue
@@ -733,17 +743,23 @@ extension GrokCLI {
 
             case .some("audio-send"):
                 do {
-                    let options = try parseAudioInputOptions(
-                        args: interactiveArgs,
-                        usage: "/audio-send [--audio-format <format>] [--refinement-level <level>] <path>"
+                    let options = try parseInteractiveAudioInputOptions(
+                        args: ["send"] + interactiveArgs,
+                        usage: "/audio send [--audio-format <format>] [--refinement-level <level>] [path]"
                     )
-                    guard options.path != "-" else {
+                    if options.input.path == "-" {
                         throw GrokError.apiError("Audio stdin is only supported by non-interactive message/transcribe commands")
                     }
                     if !enableQuiet {
-                        print("Transcribing audio...".cyan)
+                        if options.input.path == nil {
+                            print("Recording audio...".cyan)
+                        } else {
+                            print("Transcribing audio...".cyan)
+                        }
                     }
-                    let resolved = try await resolveAudioInput(options, app: app)
+                    let resolved = try await resolveInteractiveAudioInput(options, app: app) {
+                        _ = inputReader.readLine(prompt: enableQuiet ? "" : "Press Enter to stop recording... ")
+                    }
                     inputForSend = resolved.transcript
                 } catch {
                     await app.handleError(error, debug: enableDebug)
