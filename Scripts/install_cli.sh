@@ -1,140 +1,157 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# GrokCLI Installation Script
-# This script builds and installs the GrokCLI tool
+set -euo pipefail
 
-set -e  # Exit on any error
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+COOKIE_EXTRACTOR="$SCRIPT_DIR/cookie_extractor.py"
 
-echo "==============================================="
-echo "GrokCLI Installation Script"
-echo "==============================================="
+usage() {
+  cat <<'EOF'
+Usage: Scripts/install_cli.sh [options]
 
-# Determine script location and project root
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
-COOKIE_EXTRACTOR_PATH="$SCRIPT_DIR/cookie_extractor.py"
+Build and install the release grok CLI.
 
-echo "📂 Script directory: $SCRIPT_DIR"
-echo "📂 Project root: $PROJECT_ROOT"
+Options:
+  --user              Install to ~/.local/bin
+  --system            Install to /usr/local/bin
+  --bin-dir <dir>     Install to a custom directory
+  --prefix <dir>      Install to <dir>/bin
+  -s, --skip-auth     Accepted for compatibility; auth is never run by installer
+  -h, --help          Show this help
 
-# Parse command line options
-SKIP_COOKIES=false
-while getopts ":s" opt; do
-  case ${opt} in
-    s )
-      SKIP_COOKIES=true
+Default install directory:
+  /usr/local/bin if writable, otherwise ~/.local/bin
+EOF
+}
+
+install_dir=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --user)
+      install_dir="$HOME/.local/bin"
+      shift
       ;;
-    \? )
-      echo "Invalid option: $OPTARG" 1>&2
-      exit 1
+    --system)
+      install_dir="/usr/local/bin"
+      shift
+      ;;
+    --bin-dir)
+      [[ $# -ge 2 ]] || { echo "Error: --bin-dir requires a directory" >&2; exit 2; }
+      install_dir="$2"
+      shift 2
+      ;;
+    --bin-dir=*)
+      install_dir="${1#*=}"
+      shift
+      ;;
+    --prefix)
+      [[ $# -ge 2 ]] || { echo "Error: --prefix requires a directory" >&2; exit 2; }
+      install_dir="$2/bin"
+      shift 2
+      ;;
+    --prefix=*)
+      install_dir="${1#*=}/bin"
+      shift
+      ;;
+    -s|--skip-auth)
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Error: unknown option: $1" >&2
+      usage >&2
+      exit 2
       ;;
   esac
 done
 
-# Determine installation directory
-INSTALL_DIR="$HOME/.local/bin"
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    # macOS - check if /usr/local/bin is writable, otherwise use ~/.local/bin
-    if [ -w "/usr/local/bin" ]; then
-        INSTALL_DIR="/usr/local/bin"
-    fi
+if [[ -z "$install_dir" ]]; then
+  if [[ -d /usr/local/bin && -w /usr/local/bin ]]; then
+    install_dir="/usr/local/bin"
+  else
+    install_dir="$HOME/.local/bin"
+  fi
 fi
 
-# Create installation directory if it doesn't exist
-mkdir -p "$INSTALL_DIR"
+if [[ ! -f "$COOKIE_EXTRACTOR" ]]; then
+  echo "Error: missing $COOKIE_EXTRACTOR" >&2
+  exit 1
+fi
 
-# Navigate to project root for the rest of the process
 cd "$PROJECT_ROOT"
 
-# Run cookie extractor first (unless skipped)
-if [ "$SKIP_COOKIES" = false ]; then
-    echo "🍪 Attempting to extract Grok cookies..."
-    # Ensure cookie_extractor.py is executable
-    chmod +x "$COOKIE_EXTRACTOR_PATH"
-    
-    # Run the cookie extractor and capture its exit status
-    python "$COOKIE_EXTRACTOR_PATH" --required
-    COOKIE_STATUS=$?
-    
-    if [ $COOKIE_STATUS -ne 0 ]; then
-        echo "⚠️  Could not extract Grok cookies!"
-        echo "You'll need to authenticate after installation with 'grok auth generate' or 'grok auth import'"
-    else
-        echo "✅ Successfully extracted Grok cookies!"
-    fi
-    
-    # Small pause to ensure file system catches up
-    sleep 1
-else
-    echo "🍪 Skipping cookie extraction (use -s flag)"
+echo "Building release grok binary..."
+swift build -c release --product grok
+
+bin_path="$(swift build -c release --show-bin-path)/grok"
+if [[ ! -x "$bin_path" ]]; then
+  echo "Error: built binary not found at $bin_path" >&2
+  exit 1
 fi
 
-# Clean any previous builds to ensure fresh build
-echo "🧹 Cleaning previous builds..."
-swift package clean
+ensure_dir() {
+  local dir="$1"
 
-# Build the CLI in release mode
-echo "🔨 Building GrokCLI..."
-swift build -c release
+  if [[ -d "$dir" ]]; then
+    return
+  fi
 
-# Get the path to the built binary
-CLI_PATH=$(swift build -c release --show-bin-path)/grok
+  if mkdir -p "$dir" 2>/dev/null; then
+    return
+  fi
 
-# Check if the binary exists
-if [ ! -f "$CLI_PATH" ]; then
-    echo "❌ Error: Built binary not found at $CLI_PATH"
-    echo "This might be because the product name in Package.swift is not 'grok'"
-    echo "Looking for alternative binary names..."
-    
-    # Try to find the binary with a different name
-    ALTERNATIVE_CLI_PATH=$(find "$(swift build -c release --show-bin-path)" -type f -perm -u+x -not -name "*.build" -not -name "*.swiftmodule" | head -n 1)
-    
-    if [ -n "$ALTERNATIVE_CLI_PATH" ]; then
-        echo "Found alternative binary at $ALTERNATIVE_CLI_PATH"
-        CLI_PATH=$ALTERNATIVE_CLI_PATH
-    else
-        echo "❌ Could not find any executable in the build directory."
-        exit 1
-    fi
+  command -v sudo >/dev/null 2>&1 || {
+    echo "Error: could not create $dir and sudo was not found." >&2
+    echo "Try: Scripts/install_cli.sh --user" >&2
+    exit 1
+  }
+  sudo install -d -m 755 "$dir"
+}
+
+ensure_dir "$install_dir"
+
+install_file() {
+  local src="$1"
+  local dest="$2"
+  local mode="$3"
+
+  if [[ -w "$(dirname "$dest")" ]]; then
+    install -m "$mode" "$src" "$dest"
+  else
+    command -v sudo >/dev/null 2>&1 || {
+      echo "Error: $(dirname "$dest") is not writable and sudo was not found." >&2
+      echo "Try: Scripts/install_cli.sh --user" >&2
+      exit 1
+    }
+    sudo install -m "$mode" "$src" "$dest"
+  fi
+}
+
+install_file "$bin_path" "$install_dir/grok" 755
+install_file "$COOKIE_EXTRACTOR" "$install_dir/cookie_extractor.py" 755
+
+cat <<EOF
+Installed:
+  $install_dir/grok
+  $install_dir/cookie_extractor.py
+
+Next:
+  1. Add $install_dir to PATH if needed.
+  2. Log in to https://grok.com in your browser.
+  3. Run: grok auth generate
+  4. Try: grok how tall is the moon
+EOF
+
+if [[ ":$PATH:" != *":$install_dir:"* ]]; then
+  cat <<EOF
+
+PATH update for zsh:
+  echo 'export PATH="$install_dir:\$PATH"' >> ~/.zshrc
+  exec zsh
+EOF
 fi
-
-# Copy the binary to the installation directory
-echo "📦 Installing CLI to $INSTALL_DIR/grok..."
-cp "$CLI_PATH" "$INSTALL_DIR/grok"
-
-# Make it executable
-chmod +x "$INSTALL_DIR/grok"
-
-# Copy cookie_extractor.py to the same directory
-echo "📦 Installing cookie_extractor.py to $INSTALL_DIR/cookie_extractor.py..."
-cp "$COOKIE_EXTRACTOR_PATH" "$INSTALL_DIR/cookie_extractor.py"
-chmod +x "$INSTALL_DIR/cookie_extractor.py"
-
-# Check if the installation directory is in PATH
-if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-    echo "⚠️  $INSTALL_DIR is not in your PATH."
-    echo "   Add the following line to your shell profile file (e.g., ~/.bash_profile, ~/.zshrc):"
-    echo "   export PATH=\"\$PATH:$INSTALL_DIR\""
-fi
-
-echo ""
-echo "==============================================="
-echo "Installation complete!"
-echo "-----------------------------------------------"
-echo "You can now use the GrokCLI by running: grok"
-echo ""
-if [ "$SKIP_COOKIES" = false ]; then
-    if [ $COOKIE_STATUS -eq 0 ]; then
-        echo "✅ Authentication: Cookies were extracted during installation"
-        echo "   You can start using grok immediately!"
-    else
-        echo "⚠️  Authentication: You need to set up authentication:"
-        echo "   1. Make sure you're logged in to Grok in your browser"
-        echo "   2. Run: grok auth generate"
-    fi
-else
-    echo "⚠️  Authentication: You need to set up authentication:"
-    echo "   1. Make sure you're logged in to Grok in your browser"
-    echo "   2. Run: grok auth generate" 
-fi
-echo "===============================================" 
