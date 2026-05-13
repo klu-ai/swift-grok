@@ -1,5 +1,6 @@
 import Foundation
 import Vapor
+import GrokClient
 
 // MARK: - Request Models
 
@@ -214,15 +215,11 @@ struct ModelsResponse: Content {
     }
     
     static func defaultResponse() -> ModelsResponse {
-        let grokModels = [
-            Model(id: "gpt-3.5-turbo"), // Standard model name used by OpenAI clients
-            Model(id: "gpt-4"),         // More advanced model name used by OpenAI clients 
-            Model(id: "grok-3")         // Actual Grok model name
-        ]
+        let grokModels = GrokMode.knownModes.map { Model(id: $0.id) }
         
         return ModelsResponse(
             object: "list",
             data: grokModels
         )
     }
-} 
+}
