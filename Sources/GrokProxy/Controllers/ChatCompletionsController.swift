@@ -145,34 +145,35 @@ struct ChatCompletionsController: RouteCollection {
             Task {
                 do {
                     var isFirstChunk = true
+                    var emittedContent = false
+                    var emittedFinalChunk = false
+
                     for try await response in stream {
-                        let chunkResponse: ChatCompletionChunkResponse
-                        if response.webSearchResults != nil || response.xposts != nil {
-                            // Final response
-                            chunkResponse = ChatCompletionChunkResponse.create(
-                                id: responseId,
-                                model: model,
-                                chunk: response.message,
-                                finishReason: "stop"
-                            )
-                        } else {
-                            // Streaming token
-                            chunkResponse = ChatCompletionChunkResponse.create(
-                                id: responseId,
-                                model: model,
-                                chunk: response.message,
-                                includeRole: isFirstChunk
-                            )
-                            isFirstChunk = false
+                        let chunkResponses = Self.streamingChunks(
+                            for: response,
+                            model: model,
+                            responseId: responseId,
+                            isFirstChunk: &isFirstChunk,
+                            emittedContent: &emittedContent
+                        )
+
+                        if response.isFinal {
+                            emittedFinalChunk = true
                         }
 
-                        let chunkData = try JSONEncoder().encode(chunkResponse)
-                        let chunkString = "data: \(String(data: chunkData, encoding: .utf8)!)\n\n"
-                        _ = writer.write(.buffer(ByteBuffer(string: chunkString)))
+                        for chunkResponse in chunkResponses {
+                            let chunkString = try Self.serverSentEvent(for: chunkResponse)
+                            _ = writer.write(.buffer(ByteBuffer(string: chunkString)))
+                        }
                     }
 
-                    // Send [DONE] marker
-                    _ = writer.write(.buffer(ByteBuffer(string: "data: [DONE]\n\n")))
+                    for chunkString in try Self.terminalServerSentEvents(
+                        emittedFinalChunk: emittedFinalChunk,
+                        model: model,
+                        responseId: responseId
+                    ) {
+                        _ = writer.write(.buffer(ByteBuffer(string: chunkString)))
+                    }
                     _ = writer.write(.end)
                 } catch {
                     let errorString = "data: {\"error\": \"\(error.localizedDescription)\"}\n\n"
@@ -183,5 +184,78 @@ struct ChatCompletionsController: RouteCollection {
         })
 
         return streamResponse
+    }
+
+    static let doneServerSentEvent = "data: [DONE]\n\n"
+
+    static func serverSentEvent(for chunk: ChatCompletionChunkResponse) throws -> String {
+        let chunkData = try JSONEncoder().encode(chunk)
+        return "data: \(String(decoding: chunkData, as: UTF8.self))\n\n"
+    }
+
+    static func terminalServerSentEvents(
+        emittedFinalChunk: Bool,
+        model: String,
+        responseId: String
+    ) throws -> [String] {
+        var events: [String] = []
+
+        if !emittedFinalChunk {
+            events.append(try serverSentEvent(for: ChatCompletionChunkResponse.createDoneChunk(
+                id: responseId,
+                model: model
+            )))
+        }
+
+        events.append(doneServerSentEvent)
+        return events
+    }
+
+    static func streamingChunks(
+        for response: ConversationResponse,
+        model: String,
+        responseId: String,
+        isFirstChunk: inout Bool,
+        emittedContent: inout Bool
+    ) -> [ChatCompletionChunkResponse] {
+        if response.isThinking && !response.isFinal {
+            return []
+        }
+
+        if response.isFinal {
+            var chunks: [ChatCompletionChunkResponse] = []
+
+            if !emittedContent && !response.message.isEmpty {
+                chunks.append(ChatCompletionChunkResponse.create(
+                    id: responseId,
+                    model: model,
+                    chunk: response.message,
+                    includeRole: isFirstChunk
+                ))
+                isFirstChunk = false
+                emittedContent = true
+            }
+
+            chunks.append(ChatCompletionChunkResponse.createDoneChunk(
+                id: responseId,
+                model: model
+            ))
+
+            return chunks
+        }
+
+        let chunk = ChatCompletionChunkResponse.create(
+            id: responseId,
+            model: model,
+            chunk: response.message,
+            includeRole: isFirstChunk
+        )
+        isFirstChunk = false
+
+        if !response.message.isEmpty {
+            emittedContent = true
+        }
+
+        return [chunk]
     }
 }

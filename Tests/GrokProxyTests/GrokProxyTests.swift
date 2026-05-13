@@ -1,5 +1,6 @@
 @testable import GrokProxy
 @testable import GrokClient
+import Foundation
 import NIOCore
 import VaporTesting
 import Testing
@@ -155,6 +156,155 @@ struct AppTests {
                 expectContains(res.body.string, "At least one user message is required")
             }
         }
+    }
+
+    @Test("Streaming final chunk uses explicit final response")
+    func streamingFinalChunkUsesExplicitFinalResponse() throws {
+        var isFirstChunk = true
+        var emittedContent = false
+        let responseId = "chatcmpl-test"
+        let sourceBackedToken = ConversationResponse(
+            message: "Here is a source-backed token.",
+            conversationId: "conversation-test",
+            responseId: "grok-response-test",
+            webSearchResults: [
+                WebSearchResult(
+                    url: "https://example.com",
+                    title: "Example",
+                    preview: "Example preview"
+                )
+            ],
+            isFinal: false
+        )
+
+        let sourceChunks = ChatCompletionsController.streamingChunks(
+            for: sourceBackedToken,
+            model: "fast",
+            responseId: responseId,
+            isFirstChunk: &isFirstChunk,
+            emittedContent: &emittedContent
+        )
+
+        #expect(sourceChunks.count == 1)
+        #expect(sourceChunks[0].choices[0].delta.role == "assistant")
+        #expect(sourceChunks[0].choices[0].delta.content == "Here is a source-backed token.")
+        #expect(sourceChunks[0].choices[0].finish_reason == nil)
+
+        let finalResponse = ConversationResponse(
+            message: "Here is the complete answer.",
+            conversationId: "conversation-test",
+            responseId: "grok-response-test",
+            isFinal: true
+        )
+
+        let finalChunks = ChatCompletionsController.streamingChunks(
+            for: finalResponse,
+            model: "fast",
+            responseId: responseId,
+            isFirstChunk: &isFirstChunk,
+            emittedContent: &emittedContent
+        )
+
+        #expect(finalChunks.count == 1)
+        #expect(finalChunks[0].choices[0].delta.role == nil)
+        #expect(finalChunks[0].choices[0].delta.content == nil)
+        #expect(finalChunks[0].choices[0].finish_reason == "stop")
+        #expect(ChatCompletionsController.doneServerSentEvent == "data: [DONE]\n\n")
+    }
+
+    @Test("Streaming final response emits content when no token was sent")
+    func streamingFinalResponseEmitsContentWhenNoTokenWasSent() throws {
+        var isFirstChunk = true
+        var emittedContent = false
+        let finalResponse = ConversationResponse(
+            message: "Only final content.",
+            conversationId: "conversation-test",
+            responseId: "grok-response-test",
+            isFinal: true
+        )
+
+        let finalChunks = ChatCompletionsController.streamingChunks(
+            for: finalResponse,
+            model: "fast",
+            responseId: "chatcmpl-test",
+            isFirstChunk: &isFirstChunk,
+            emittedContent: &emittedContent
+        )
+
+        #expect(finalChunks.count == 2)
+        #expect(finalChunks[0].choices[0].delta.role == "assistant")
+        #expect(finalChunks[0].choices[0].delta.content == "Only final content.")
+        #expect(finalChunks[0].choices[0].finish_reason == nil)
+        #expect(finalChunks[1].choices[0].delta.content == nil)
+        #expect(finalChunks[1].choices[0].finish_reason == "stop")
+    }
+
+    @Test("Streaming ignores thinking chunks without consuming assistant role")
+    func streamingIgnoresThinkingChunksWithoutConsumingAssistantRole() throws {
+        var isFirstChunk = true
+        var emittedContent = false
+        let thinkingResponse = ConversationResponse(
+            message: "Thinking through the answer.",
+            conversationId: "conversation-test",
+            responseId: "grok-response-test",
+            isThinking: true
+        )
+
+        let thinkingChunks = ChatCompletionsController.streamingChunks(
+            for: thinkingResponse,
+            model: "fast",
+            responseId: "chatcmpl-test",
+            isFirstChunk: &isFirstChunk,
+            emittedContent: &emittedContent
+        )
+
+        #expect(thinkingChunks.isEmpty)
+        #expect(isFirstChunk == true)
+        #expect(emittedContent == false)
+
+        let answerResponse = ConversationResponse(
+            message: "Visible answer.",
+            conversationId: "conversation-test",
+            responseId: "grok-response-test"
+        )
+
+        let answerChunks = ChatCompletionsController.streamingChunks(
+            for: answerResponse,
+            model: "fast",
+            responseId: "chatcmpl-test",
+            isFirstChunk: &isFirstChunk,
+            emittedContent: &emittedContent
+        )
+
+        #expect(answerChunks.count == 1)
+        #expect(answerChunks[0].choices[0].delta.role == "assistant")
+        #expect(answerChunks[0].choices[0].delta.content == "Visible answer.")
+        #expect(answerChunks[0].choices[0].finish_reason == nil)
+        #expect(isFirstChunk == false)
+        #expect(emittedContent == true)
+    }
+
+    @Test("Streaming terminal events synthesize stop chunk before done marker")
+    func streamingTerminalEventsSynthesizeStopChunkBeforeDoneMarker() throws {
+        let events = try ChatCompletionsController.terminalServerSentEvents(
+            emittedFinalChunk: false,
+            model: "fast",
+            responseId: "chatcmpl-test"
+        )
+
+        #expect(events.count == 2)
+        let stopChunk = try decodeChunk(from: events[0])
+        #expect(stopChunk.choices[0].delta.content == nil)
+        #expect(stopChunk.choices[0].finish_reason == "stop")
+        #expect(events[1] == ChatCompletionsController.doneServerSentEvent)
+
+        let finalAlreadyEmittedEvents = try ChatCompletionsController.terminalServerSentEvents(
+            emittedFinalChunk: true,
+            model: "fast",
+            responseId: "chatcmpl-test"
+        )
+
+        #expect(finalAlreadyEmittedEvents == [ChatCompletionsController.doneServerSentEvent])
     }
 
     @Test("Audio transcription validation fails before calling Grok")
@@ -320,5 +470,12 @@ struct AppTests {
                 }
             }
         }
+    }
+
+    private func decodeChunk(from event: String) throws -> ChatCompletionChunkResponse {
+        let prefix = "data: "
+        #expect(event.hasPrefix(prefix))
+        let json = String(event.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        return try JSONDecoder().decode(ChatCompletionChunkResponse.self, from: Data(json.utf8))
     }
 }
