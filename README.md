@@ -268,10 +268,20 @@ In interactive chat, switch modes with:
 ```text
 /model expert
 models Expert
-model 4
+model 4.3
 ```
 
-Known aliases include `auto`, `fast`, `expert`, `grok-4.3-beta`, and `heavy`. You can also pass a raw Grok web mode ID.
+Known direct aliases:
+
+- `auto`: chooses Fast or Expert.
+- `fast`: Fast.
+- `expert`, `reasoning`, `think`: Expert.
+- `grok-4.3-beta`, `4.3`, `43`: Grok 4.3 beta, whose canonical raw web mode ID is `grok-420-computer-use-sa`.
+- `heavy`: Heavy.
+
+You can also pass a raw Grok web mode ID.
+
+Use `/model`, `/mode`, `models`, or `modes` with no argument to open the model picker; numeric choices are picker selections only. A bare command like `model 4` is not a Grok 4 alias, so use `model 4.3`, `model grok-4.3-beta`, or a raw web mode ID instead.
 
 ## Agents
 
