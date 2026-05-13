@@ -2,7 +2,21 @@
 .build/
 .swiftpm/
 
+# Python
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store
+
+# Local env/secrets
+.env
+.env.*
+!.env.example
+
 # Project specific
 GrokCookies.swift
 .plan/
+test-runs/
 credentials.json
+credentials-*.json

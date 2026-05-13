@@ -9,7 +9,6 @@ This project implements an OpenAI-compatible reverse proxy server for Grok, allo
   - `/v1/models` - For listing available models
   - `/models` - Compatibility alias for model listing
 - Conversion between OpenAI format and Grok format
-- Support for system messages (as custom instructions for Grok)
 - Mapping of temperature to reasoning mode
 - Verbose logging option for debugging
 - Error handling and validation
@@ -184,7 +183,7 @@ Example `credentials.json` file:
 ## Parameter Mapping
 
 - **temperature**: Values < 0.5 enable "reasoning mode" in Grok
-- **system message**: Mapped to Grok's "customInstructions"
+- **system message**: Accepted for OpenAI compatibility but not forwarded as custom instructions; configure instructions in Grok agent settings
 - Other parameters (max_tokens, etc.) are currently ignored
 
 ## Limitations
@@ -195,4 +194,4 @@ Example `credentials.json` file:
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details. 
+This project is licensed under the MIT License - see the LICENSE file for details.

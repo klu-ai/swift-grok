@@ -6,9 +6,41 @@ Split `Sources/GrokCLI/GrokCLI.swift` into focused Swift files that make the CLI
 
 The immediate target is file-level modularity inside the existing `GrokCLI` SwiftPM target. Do not create new SwiftPM targets yet. The code is still changing quickly, and a target split would add package wiring before the boundaries have settled.
 
-## Current Shape
+## Execution Baseline Update
 
-The CLI target currently mixes several concerns:
+Updated on 2026-05-13 before execution.
+
+- [x] Re-checked current repo state after the latest commit with `git status --short`.
+- [x] Confirmed tracked source files are clean before decomposition; unrelated untracked files remain at `Scripts/__pycache__/` and `credentials-old.json`.
+- [x] Confirmed `Sources/GrokCLI/GrokCLI.swift` still contains the router, interactive chat loop, output formatter, input reader, runtime app state, config manager, auth/list/message/test command handling, and parser helpers.
+- [x] Confirmed existing flat command files remain present at `Sources/GrokCLI/AgentCommands.swift`, `Sources/GrokCLI/FileCommands.swift`, `Sources/GrokCLI/TaskSkillCommands.swift`, and `Sources/GrokCLI/WorkspaceCommands.swift`.
+- [x] Confirmed the planned nested directories under `Sources/GrokCLI/Core`, `Sources/GrokCLI/Runtime`, `Sources/GrokCLI/Interactive`, `Sources/GrokCLI/Commands`, `Sources/GrokCLI/Parsing`, and `Sources/GrokCLI/Presentation` do not exist yet.
+- [x] Confirmed `Sources/GrokCLI/TaskSkillCommands.swift` still combines task and skill behavior and must be split.
+- [x] Confirmed `Package.swift` already includes the `GrokCLIE2ETests` target and no package target split is needed for this work.
+
+## Execution Results
+
+Completed on 2026-05-13.
+
+- [x] Created the planned CLI directories under `Sources/GrokCLI/Core`, `Sources/GrokCLI/Runtime`, `Sources/GrokCLI/Interactive`, `Sources/GrokCLI/Commands`, `Sources/GrokCLI/Parsing`, and `Sources/GrokCLI/Presentation`.
+- [x] Replaced the flat `Sources/GrokCLI/GrokCLI.swift` monolith with focused files. `Sources/GrokCLI/Core/GrokCLI.swift` is now only the root namespace.
+- [x] Moved top-level routing into `Sources/GrokCLI/Core/TopLevelRouter.swift`.
+- [x] Moved runtime state and credential/config handling into `Sources/GrokCLI/Runtime/GrokCLIApp.swift`, `Sources/GrokCLI/Runtime/ConfigManager.swift`, and `Sources/GrokCLI/Runtime/CustomInstructions.swift`.
+- [x] Added and adopted `Sources/GrokCLI/Runtime/ChatSessionState.swift` in the interactive chat loop.
+- [x] Moved interactive parsing, command specs, model commands, menus, input handling, and session routing into `Sources/GrokCLI/Interactive/`.
+- [x] Moved auth, message, list, test, agents, files, workspaces, tasks, and skills into `Sources/GrokCLI/Commands/`.
+- [x] Split `TaskSkillCommands.swift` into `Sources/GrokCLI/Commands/TaskCommands.swift` and `Sources/GrokCLI/Commands/SkillCommands.swift`; removed the old combined file.
+- [x] Centralized command option parsing in `Sources/GrokCLI/Parsing/OptionParsing.swift`.
+- [x] Centralized row, summary, and JSON presentation helpers in `Sources/GrokCLI/Presentation/RowFormatting.swift`.
+- [x] Moved streaming markup parsing and output rendering into `Sources/GrokCLI/Presentation/GrokStreamMarkupParser.swift`, `Sources/GrokCLI/Presentation/OutputFormatter.swift`, and `Sources/GrokCLI/Presentation/OutputFormatter+Tables.swift`.
+- [x] Shared conversation list selection between top-level `grok list` and interactive `/list` via `GrokCLI.listAndSelectConversation(...)`.
+- [x] Verified no CLI Swift source file is above 700 lines; the largest is `Sources/GrokCLI/Interactive/InteractiveSession.swift`.
+- [x] Verification passed: `swift build --product grok`, `swift test --filter GrokCLIE2ETests`, `swift test`, `git diff --check`, and `Scripts/install_cli.sh`.
+- [x] Installed binary smoke checks passed for `/Users/stephenwalker/.local/bin/grok --help`, `models`, `test hello`, and command help for `tasks`, `skills`, `agents`, `workspaces`, and `files`.
+
+## Pre-Execution Shape
+
+Before this decomposition, the CLI target mixed several concerns:
 
 - Top-level command routing
 - Interactive chat loop routing
@@ -22,7 +54,7 @@ The CLI target currently mixes several concerns:
 - Credential storage and cookie extraction
 - Command-specific parsing for tasks, skills, agents, files, and workspaces
 
-`Sources/GrokCLI/GrokCLI.swift` is the main pressure point. It contains the core router, the chat loop, stream rendering, terminal input, app state, config management, and assorted helpers.
+`Sources/GrokCLI/GrokCLI.swift` was the main pressure point. It contained the core router, the chat loop, stream rendering, terminal input, app state, config management, and assorted helpers.
 
 ## Target Directory Structure
 
@@ -500,11 +532,10 @@ Owns shared table-ish row and summary helpers.
 
 Move here:
 
-- generic `printRows`
-- generic `printSummary`
-- `RowColumn`
-- generic JSON pretty printing if not kept command-specific
-- mirror fallback helpers if still needed
+- JSON pretty printing
+- labeled summary printing
+- JSON-backed value extraction helpers
+- status and schedule formatting helpers
 
 This should replace repeated summary helpers over time, but avoid making it too clever in the first migration.
 
@@ -536,7 +567,7 @@ Before moving files:
 
 No behavior changes in this phase.
 
-### Phase 1: Move Pure Presentation Code
+### Step 1: Move Pure Presentation Code
 
 Move first because it has minimal dependency on command routing.
 
@@ -726,9 +757,9 @@ Move repeated helpers:
 - option name/value parsing
 - option value reading
 - pretty JSON printing
-- generic row printing
-- generic summary printing
-- mirror fallback helpers
+- labeled summary printing
+- JSON-backed value extraction
+- status and schedule formatting helpers
 
 Adopt gradually:
 
@@ -769,7 +800,7 @@ Verify:
 - `grok message ...`
 - `grok test hello`
 
-### Phase 10: Extract Interactive Session and Top-Level Router
+### Step 10: Extract Interactive Session and Top-Level Router
 
 Create:
 

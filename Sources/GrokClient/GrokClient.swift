@@ -150,7 +150,7 @@ public struct WebSearchResult: Codable {
     public let siteName: String?
     public let description: String?
     public let citationId: String?
-    
+
     public init(url: String, title: String, preview: String, siteName: String? = nil, description: String? = nil, citationId: String? = nil) {
         self.url = url
         self.title = title
@@ -170,7 +170,7 @@ public struct XPost: Codable {
     public let profileImageUrl: String?
     public let postId: String
     public let citationId: String?
-    
+
     public init(username: String, name: String, text: String, postId: String, createTime: String? = nil, profileImageUrl: String? = nil, citationId: String? = nil) {
         self.username = username
         self.name = name
@@ -204,7 +204,7 @@ public struct ConversationResponse: Codable {
         case isSoftStop
         case isFinal
     }
-    
+
     public init(message: String, conversationId: String, responseId: String, timestamp: Date? = nil, webSearchResults: [WebSearchResult]? = nil, xposts: [XPost]? = nil, isThinking: Bool = false, isSoftStop: Bool = false, isFinal: Bool = false) {
         self.message = message
         self.conversationId = conversationId
@@ -240,7 +240,7 @@ public struct Conversation: Codable {
     public let systemPromptName: String
     public let temporary: Bool
     public let mediaTypes: [String]
-    
+
     public init(conversationId: String, title: String, starred: Bool = false, createTime: String = "", modifyTime: String = "", systemPromptName: String = "", temporary: Bool = false, mediaTypes: [String] = []) {
         self.conversationId = conversationId
         self.title = title
@@ -258,7 +258,7 @@ public struct ResponseNode: Codable {
     public let responseId: String
     public let sender: String
     public let parentResponseId: String?
-    
+
     public init(responseId: String, sender: String, parentResponseId: String? = nil) {
         self.responseId = responseId
         self.sender = sender
@@ -273,7 +273,7 @@ public struct Response: Codable {
     public let sender: String
     public let createTime: String
     public let parentResponseId: String?
-    
+
     public init(responseId: String, message: String, sender: String, createTime: String, parentResponseId: String? = nil) {
         self.responseId = responseId
         self.message = message
@@ -288,7 +288,7 @@ public struct ConversationsResponse: Codable {
     public let conversations: [Conversation]
     public let nextPageToken: String?
     public let textSearchMatches: [String]
-    
+
     public init(conversations: [Conversation], nextPageToken: String? = nil, textSearchMatches: [String] = []) {
         self.conversations = conversations
         self.nextPageToken = nextPageToken
@@ -329,14 +329,14 @@ internal struct ResponseContent: Codable {
 // AnyCodable type to handle unknown types in JSON
 public struct AnyCodable: Codable {
     public let value: Any
-    
+
     public init(_ value: Any) {
         self.value = value
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
-        
+
         if container.decodeNil() {
             self.value = NSNull()
         } else if let bool = try? container.decode(Bool.self) {
@@ -358,7 +358,7 @@ public struct AnyCodable: Codable {
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
-        
+
         switch self.value {
         case is NSNull:
             try container.encodeNil()
@@ -659,6 +659,11 @@ public struct GrokAssetsResponse: Codable {
     public let rawJSON: AnyCodable
 }
 
+public struct GrokFileMutationResponse: Codable {
+    public let asset: GrokAsset?
+    public let rawJSON: AnyCodable
+}
+
 public struct GrokConversationV2Response: Codable {
     public let conversationId: String?
     public let rawJSON: AnyCodable
@@ -711,16 +716,16 @@ internal struct ModelResponse: Codable {
     let parentResponseId: String?
     let webSearchResults: [WebSearchResultInternal]?
     let xposts: [XPostInternal]?
-    
+
     // Helper functions to convert internal models to public models
     func extractWebSearchResults() -> [WebSearchResult]? {
         guard let results = webSearchResults else { return nil }
-        
+
         // Filter out empty results and convert to public model
         return results.compactMap { result in
             // Skip empty URL entries
             guard !result.url.isEmpty else { return nil }
-            
+
             return WebSearchResult(
                 url: result.url,
                 title: result.title,
@@ -734,7 +739,7 @@ internal struct ModelResponse: Codable {
 
     func extractXPosts() -> [XPost]? {
         guard let posts = xposts else { return nil }
-        
+
         // Filter out empty posts and convert to public model
         return posts.compactMap { post in
             guard !post.username.isEmpty else { return nil }
@@ -802,11 +807,11 @@ public class GrokClient {
     }
 
     public static let defaultModeId = GrokMode.defaultMode.id
-    
+
     /// Deprecated Grok 3 server-side system prompt presets.
     ///
     /// These values are kept for source compatibility, but they are no longer
-    /// sent to Grok. Use `customInstructions`/`customPersonality` instead.
+    /// sent to Grok. Configure instructions in Grok agent settings instead.
     public enum PersonalityType: String, CaseIterable {
         case romance = "grok3_personality_romance_me"
         case medicalAdvisor = "grok3_personality_medical_advisor"
@@ -816,7 +821,7 @@ public class GrokClient {
         case homeworkHelper = "grok3_personality_homework_helper"
         case trustedTherapist = "grok3_personality_trusted_therapist"
         case none = ""
-        
+
         public var displayName: String {
             switch self {
             case .romance: return "Romance Me"
@@ -829,7 +834,7 @@ public class GrokClient {
             case .none: return "Default (No Personality)"
             }
         }
-        
+
         public var description: String {
             switch self {
             case .romance: return "A flirty and romantic personality"
@@ -843,7 +848,7 @@ public class GrokClient {
             }
         }
     }
-    
+
     private static func normalizedBaseURLs(from configuredBaseURL: String?) -> (appChat: String, root: String) {
         let rawBaseURL = configuredBaseURL
             ?? ProcessInfo.processInfo.environment["GROK_BASE_URL"]
@@ -888,7 +893,7 @@ public class GrokClient {
             self.session = injectedSession
             return
         }
-        
+
         // #if os(Linux)
         //     // Linux: URLSession cookie support is limited, so skip setting cookies.
         //     self.session = URLSession(configuration: .default)
@@ -909,14 +914,14 @@ public class GrokClient {
         self.session = URLSession(configuration: configuration)
         // #endif
     }
-    
+
     /// Prepares the default payload with the user's message
     /// - Parameters:
     ///   - message: The user's input message
-    ///   - enableReasoning: Whether to enable reasoning mode (cannot be used with deepSearch)
-    ///   - enableDeepSearch: Whether to enable deep search (cannot be used with reasoning)
-    ///   - disableSearch: Whether to disable web search entirely (separate from deepSearch)
-    ///   - customInstructions: Optional custom instructions for the model, empty string to disable
+    ///   - enableReasoning: Whether to enable reasoning mode.
+    ///   - enableDeepSearch: Deprecated and ignored since Grok 4; deep research is no longer a Grok web feature.
+    ///   - disableSearch: Deprecated and ignored since Grok 4; search is automatic and no longer configurable.
+    ///   - customInstructions: Deprecated and ignored; configure instructions in Grok agent settings instead.
     ///   - temporary: Whether the message and thread should not be saved (private mode)
     ///   - personalityType: Deprecated; retained for source compatibility and no longer sent to Grok.
     /// - Returns: A dictionary representing the payload
@@ -933,17 +938,12 @@ public class GrokClient {
         workspaceIds: [String] = [],
         disabledConnectorIds: [String] = []
     ) -> [String: Any] {
-        if enableReasoning && enableDeepSearch {
-            print("Warning: Both reasoning and deep search enabled. Deep search will be ignored.")
-        }
-        
 	    var payload: [String: Any] = [
 	        "temporary": temporary,
 	        "message": message,
             "modeId": modeId,
 	        "imageAttachments": [],
             "fileAttachments": fileAttachments,
-	        "disableSearch": disableSearch,
 	        "enableImageGeneration": true,
 	        "returnImageBytes": false,
 	        "returnRawGrokInXaiRequest": false,
@@ -967,10 +967,6 @@ public class GrokClient {
             payload["workspaceIds"] = workspaceIds
         }
 
-        if !customInstructions.isEmpty {
-            payload["customPersonality"] = customInstructions
-        }
-        
         return payload
     }
 
@@ -1163,6 +1159,9 @@ public class GrokClient {
 
     private func intValue(_ dictionary: [String: AnyCodable], keys: [String]) -> Int? {
         for key in keys {
+            if let value = dictionary[key]?.value as? Bool {
+                return value ? 1 : 0
+            }
             if let value = dictionary[key]?.value as? Int {
                 return value
             }
@@ -1255,11 +1254,17 @@ public class GrokClient {
             return nil
         }
 
+        let nestedAgent = dictionary["agent"] as? JSONDictionary
+        let nestedAgentJSON = nestedAgent.map { anyCodableDictionary($0) }
         let defaultName = GrokAgentCustomization.defaultName(for: agentId)
         return GrokAgentCustomization(
             agentId: agentId,
-            name: stringValue(rawJSON, keys: ["name"]) ?? defaultName,
-            instructions: stringValue(rawJSON, keys: ["instructions", "customInstructions", "custom_instructions"]) ?? ""
+            name: stringValue(rawJSON, keys: ["name"]) ??
+                nestedAgentJSON.flatMap { stringValue($0, keys: ["name"]) } ??
+                defaultName,
+            instructions: stringValue(rawJSON, keys: ["instructions", "customInstructions", "custom_instructions"]) ??
+                nestedAgentJSON.flatMap { stringValue($0, keys: ["instructions", "customInstructions", "custom_instructions"]) } ??
+                ""
         )
     }
 
@@ -1276,7 +1281,7 @@ public class GrokClient {
     private func agentCustomizationDictionaries(from value: Any) -> [JSONDictionary] {
         if let array = value as? [JSONDictionary],
            array.contains(where: { dictionary in
-               dictionary["agentId"] != nil || dictionary["agent_id"] != nil
+               dictionary["agentId"] != nil || dictionary["agent_id"] != nil || dictionary["id"] != nil
            }) {
             return array
         }
@@ -1284,7 +1289,7 @@ public class GrokClient {
         if let array = value as? [Any] {
             let dictionaries = array.compactMap { $0 as? JSONDictionary }
             if dictionaries.contains(where: { dictionary in
-                dictionary["agentId"] != nil || dictionary["agent_id"] != nil
+                dictionary["agentId"] != nil || dictionary["agent_id"] != nil || dictionary["id"] != nil
             }) {
                 return dictionaries
             }
@@ -1796,10 +1801,10 @@ public class GrokClient {
     /// Sends a message to Grok and returns a streaming response
     /// - Parameters:
     ///   - message: The user's input message
-    ///   - enableReasoning: Whether to enable reasoning mode (cannot be used with deepSearch)
-    ///   - enableDeepSearch: Whether to enable deep search (cannot be used with reasoning)
-    ///   - disableSearch: Whether to disable web search entirely (separate from deepSearch)
-    ///   - customInstructions: Optional custom instructions, defaults to empty string (no instructions)
+    ///   - enableReasoning: Whether to enable reasoning mode.
+    ///   - enableDeepSearch: Deprecated and ignored since Grok 4; deep research is no longer a Grok web feature.
+    ///   - disableSearch: Deprecated and ignored since Grok 4; search is automatic and no longer configurable.
+    ///   - customInstructions: Deprecated and ignored; configure instructions in Grok agent settings instead.
     ///   - temporary: Whether the message and thread should not be saved (private mode), defaults to false
     ///   - personalityType: Deprecated; retained for source compatibility and no longer sent to Grok.
     /// - Returns: An async stream of conversation responses from Grok
@@ -1892,16 +1897,16 @@ public class GrokClient {
 
         throw GrokError.streamingError
     }
-    
+
     /// Sends a message to an existing conversation
     /// - Parameters:
     ///   - conversationId: The ID of the conversation to continue
     ///   - parentResponseId: The ID of the response this message is replying to (optional)
     ///   - message: The user's input message
     ///   - enableReasoning: Whether to enable reasoning mode
-    ///   - enableDeepSearch: Whether to enable deep search
-    ///   - disableSearch: Whether to disable web search entirely (separate from deepSearch)
-    ///   - customInstructions: Optional custom instructions
+    ///   - enableDeepSearch: Deprecated and ignored since Grok 4; deep research is no longer a Grok web feature.
+    ///   - disableSearch: Deprecated and ignored since Grok 4; search is automatic and no longer configurable.
+    ///   - customInstructions: Deprecated and ignored; configure instructions in Grok agent settings instead.
     ///   - temporary: Whether the message and thread should not be saved (private mode), defaults to false
     ///   - personalityType: Deprecated; retained for source compatibility and no longer sent to Grok.
     /// - Returns: A tuple with the complete response, response ID, web search results, and X posts
@@ -1941,21 +1946,21 @@ public class GrokClient {
         let request = try makeRequest(path: "/conversations/\(conversationId)/responses", payload: payload)
         return try await streamResponses(for: request, initialConversationId: conversationId)
     }
-    
+
     /// Fetch a list of past conversations
     /// - Parameter pageSize: The number of conversations to fetch (default 100)
     /// - Returns: An array of Conversation objects
     /// - Throws: Network, decoding, or API errors
     public func listConversations(pageSize: Int = 100) async throws -> [Conversation] {
         let request = try makeRequest(path: "/conversations?pageSize=\(pageSize)", method: "GET")
-        
+
         if isDebug {
             print("Debug URL: \(request.url?.absoluteString ?? "")")
         }
-        
+
         let (data, response) = try await session.data(for: request)
         try validateHTTPResponse(response, data: data)
-        
+
         if isDebug {
             if let jsonString = String(data: data, encoding: .utf8) {
                 print("Debug: Raw JSON response:")
@@ -1966,7 +1971,7 @@ public class GrokClient {
                 }
             }
         }
-        
+
         let decoder = JSONDecoder()
         do {
             // new API format
@@ -1977,25 +1982,25 @@ public class GrokClient {
             return try decoder.decode([Conversation].self, from: data)
         }
     }
-    
+
     /// Get the response nodes for a conversation
     public func getResponseNodes(conversationId: String) async throws -> [ResponseNode] {
         let request = try makeRequest(path: "/conversations/\(conversationId)/response-node", method: "GET")
-        
+
         if isDebug {
             print("Debug URL: \(request.url?.absoluteString ?? "")")
         }
-        
+
         let (data, response) = try await session.data(for: request)
         try validateHTTPResponse(response, data: data)
-        
+
         if isDebug {
             if let jsonString = String(data: data, encoding: .utf8) {
                 print("Debug: Response JSON from response-node:")
                 print(jsonString)
             }
         }
-        
+
         let decoder = JSONDecoder()
         do {
             // common wrapper keys
@@ -2008,7 +2013,7 @@ public class GrokClient {
             struct ResponsesWrapper: Codable {
                 let responses: [ResponseNode]
             }
-            
+
             do {
                 let wrapper = try decoder.decode(ResponseNodesWrapper.self, from: data)
                 return wrapper.responseNodes
@@ -2051,7 +2056,7 @@ public class GrokClient {
             throw GrokError.decodingError(error)
         }
     }
-    
+
     /// Load the detailed responses for a conversation
     /// - Parameter conversationId: The ID of the conversation
     /// - Parameter specificResponseIds: Optional array of specific response IDs to load, if nil will fetch all
@@ -2059,7 +2064,7 @@ public class GrokClient {
     /// - Throws: Network, decoding, or API errors
     public func loadResponses(conversationId: String, specificResponseIds: [String]? = nil) async throws -> [Response] {
         var responseIds: [String] = []
-        
+
         if let specificIds = specificResponseIds, !specificIds.isEmpty {
             responseIds = specificIds
         } else {
@@ -2075,33 +2080,33 @@ public class GrokClient {
                 }
             }
         }
-        
+
         var requestBody: [String: Any] = [:]
         if !responseIds.isEmpty {
             requestBody["responseIds"] = responseIds
         }
-        
+
         let request = try makeRequest(path: "/conversations/\(conversationId)/load-responses", payload: requestBody)
-        
+
         if isDebug {
             print("Debug URL: \(request.url?.absoluteString ?? "")")
         }
-        
+
         let (data, response) = try await session.data(for: request)
         try validateHTTPResponse(response, data: data)
-        
+
         if isDebug {
             if let jsonString = String(data: data, encoding: .utf8) {
                 print("Debug: Response JSON:")
                 print(jsonString)
             }
         }
-        
+
         let decoder = JSONDecoder()
         struct ResponsesWrapper: Codable {
             let responses: [Response]
         }
-        
+
         do {
             let wrapper = try decoder.decode(ResponsesWrapper.self, from: data)
             return wrapper.responses
@@ -2352,6 +2357,15 @@ public class GrokClient {
         orderBy: String = "ORDER_BY_LAST_USE_TIME"
     ) async throws -> [GrokAsset] {
         try await listAssetsResponse(pageSize: pageSize, orderBy: orderBy).assets
+    }
+
+    public func deleteAsset(assetId: String) async throws -> GrokFileMutationResponse {
+        let encodedId = assetId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? assetId
+        let request = try makeRequest(path: "/assets/\(encodedId)", method: "DELETE", namespace: .root)
+        let json = try await jsonObject(for: request)
+        let asset = firstDictionary(from: json, preferredKeys: ["asset", "file", "data", "result"])
+            .map { makeAsset(from: $0) }
+        return GrokFileMutationResponse(asset: asset, rawJSON: AnyCodable(json))
     }
 
     public func createWorkspace(

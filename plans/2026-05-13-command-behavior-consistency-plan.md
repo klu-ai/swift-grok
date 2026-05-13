@@ -227,7 +227,7 @@ Tasks:
 - [ ] Ensure `--json`, `--debug`, and group-specific flags such as `--replace` do not swallow help in surprising ways.
 - [ ] For unsupported agent verbs (`show`, `get`, `create`, `add`, `delete`, `remove`), print a clear unknown-command error plus the group usage.
 - [ ] Decide whether `grok agents show <id>` should be added as an alias for listing one agent:
-  - Recommended for this pass: do not add new API behavior; only clarify unsupported commands.
+  - Recommended for this pass: do not add new API behavior; only clarify command boundaries.
 
 Dependencies:
 

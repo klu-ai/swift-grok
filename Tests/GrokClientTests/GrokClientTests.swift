@@ -6,23 +6,23 @@
 //
 
 import XCTest
-@testable import GrokClient 
+@testable import GrokClient
 
 final class GrokClientTests: XCTestCase {
     // MARK: - Model Tests
-    
+
     func testGrokErrorEquatable() {
         let error1: GrokError = .invalidCredentials
         let error2: GrokError = .invalidCredentials
         let error3: GrokError = .unauthorized
         let error4: GrokError = .apiError("Something went wrong")
         let error5: GrokError = .apiError("Something went wrong")
-        
+
         XCTAssertTrue(error1 == error2, "Expected .invalidCredentials to be equal.")
         XCTAssertFalse(error2 == error3, "Expected .invalidCredentials and .unauthorized to differ.")
         XCTAssertTrue(error4 == error5, "Matching .apiError messages should be equal.")
     }
-    
+
     func testMessageResponseDecoding() throws {
         let json = """
         {
@@ -30,12 +30,12 @@ final class GrokClientTests: XCTestCase {
           "timestamp": 1742045040
         }
         """.data(using: .utf8)!
-        
+
         let decoded = try JSONDecoder().decode(MessageResponse.self, from: json)
         XCTAssertEqual(decoded.message, "Hello world")
         XCTAssertNotNil(decoded.timestamp)
     }
-    
+
     func testWebSearchResultDecoding() throws {
         let json = """
         {
@@ -47,13 +47,13 @@ final class GrokClientTests: XCTestCase {
             "citationId": "abc123"
         }
         """.data(using: .utf8)!
-        
+
         let decoded = try JSONDecoder().decode(WebSearchResult.self, from: json)
         XCTAssertEqual(decoded.url, "https://example.com")
         XCTAssertEqual(decoded.title, "Example Site")
         XCTAssertEqual(decoded.citationId, "abc123")
     }
-    
+
     func testXPostDecoding() throws {
         let json = """
         {
@@ -66,13 +66,13 @@ final class GrokClientTests: XCTestCase {
             "citationId": "def456"
         }
         """.data(using: .utf8)!
-        
+
         let decoded = try JSONDecoder().decode(XPost.self, from: json)
         XCTAssertEqual(decoded.username, "testUser")
         XCTAssertEqual(decoded.postId, "xyz789")
         XCTAssertEqual(decoded.citationId, "def456")
     }
-    
+
     func testConversationResponseDecoding() throws {
         let json = """
         {
@@ -99,14 +99,14 @@ final class GrokClientTests: XCTestCase {
           "isFinal": true
         }
         """.data(using: .utf8)!
-        
+
         let decoded = try JSONDecoder().decode(ConversationResponse.self, from: json)
         XCTAssertEqual(decoded.conversationId, "convo123")
         XCTAssertEqual(decoded.responseId, "resp456")
         XCTAssertEqual(decoded.webSearchResults?.count, 1)
         XCTAssertEqual(decoded.xposts?.count, 1)
     }
-    
+
     func testConversationDecoding() throws {
         let json = """
         {
@@ -120,14 +120,14 @@ final class GrokClientTests: XCTestCase {
           "mediaTypes": ["text","image"]
         }
         """.data(using: .utf8)!
-        
+
         let decoded = try JSONDecoder().decode(Conversation.self, from: json)
         XCTAssertEqual(decoded.conversationId, "abc123")
         XCTAssertEqual(decoded.title, "Test Conversation")
         XCTAssertTrue(decoded.starred)
         XCTAssertEqual(decoded.mediaTypes.count, 2)
     }
-    
+
     func testResponseNodeDecoding() throws {
         let json = """
         {
@@ -136,13 +136,13 @@ final class GrokClientTests: XCTestCase {
           "parentResponseId": "parent999"
         }
         """.data(using: .utf8)!
-        
+
         let decoded = try JSONDecoder().decode(ResponseNode.self, from: json)
         XCTAssertEqual(decoded.responseId, "resp123")
         XCTAssertEqual(decoded.sender, "user")
         XCTAssertEqual(decoded.parentResponseId, "parent999")
     }
-    
+
     func testResponseDecoding() throws {
         let json = """
         {
@@ -153,13 +153,13 @@ final class GrokClientTests: XCTestCase {
           "parentResponseId": null
         }
         """.data(using: .utf8)!
-        
+
         let decoded = try JSONDecoder().decode(Response.self, from: json)
         XCTAssertEqual(decoded.responseId, "resp123")
         XCTAssertEqual(decoded.sender, "user")
         XCTAssertNil(decoded.parentResponseId)
     }
-    
+
     func testConversationsResponseDecoding() throws {
         let json = """
         {
@@ -179,12 +179,12 @@ final class GrokClientTests: XCTestCase {
           "textSearchMatches": []
         }
         """.data(using: .utf8)!
-        
+
         let decoded = try JSONDecoder().decode(ConversationsResponse.self, from: json)
         XCTAssertEqual(decoded.conversations.count, 1)
         XCTAssertEqual(decoded.nextPageToken, "nextPage")
     }
-    
+
     func testExtractWebSearchResults() {
         let modelResponse = ModelResponse(
             message: "Example",
@@ -222,13 +222,13 @@ final class GrokClientTests: XCTestCase {
             ],
             xposts: nil
         )
-        
+
         let results = modelResponse.extractWebSearchResults()
         XCTAssertEqual(results?.count, 1, "Expected to ignore empty URL entries.")
         XCTAssertEqual(results?.first?.url, "https://example.com")
         XCTAssertEqual(results?.first?.title, "Example")
     }
-    
+
     func testExtractXPosts() {
         let modelResponse = ModelResponse(
             message: "XPost Example",
@@ -258,34 +258,35 @@ final class GrokClientTests: XCTestCase {
                 )
             ]
         )
-        
+
         let results = modelResponse.extractXPosts()
         XCTAssertEqual(results?.count, 1, "Expected to ignore empty username entries.")
         XCTAssertEqual(results?.first?.username, "stephen")
     }
-    
+
     // MARK: - GrokClient Tests
-    
+
     func testPreparePayload() {
         let cookies = ["x-anonuserid": "123", "sso": "abc"]
         let client = try? GrokClient(cookies: cookies)
         XCTAssertNotNil(client)
-        
+
         let payload = client!.preparePayload(
             message: "test",
             enableReasoning: true,
-            enableDeepSearch: false,
-            disableSearch: false,
+            enableDeepSearch: true,
+            disableSearch: true,
             customInstructions: "Custom instructions",
             temporary: true,
             personalityType: .romance,
             modeId: GrokMode.expert.id
         )
-        
+
         XCTAssertEqual(payload["message"] as? String, "test")
         XCTAssertEqual(payload["modeId"] as? String, "expert")
-        XCTAssertEqual(payload["customPersonality"] as? String, "Custom instructions")
+        XCTAssertNil(payload["customPersonality"])
         XCTAssertNil(payload["systemPromptName"])
+        XCTAssertNil(payload["disableSearch"])
     }
 
     func testGrokModeAliases() {
@@ -294,7 +295,7 @@ final class GrokClientTests: XCTestCase {
         XCTAssertEqual(GrokMode.resolve("grok-4.3-beta").id, "grok-420-computer-use-sa")
         XCTAssertEqual(GrokMode.resolve("new-web-mode").id, "new-web-mode")
     }
-    
+
     func testInitGrokClient_withValidCookies() {
         let cookies = [
             "x-anonuserid": "testUserId",
@@ -302,10 +303,10 @@ final class GrokClientTests: XCTestCase {
             "x-signature": "testSignature",
             "sso": "testSso"
         ]
-        
+
         XCTAssertNoThrow(try GrokClient(cookies: cookies))
     }
-    
+
     func testInitGrokClient_withEmptyCookies() {
         do {
             _ = try GrokClient(cookies: [:])
@@ -316,9 +317,9 @@ final class GrokClientTests: XCTestCase {
             XCTFail("Unexpected error: \(error)")
         }
     }
-    
+
     // Below tests demonstrate the network calls with a basic mock. In practice, replace the mock responses with more rigorous tests.
-    
+
     func testListConversations_success() async throws {
         let mockData = """
         {
@@ -338,26 +339,26 @@ final class GrokClientTests: XCTestCase {
           "textSearchMatches": []
         }
         """.data(using: .utf8)!
-        
+
         let mockSession = makeMockSession(data: mockData, statusCode: 200)
         let cookies = ["test": "cookieVal", "x-anonuserid": "test123"]
         let client = try GrokClient(cookies: cookies, session: mockSession)
-        
+
         let conversations = try await client.listConversations()
         XCTAssertEqual(conversations.count, 1)
         XCTAssertEqual(conversations.first?.conversationId, "111")
     }
-    
+
     func testSendMessage_success() async throws {
         let streamingData = """
         {"result":{"conversation":{"conversationId":"convo123"},"response":{"responseId":"resp777","token":"Hello "}}}
         {"result":{"response":{"responseId":"resp777","token":"World"}}}
         {"result":{"response":{"modelResponse":{"message":"Hello World","responseId":"resp777"}}}}
         """.data(using: .utf8)!
-        
+
         let mockSession = makeMockSession(data: streamingData, statusCode: 200, useStreaming: true)
         let client = try GrokClient(cookies: ["x-anonuserid":"123"], session: mockSession)
-        
+
         let response = try await client.sendMessage(message: "Hi Grok")
         XCTAssertEqual(response.message, "Hello World")
         XCTAssertEqual(response.conversationId, "convo123")
@@ -443,15 +444,15 @@ final class GrokClientTests: XCTestCase {
         XCTAssertEqual(responses[3].message, "long silky black hair")
         XCTAssertTrue(responses[3].isFinal)
     }
-    
+
     func testContinueConversation_success() async throws {
         let streamingData = """
         {"result":{"responseId":"resp888","modelResponse":{"message":"Continued","responseId":"resp888"}}}
         """.data(using: .utf8)!
-        
+
         let mockSession = makeMockSession(data: streamingData, statusCode: 200, useStreaming: true)
         let client = try GrokClient(cookies: ["x-anonuserid":"123"], session: mockSession)
-        
+
         let stream = try await client.continueConversation(
             conversationId: "convo123",
             parentResponseId: "resp777",
@@ -464,13 +465,13 @@ final class GrokClientTests: XCTestCase {
                 finalResponse = response
             }
         }
-        
+
         XCTAssertEqual(finalResponse?.message, "Continued")
         XCTAssertEqual(finalResponse?.responseId, "resp888")
         XCTAssertNil(finalResponse?.webSearchResults)
         XCTAssertNil(finalResponse?.xposts)
     }
-    
+
     func testGetResponseNodes_success() async throws {
         let mockData = """
         {
@@ -483,15 +484,15 @@ final class GrokClientTests: XCTestCase {
           ]
         }
         """.data(using: .utf8)!
-        
+
         let mockSession = makeMockSession(data: mockData, statusCode: 200)
         let client = try GrokClient(cookies: ["x-anonuserid":"123"], session: mockSession)
-        
+
         let nodes = try await client.getResponseNodes(conversationId: "convoABC")
         XCTAssertEqual(nodes.count, 1)
         XCTAssertEqual(nodes.first?.responseId, "r1")
     }
-    
+
     func testLoadResponses_success() async throws {
         let mockData = """
         {
@@ -505,29 +506,29 @@ final class GrokClientTests: XCTestCase {
           ]
         }
         """.data(using: .utf8)!
-        
+
         let mockSession = makeMockSession(data: mockData, statusCode: 200)
         let client = try GrokClient(cookies: ["x-anonuserid":"123"], session: mockSession)
-        
+
         let responses = try await client.loadResponses(conversationId: "convoXYZ")
         XCTAssertEqual(responses.count, 1)
         XCTAssertEqual(responses.first?.responseId, "resp001")
         XCTAssertEqual(responses.first?.message, "Loaded")
     }
-    
+
     // MARK: - Helpers
-    
+
     private func makeMockSession(data: Data, statusCode: Int, useStreaming: Bool = false, chunkDelay: TimeInterval = 0.01) -> URLSession {
         let url = URL(string: "https://mocked.url")!
         let response = HTTPURLResponse(url: url, statusCode: statusCode, httpVersion: nil, headerFields: nil)!
-        
+
         let protocolClass: AnyClass = useStreaming ? StreamingURLProtocol.self : MockURLProtocol.self
-        
+
         // Register custom protocol
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [protocolClass]
         let session = URLSession(configuration: config)
-        
+
         // Provide the static response
         if let streamingProto = protocolClass as? StreamingURLProtocol.Type {
             streamingProto.mockData = data
@@ -537,7 +538,7 @@ final class GrokClientTests: XCTestCase {
             mockProto.mockData = data
             mockProto.mockResponse = response
         }
-        
+
         return session
     }
 }
@@ -547,10 +548,10 @@ final class GrokClientTests: XCTestCase {
 class MockURLProtocol: URLProtocol {
     static var mockData: Data?
     static var mockResponse: URLResponse?
-    
+
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-    
+
     override func startLoading() {
         if let response = MockURLProtocol.mockResponse {
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
@@ -560,7 +561,7 @@ class MockURLProtocol: URLProtocol {
         }
         client?.urlProtocolDidFinishLoading(self)
     }
-    
+
     override func stopLoading() {}
 }
 
@@ -570,17 +571,17 @@ class StreamingURLProtocol: URLProtocol {
     static var mockResponse: URLResponse?
     static var chunkDelay: TimeInterval = 0.01
     private var stopped = false
-    
+
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-    
+
     override func startLoading() {
         guard let response = StreamingURLProtocol.mockResponse else {
             client?.urlProtocolDidFinishLoading(self)
             return
         }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        
+
         guard let data = StreamingURLProtocol.mockData else {
             client?.urlProtocolDidFinishLoading(self)
             return
@@ -602,7 +603,7 @@ class StreamingURLProtocol: URLProtocol {
             self.client?.urlProtocolDidFinishLoading(self)
         }
     }
-    
+
     override func stopLoading() {
         stopped = true
     }

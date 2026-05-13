@@ -92,18 +92,67 @@ Send one message and exit:
 grok message explain Swift actors in one paragraph
 ```
 
+Use stdin or a prompt file for longer prompts:
+
+```bash
+cat prompt.md | grok message --raw --quiet
+grok message --raw --quiet --prompt-file prompt.md
+```
+
 Useful options:
 
 ```bash
 grok --reasoning solve this step by step
-grok --deep-search latest Swift server ecosystem news
-grok --no-search summarize this without live web data
 grok --markdown write a checklist for release testing
 grok --raw show me the source Markdown
 grok --format raw show me the source Markdown
 grok --stream draft the answer as it arrives
-grok --no-custom-instructions ignore my saved custom instructions
+grok message --raw --quiet print only the answer text
 grok --private ask without saving the conversation
+```
+
+Search is automatic in Grok 4 and has no CLI toggle.
+Instructions are configured in Grok agent settings, not through a separate local custom-instructions toggle.
+
+Human mode may print status text and terminal UI on stdout. JSON mode reserves stdout for JSON. For scriptable plain text, use `grok message --raw --quiet`; progress, warnings, debug output, and errors are kept off stdout.
+
+`grok message` uses exactly one prompt source: inline message arguments, `--prompt-file <path>`, or stdin. If no inline message or prompt file is supplied and stdin is piped, stdin is used automatically. `--stdin` is also available when you want to make that choice explicit.
+
+## JSON Output
+
+JSON mode reserves stdout for machine-readable JSON. Human progress/status banners are suppressed so stdout can be piped safely to tools such as `jq`; the `--debug` flag is reflected in result metadata instead of human debug lines.
+
+Every CLI command accepts `--json`, `--format json`, or `--format=json`:
+
+```bash
+grok message --json "summarize Swift actors in two bullets"
+grok message --format json --model expert "explain AsyncSequence"
+grok chat --format=json "explain AsyncSequence"
+grok models --json
+grok models --format json
+grok tasks list --format json
+grok tasks create --prompt "Check this tomorrow" --name "Follow up" --json
+grok list --json
+grok list --conversation <conversationId> --json
+grok auth generate --json
+grok auth import /path/to/credentials.json --json
+grok help --json
+```
+
+Non-streaming JSON commands print one JSON result object. Streaming message JSON prints newline-delimited JSON (NDJSON), one event object per line:
+
+```bash
+grok message --stream --json "draft a short release note" | jq -c '.'
+```
+
+The streamed events include request, trace, assistant delta, and final assistant response records.
+
+Authentication commands support JSON for generate/import results and can still consume credential JSON:
+
+```bash
+grok auth
+grok auth chrome --json
+grok auth import /path/to/credentials.json --json
 ```
 
 ## Models And Modes
@@ -135,9 +184,9 @@ Known aliases include `auto`, `fast`, `expert`, `grok-4.3-beta`, and `heavy`. Yo
 
 ## Agents
 
-The `grok agents` command group manages Grok's four server-side agent personalities.
+The `grok agents` command group manages Grok's server-side agent settings. Basic accounts usually expose one agent; SuperGrok accounts can expose four customizable agents.
 
-List current customizations. If the account has no saved customizations, the CLI shows the built-in IDs:
+List current customizations:
 
 ```bash
 grok agents
@@ -147,12 +196,13 @@ grok agents list
 Set one agent's display name and instructions:
 
 ```bash
+grok agents show 1
+grok agents edit 1
 grok agents set 1 --name "Grok II" --instructions "Offer the skeptical read."
 grok agents set 0 --instructions "Answer briefly and directly."
-grok agents sync-custom
 ```
 
-Agent `0` is always named `Grok` and uses the old custom-instructions role. The CLI fetches current settings before updating one agent so the other agent personalities are preserved.
+The CLI fetches current settings before showing or updating one agent, then posts the full agent settings payload back so the other agent settings are preserved.
 
 ## Workspaces, Tasks, Skills, And Files
 
@@ -197,6 +247,14 @@ List and resume saved conversations:
 grok list
 ```
 
+Inside interactive chat, `/list` loads the selected conversation. The next message continues that conversation using the loaded parent response.
+
+For a cleaner piped multi-message session, use raw quiet chat:
+
+```bash
+printf 'first prompt\nsecond prompt\n/quit\n' | grok chat --raw --quiet
+```
+
 Interactive chat commands:
 
 ```text
@@ -204,16 +262,11 @@ Interactive chat commands:
 /help
 /list
 /reason
-/search
-/realtime
 /model expert
 /format raw
 /raw on
 /private
 /stream
-/custom-instructions
-/edit-instructions
-/reset-instructions
 /auth
 /agents
 /tasks
@@ -226,8 +279,6 @@ Interactive chat commands:
 ```
 
 In interactive chat, `/agents`, `/tasks`, `/skills`, `/workspaces`, and `/files` list by default. `/workspace`, `/attach`, and `/model` open pickers. Slash command groups are preferred for command-style input; unknown slash commands show an error, while unknown bare text is sent as chat.
-
-`/personality` remains as a deprecated Grok 3 compatibility command and now points users to custom instructions instead.
 
 ## Swift Package Usage
 

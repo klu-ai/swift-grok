@@ -6,19 +6,24 @@ extension GrokCLI {
     static func handleWorkspacesCommand(args: [String], exitOnError: Bool = false) async throws {
         let app = GrokCLIApp.shared
         let debug = args.contains("--debug")
+        let jsonRequested = isJSONRequested(args)
 
         let parsed: ParsedWorkspaceCommand
         do {
             parsed = try parseWorkspaceCommand(args: args)
         } catch {
-            await app.handleError(error, debug: debug)
+            if jsonRequested {
+                printJSONError(command: "workspaces", error: error, exitCode: 2, debug: debug)
+            } else {
+                await app.handleError(error, debug: debug)
+            }
             if exitOnError {
                 GrokCLI.exit(with: 2)
             }
             return
         }
 
-        app.setDebugMode(parsed.debug)
+        app.setDebugMode(parsed.debug && !parsed.json)
         if case .help(let usage) = parsed.action {
             print(usage)
             return
@@ -30,7 +35,17 @@ extension GrokCLI {
             case .list:
                 let response = try await client.listWorkspacesResponse()
                 if parsed.json {
-                    try printWorkspaceJSON(response.rawJSON)
+                    try printJSONResult(
+                        command: "workspaces",
+                        subcommand: "list",
+                        category: "resource_list",
+                        data: AnyCodable(resourceListJSON(
+                            resource: "workspace",
+                            items: response.workspaces.map { AnyCodable(workspaceJSON($0)) },
+                            raw: response.rawJSON
+                        )),
+                        debug: parsed.debug
+                    )
                     return
                 }
                 printWorkspaceRows(response.workspaces)
@@ -43,7 +58,19 @@ extension GrokCLI {
                     preferredModel: options.model
                 )
                 if parsed.json {
-                    try printWorkspaceJSON(response.rawJSON)
+                    try printJSONResult(
+                        command: "workspaces",
+                        subcommand: "create",
+                        category: "resource_mutation",
+                        data: AnyCodable(resourceMutationJSON(
+                            resource: "workspace",
+                            action: "create",
+                            id: response.workspace?.workspaceId ?? response.workspace?.id,
+                            item: response.workspace.map { AnyCodable(workspaceJSON($0)) },
+                            raw: response.rawJSON
+                        )),
+                        debug: parsed.debug
+                    )
                     return
                 }
                 print("Created workspace".green.bold)
@@ -57,7 +84,20 @@ extension GrokCLI {
                     conversationId: conversationId
                 )
                 if parsed.json {
-                    try printWorkspaceJSON(response.rawJSON)
+                    try printJSONResult(
+                        command: "workspaces",
+                        subcommand: "add-conversation",
+                        category: "resource_mutation",
+                        data: AnyCodable(resourceMutationJSON(
+                            resource: "workspace",
+                            action: "addConversation",
+                            id: workspaceId,
+                            item: response.workspace.map { AnyCodable(workspaceJSON($0)) },
+                            raw: response.rawJSON,
+                            extra: ["conversationId": AnyCodable(conversationId)]
+                        )),
+                        debug: parsed.debug
+                    )
                     return
                 }
                 print("Added conversation \(conversationId) to workspace \(workspaceId)".green)
@@ -65,7 +105,19 @@ extension GrokCLI {
             case .delete(let workspaceId):
                 let response = try await client.deleteWorkspace(workspaceId: workspaceId)
                 if parsed.json {
-                    try printWorkspaceJSON(response.rawJSON)
+                    try printJSONResult(
+                        command: "workspaces",
+                        subcommand: "delete",
+                        category: "resource_mutation",
+                        data: AnyCodable(resourceMutationJSON(
+                            resource: "workspace",
+                            action: "delete",
+                            id: workspaceId,
+                            item: response.workspace.map { AnyCodable(workspaceJSON($0)) },
+                            raw: response.rawJSON
+                        )),
+                        debug: parsed.debug
+                    )
                     return
                 }
                 print("Deleted workspace \(workspaceId)".green)
@@ -77,7 +129,16 @@ extension GrokCLI {
                     includeTaskResult: true
                 )
                 if parsed.json {
-                    try printWorkspaceJSON(response.rawJSON)
+                    try printJSONResult(
+                        command: "workspaces",
+                        subcommand: "conversation",
+                        category: "conversation_detail",
+                        data: AnyCodable([
+                            "conversationId": AnyCodable(response.conversationId ?? conversationId),
+                            "raw": response.rawJSON
+                        ]),
+                        debug: parsed.debug
+                    )
                     return
                 }
                 printConversationV2Summary(response, fallbackId: conversationId)
@@ -86,7 +147,11 @@ extension GrokCLI {
                 return
             }
         } catch {
-            await app.handleError(error, debug: debug)
+            if parsed.json {
+                printJSONError(command: "workspaces", error: error, exitCode: 1, debug: parsed.debug)
+            } else {
+                await app.handleError(error, debug: debug)
+            }
             if exitOnError {
                 GrokCLI.exit(with: 1)
             }
@@ -119,8 +184,8 @@ private extension GrokCLI {
 
     static func parseWorkspaceCommand(args: [String]) throws -> ParsedWorkspaceCommand {
         var remaining = args
-        let json = removeWorkspaceFlag("--json", from: &remaining)
-        let debug = removeWorkspaceFlag("--debug", from: &remaining)
+        let json = try CLIOptionParsing.removeJSONOutputOptions(from: &remaining)
+        let debug = CLIOptionParsing.removeFlag("--debug", from: &remaining)
 
         guard let command = remaining.first?.lowercased() else {
             return ParsedWorkspaceCommand(action: .list, json: json, debug: debug)
@@ -132,7 +197,7 @@ private extension GrokCLI {
                 return ParsedWorkspaceCommand(action: .help(workspacesListUsage), json: json, debug: debug)
             }
             guard remaining.count == 1 else {
-                throw GrokError.apiError("Usage: grok workspaces list [--json] [--debug]")
+                throw GrokError.apiError("Usage: grok workspaces list [--json|--format json] [--debug]")
             }
             return ParsedWorkspaceCommand(action: .list, json: json, debug: debug)
 
@@ -148,7 +213,7 @@ private extension GrokCLI {
                 return ParsedWorkspaceCommand(action: .help(workspacesAddConversationUsage), json: json, debug: debug)
             }
             guard remaining.count == 3 else {
-                throw GrokError.apiError("Usage: grok workspaces add-conversation <workspaceId> <conversationId> [--json] [--debug]")
+                throw GrokError.apiError("Usage: grok workspaces add-conversation <workspaceId> <conversationId> [--json|--format json] [--debug]")
             }
             return ParsedWorkspaceCommand(
                 action: .addConversation(workspaceId: remaining[1], conversationId: remaining[2]),
@@ -161,7 +226,7 @@ private extension GrokCLI {
                 return ParsedWorkspaceCommand(action: .help(workspacesDeleteUsage), json: json, debug: debug)
             }
             guard remaining.count == 2 else {
-                throw GrokError.apiError("Usage: grok workspaces delete <workspaceId> [--json] [--debug]")
+                throw GrokError.apiError("Usage: grok workspaces delete <workspaceId> [--json|--format json] [--debug]")
             }
             return ParsedWorkspaceCommand(action: .delete(workspaceId: remaining[1]), json: json, debug: debug)
 
@@ -170,7 +235,7 @@ private extension GrokCLI {
                 return ParsedWorkspaceCommand(action: .help(workspacesConversationUsage), json: json, debug: debug)
             }
             guard remaining.count == 2 else {
-                throw GrokError.apiError("Usage: grok workspaces conversation <conversationId> [--json] [--debug]")
+                throw GrokError.apiError("Usage: grok workspaces conversation <conversationId> [--json|--format json] [--debug]")
             }
             return ParsedWorkspaceCommand(action: .conversation(conversationId: remaining[1]), json: json, debug: debug)
 
@@ -192,15 +257,15 @@ private extension GrokCLI {
         while index < args.count {
             let arg = args[index]
 
-            switch workspaceOptionNameAndValue(arg) {
+            switch CLIOptionParsing.nameAndValue(arg) {
             case ("--name", let inlineValue):
-                (name, index) = try readWorkspaceOptionValue(inlineValue, args: args, index: index, option: "--name")
+                (name, index) = try CLIOptionParsing.readValue(inlineValue, args: args, index: index, option: "--name")
             case ("--icon", let inlineValue):
-                (icon, index) = try readWorkspaceOptionValue(inlineValue, args: args, index: index, option: "--icon")
+                (icon, index) = try CLIOptionParsing.readValue(inlineValue, args: args, index: index, option: "--icon")
             case ("--personality", let inlineValue):
-                (personality, index) = try readWorkspaceOptionValue(inlineValue, args: args, index: index, option: "--personality")
+                (personality, index) = try CLIOptionParsing.readValue(inlineValue, args: args, index: index, option: "--personality")
             case ("--model", let inlineValue):
-                (model, index) = try readWorkspaceOptionValue(inlineValue, args: args, index: index, option: "--model")
+                (model, index) = try CLIOptionParsing.readValue(inlineValue, args: args, index: index, option: "--model")
             default:
                 throw GrokError.apiError("Unknown option for workspaces create: \(arg)\n\(workspaceCreateUsage)")
             }
@@ -213,48 +278,6 @@ private extension GrokCLI {
         }
 
         return WorkspaceCreateOptions(name: name, icon: icon, personality: personality, model: model)
-    }
-
-    static func removeWorkspaceFlag(_ flag: String, from args: inout [String]) -> Bool {
-        let originalCount = args.count
-        args.removeAll { $0 == flag }
-        return args.count != originalCount
-    }
-
-    static func workspaceOptionNameAndValue(_ arg: String) -> (String, String?) {
-        guard let separator = arg.firstIndex(of: "=") else {
-            return (arg, nil)
-        }
-        return (String(arg[..<separator]), String(arg[arg.index(after: separator)...]))
-    }
-
-    static func readWorkspaceOptionValue(
-        _ inlineValue: String?,
-        args: [String],
-        index: Int,
-        option: String
-    ) throws -> (String, Int) {
-        if let inlineValue {
-            guard !inlineValue.isEmpty else {
-                throw GrokError.apiError("\(option) requires a value")
-            }
-            return (inlineValue, index)
-        }
-
-        let nextIndex = index + 1
-        guard nextIndex < args.count, !args[nextIndex].hasPrefix("--") else {
-            throw GrokError.apiError("\(option) requires a value")
-        }
-        return (args[nextIndex], nextIndex)
-    }
-
-    static func printWorkspaceJSON<T: Encodable>(_ value: T) throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(value)
-        if let json = String(data: data, encoding: .utf8) {
-            print(json)
-        }
     }
 
     static func printWorkspaceRows(_ workspaces: [GrokWorkspace]) {
@@ -270,13 +293,13 @@ private extension GrokCLI {
     }
 
     static func printWorkspaceSummary(_ workspace: GrokWorkspace) {
-        let raw = workspaceDictionary(from: workspace)
-        let id = workspace.workspaceId ?? workspace.id ?? workspaceString(in: raw, keys: ["workspaceId", "workspace_id", "id"])
-        let name = workspace.name ?? workspace.title ?? workspaceString(in: raw, keys: ["name", "title"])
-        let model = workspace.preferredModel ?? workspaceString(in: raw, keys: ["preferredModel", "preferred_model"])
-        let icon = workspace.icon ?? workspaceString(in: raw, keys: ["icon"])
+        let raw = jsonDictionary(from: workspace)
+        let id = workspace.workspaceId ?? workspace.id ?? stringValue(in: raw, keys: ["workspaceId", "workspace_id", "id"])
+        let name = workspace.name ?? workspace.title ?? stringValue(in: raw, keys: ["name", "title"])
+        let model = workspace.preferredModel ?? stringValue(in: raw, keys: ["preferredModel", "preferred_model"])
+        let icon = workspace.icon ?? stringValue(in: raw, keys: ["icon"])
 
-        printWorkspaceParts([
+        printLabeledParts([
             ("ID", id),
             ("Name", name),
             ("Model", model),
@@ -285,14 +308,14 @@ private extension GrokCLI {
     }
 
     static func printConversationV2Summary(_ response: GrokConversationV2Response, fallbackId: String) {
-        let raw = workspaceAnyDictionary(from: response.rawJSON)
-        let conversation = firstWorkspaceDictionary(in: raw, keys: ["conversation", "data", "result"]) ?? raw
-        let id = response.conversationId ?? workspaceString(in: conversation, keys: ["conversationId", "conversation_id", "id"]) ?? fallbackId
-        let title = workspaceString(in: conversation, keys: ["title", "name"])
-        let workspaceCount = workspaceArrayCount(in: conversation, keys: ["workspaces", "workspaceIds", "workspace_ids"])
+        let raw = anyDictionary(from: response.rawJSON)
+        let conversation = firstDictionary(in: raw, keys: ["conversation", "data", "result"]) ?? raw
+        let id = response.conversationId ?? stringValue(in: conversation, keys: ["conversationId", "conversation_id", "id"]) ?? fallbackId
+        let title = stringValue(in: conversation, keys: ["title", "name"])
+        let workspaceCount = arrayCount(in: conversation, keys: ["workspaces", "workspaceIds", "workspace_ids"])
         let hasTaskResult = conversation["taskResult"] != nil || conversation["task_result"] != nil
 
-        printWorkspaceParts([
+        printLabeledParts([
             ("Conversation", id),
             ("Title", title),
             ("Workspaces", workspaceCount.map(String.init)),
@@ -300,89 +323,34 @@ private extension GrokCLI {
         ])
     }
 
-    static func printWorkspaceParts(_ parts: [(String, String?)]) {
-        let text = parts.compactMap { label, value -> String? in
-            guard let value, !value.isEmpty else {
-                return nil
-            }
-            return "\(label): \(value)"
-        }
-
-        print(text.isEmpty ? "(no summary available)" : text.joined(separator: " | "))
-    }
-
-    static func workspaceDictionary<T: Encodable>(from value: T) -> [String: Any] {
-        guard
-            let data = try? JSONEncoder().encode(value),
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            return [:]
-        }
-        return object
-    }
-
-    static func workspaceAnyDictionary(from value: AnyCodable) -> [String: Any] {
-        workspaceDictionary(from: value)
-    }
-
-    static func workspaceString(in dictionary: [String: Any], keys: [String]) -> String? {
-        for key in keys {
-            if let value = dictionary[key] as? String, !value.isEmpty {
-                return value
-            }
-            if let value = dictionary[key] as? CustomStringConvertible {
-                return value.description
-            }
-        }
-        return nil
-    }
-
-    static func firstWorkspaceDictionary(in dictionary: [String: Any], keys: [String]) -> [String: Any]? {
-        for key in keys {
-            if let value = dictionary[key] as? [String: Any] {
-                return value
-            }
-        }
-        return nil
-    }
-
-    static func workspaceArrayCount(in dictionary: [String: Any], keys: [String]) -> Int? {
-        for key in keys {
-            if let value = dictionary[key] as? [Any] {
-                return value.count
-            }
-        }
-        return nil
-    }
-
     static var workspacesUsage: String {
         """
         Workspaces:
-          grok workspaces list [--json]
-          grok workspaces create --name <name> [--icon <icon>] [--personality <text>] [--model <mode>] [--json]
-          grok workspaces add-conversation <workspaceId> <conversationId> [--json]
-          grok workspaces delete <workspaceId> [--json]
-          grok workspaces conversation <conversationId> [--json]
+          grok workspaces list [--json|--format json]
+          grok workspaces create --name <name> [--icon <icon>] [--personality <text>] [--model <mode>] [--json|--format json]
+          grok workspaces add-conversation <workspaceId> <conversationId> [--json|--format json]
+          grok workspaces delete <workspaceId> [--json|--format json]
+          grok workspaces conversation <conversationId> [--json|--format json]
         """
     }
 
     static var workspaceCreateUsage: String {
-        "Usage: grok workspaces create --name <name> [--icon <icon>] [--personality <text>] [--model <mode>] [--json]"
+        "Usage: grok workspaces create --name <name> [--icon <icon>] [--personality <text>] [--model <mode>] [--json|--format json]"
     }
 
     static var workspacesListUsage: String {
-        "Usage: grok workspaces list [--json] [--debug]"
+        "Usage: grok workspaces list [--json|--format json] [--debug]"
     }
 
     static var workspacesAddConversationUsage: String {
-        "Usage: grok workspaces add-conversation <workspaceId> <conversationId> [--json] [--debug]"
+        "Usage: grok workspaces add-conversation <workspaceId> <conversationId> [--json|--format json] [--debug]"
     }
 
     static var workspacesDeleteUsage: String {
-        "Usage: grok workspaces delete <workspaceId> [--json] [--debug]"
+        "Usage: grok workspaces delete <workspaceId> [--json|--format json] [--debug]"
     }
 
     static var workspacesConversationUsage: String {
-        "Usage: grok workspaces conversation <conversationId> [--json] [--debug]"
+        "Usage: grok workspaces conversation <conversationId> [--json|--format json] [--debug]"
     }
 }
