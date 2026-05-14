@@ -126,6 +126,7 @@ extension GrokCLI {
                 print("Goal complete")
             }
         } catch {
+            formatter.clearTransientStatusBeforeError()
             await app.handleError(error, debug: enableDebug)
         }
     }
@@ -311,7 +312,7 @@ extension GrokCLI {
         }
 
         if isJSONRequested(args) {
-            try await handleMessageCommand(args: args, exitOnError: exitOnParseError)
+            try await handleMessageCommand(args: args, exitOnError: exitOnParseError, jsonCommandName: "chat")
             return
         }
 
@@ -385,6 +386,18 @@ extension GrokCLI {
                 enableStream = true
             } else if arg == "--quiet" {
                 enableQuiet = true
+            } else if arg == "--stdin" {
+                printParseError("--stdin is only supported by grok message")
+                if exitOnParseError {
+                    exit(with: 2)
+                }
+                return
+            } else if arg == "--prompt-file" || arg.hasPrefix("--prompt-file=") {
+                printParseError("--prompt-file is only supported by grok message")
+                if exitOnParseError {
+                    exit(with: 2)
+                }
+                return
             } else if arg == "--audio" {
                 guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
                     printParseError("--audio requires a path or -")
@@ -668,6 +681,7 @@ extension GrokCLI {
                 }
                 sentInitialMessage = true
             } catch {
+                formatter.clearTransientStatusBeforeError()
                 _ = await app.handleError(error, debug: enableDebug)
                 if !app.isAuthenticationError(error) {
                     return
@@ -1073,6 +1087,7 @@ extension GrokCLI {
                         }
                     }
                 } catch {
+                    formatter.clearTransientStatusBeforeError()
                     await app.handleError(error, debug: enableDebug)
                 }
                 syncPromptHUD()
@@ -1374,6 +1389,7 @@ extension GrokCLI {
                 )
                 syncPromptHUD()
             } catch {
+                formatter.clearTransientStatusBeforeError()
                 await app.handleError(error, debug: enableDebug)
             }
         }
