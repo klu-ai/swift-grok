@@ -80,33 +80,22 @@ extension GrokCLI {
     }
 
     static func promptForModelSelection(currentMode: GrokMode, modes: [GrokMode] = GrokMode.knownModes) -> GrokMode? {
-        guard stdinIsTTY(), stdoutIsTTY() else {
-            return promptForModelSelectionByText(currentMode: currentMode, modes: modes)
+        let items = modes.map { mode in
+            PickerItem(
+                id: mode.id,
+                title: mode.displayName,
+                subtitle: mode.id,
+                preview: mode.summary.isEmpty ? mode.unavailableDescription : mode.summary,
+                value: mode,
+                isEnabled: mode.isAvailable,
+                searchText: "\(mode.displayName) \(mode.id) \(mode.summary)"
+            )
         }
-
-        switch promptForModelSelectionWithArrows(currentMode: currentMode, modes: modes) {
-        case .selected(let mode):
-            return mode
-        case .cancelled:
-            return nil
-        case .fallback:
-            return promptForModelSelectionByText(currentMode: currentMode, modes: modes)
-        }
-    }
-
-    private static func promptForModelSelectionByText(currentMode: GrokMode, modes: [GrokMode]) -> GrokMode? {
-        printAvailableModels(currentMode: currentMode, modes: modes)
-        print("Select model number/name, or press Enter to keep current: ".cyan, terminator: "")
-
-        guard let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines), !input.isEmpty else {
-            return nil
-        }
-
-        if let selection = Int(input), selection >= 1, selection <= modes.count {
-            return selectableMode(modes[selection - 1])
-        }
-
-        return selectableResolvedMode(input, modes: modes)
+        return InteractivePicker.select(
+            title: "Select model",
+            items: items,
+            currentId: currentMode.id
+        )
     }
 
     private enum ModelSelectionPromptResult {
