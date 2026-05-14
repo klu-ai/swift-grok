@@ -12,6 +12,11 @@ struct TestCommand: ParsableCommand {
     var message: [String] = []
 
     func run() async throws {
+        if message.count == 1, let first = message.first, GrokCLI.isHelpArgument(first) {
+            print("Usage: grok test [message...]")
+            return
+        }
+
         if GrokCLI.isJSONRequested(message) {
             let words = GrokCLI.removingJSONOutputArgs(message)
             let msgText = words.joined(separator: " ")
