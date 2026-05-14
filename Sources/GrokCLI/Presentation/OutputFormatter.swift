@@ -44,6 +44,11 @@ class OutputFormatter {
         fflush(stdout)
     }
 
+    func clearTransientStatusBeforeError() {
+        clearTransientStatus()
+        fflush(stdout)
+    }
+
     func printStreamingResponse(_ stream: AsyncThrowingStream<ConversationResponse, Error>) async throws {
         let answerParser = GrokStreamMarkupParser()
         let thinkingParser = GrokStreamMarkupParser()
