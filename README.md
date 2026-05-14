@@ -149,6 +149,12 @@ Human mode may print status text and terminal UI on stdout. JSON mode reserves s
 
 `grok message` uses exactly one prompt source: inline message arguments, `--prompt-file <path>`, or stdin. If no inline message or prompt file is supplied and stdin is piped, stdin is used automatically. `--stdin` is also available when you want to make that choice explicit.
 
+Attach documents to a one-shot message with repeatable `--file` / `--upload` options for local paths, or `--attach <fileId>` for an already-uploaded Grok file:
+
+```bash
+grok message --file paper.pdf --raw --quiet "What is novel or meaningful from this document?"
+```
+
 <!--
 Grok Code is disabled: the code harness concept will not work with grok.com because tool calls happen server side.
 
@@ -389,6 +395,8 @@ grok tasks list
 grok tasks inactive
 grok tasks show <taskId>
 grok tasks results <taskId>
+grok tasks results <taskId> --limit 10
+grok tasks chat <taskId> --run previous --message "Explain this run"
 grok tasks create --prompt "Check this tomorrow" --name "Follow up"
 grok tasks archive <taskId>
 ```

@@ -51,6 +51,8 @@ extension GrokCLI {
           --private         - Enable private mode (conversations will not be saved)
           --stream          - Stream responses as they are generated
           --quiet           - Suppress UI/status output for scriptable raw text
+          --file <path>     - Upload and attach a local file before sending a message
+          --attach <fileId> - Attach an existing Grok file ID before sending
           --audio <path|->  - Transcribe audio before sending a message
           --audio-format <format> - Required with audio stdin or unknown extensions
           --refinement-level <level> - Speech-to-text refinement level
@@ -66,6 +68,7 @@ extension GrokCLI {
           - grok message --raw --quiet writes only assistant answer text to stdout
           - grok message reads piped stdin when no message args or prompt file are supplied
           - grok message --prompt-file <path> reads a UTF-8 prompt file
+          - grok message --file <path> uploads, attaches, and sends one prompt
           - grok message --audio <path> transcribes audio, then sends the transcript
           - grok transcribe <path> prints only the transcript
           - grok chat --raw --quiet supports cleaner piped multi-message sessions
@@ -88,6 +91,8 @@ extension GrokCLI {
           cat prompt.md | grok message --raw --quiet - Send piped prompt text
           grok message --raw --quiet --prompt-file prompt.md
                                             - Send a prompt file and print answer text
+          grok message --file paper.pdf "What matters here?"
+                                            - Upload a file, attach it, and ask in one call
           grok message --json Explain this briefly  - Send a message and print JSON
           grok message --stream --json Draft a note  - Stream NDJSON events
           grok message --audio note.webm --raw --quiet - Send an audio transcript
@@ -107,6 +112,9 @@ extension GrokCLI {
           grok tasks list --json                    - List tasks as JSON
           grok tasks inactive                       - List archived tasks
           grok tasks show <taskId>                  - Show task details and latest result
+          grok tasks results <taskId> --limit 10    - Show recent task runs
+          grok tasks chat <taskId> --run previous --message "Explain this"
+                                                    - Continue a specific task run thread
           grok skills                               - List skills
           grok workspaces                           - List workspaces
           grok workspaces delete <workspaceId>      - Delete a workspace
