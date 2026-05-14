@@ -46,7 +46,7 @@ class OutputFormatter {
 
     func printStreamingResponse(_ stream: AsyncThrowingStream<ConversationResponse, Error>) async throws {
         let answerParser = GrokStreamMarkupParser()
-        let thinkingParser = GrokStreamMarkupParser(hidesHiddenPreamble: false)
+        let thinkingParser = GrokStreamMarkupParser()
         var printedText = false
         var printedTrace = false
         var finalResponse: ConversationResponse?
@@ -56,17 +56,22 @@ class OutputFormatter {
         func renderTraceLine(_ line: String) {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return }
+            renderActivity(ActivityTimelineRenderer.event(fromTraceLine: trimmed))
+        }
+
+        func renderThinkingLine(_ line: String) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            renderActivity(ToolActivityEvent(kind: .thinking, detail: trimmed))
+        }
+
+        func renderActivity(_ activity: ToolActivityEvent) {
             clearTransientStatus()
             if printedText {
                 return
             }
             printedTrace = true
-            let quotedLine = "> \(trimmed)"
-            if trimmed.hasPrefix("Thinking:") {
-                print(quotedLine.blue)
-            } else {
-                print(quotedLine.cyan)
-            }
+            print(ActivityTimelineRenderer.line(activity))
             fflush(stdout)
         }
 
@@ -75,6 +80,8 @@ class OutputFormatter {
                 switch event {
                 case .trace(let line):
                     return [line]
+                case .activity(let activity):
+                    return [activity.displayText]
                 case .text(let text):
                     return text
                         .split(separator: "\n", omittingEmptySubsequences: false)
@@ -88,6 +95,8 @@ class OutputFormatter {
             switch event {
             case .trace(let line):
                 renderTraceLine(line)
+            case .activity(let activity):
+                renderActivity(activity)
             case .text(let text):
                 renderText(text)
             }
@@ -98,7 +107,7 @@ class OutputFormatter {
             clearTransientStatus()
             if !printedText {
                 let prefix = printedTrace ? "\n" : ""
-                print(prefix + "Grok:".green.bold)
+                print(prefix + answerLabel())
                 printedText = true
             }
             if useMarkdown {
@@ -132,10 +141,20 @@ class OutputFormatter {
         }
 
         func handleThinking(_ text: String) {
-            let lines = traceLines(from: thinkingParser.consume(text))
-            guard !lines.isEmpty else { return }
-            for line in lines {
-                renderTraceLine(line)
+            for event in thinkingParser.consume(text) {
+                switch event {
+                case .trace(let line):
+                    renderTraceLine(line)
+                case .activity(let activity):
+                    renderActivity(activity)
+                case .text(let text):
+                    for line in text
+                        .split(separator: "\n", omittingEmptySubsequences: false)
+                        .map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) })
+                        .filter({ !$0.isEmpty }) {
+                        renderThinkingLine(line)
+                    }
+                }
             }
             releasePendingAnswerIfReady()
         }
@@ -150,6 +169,7 @@ class OutputFormatter {
                 if !sawNonFinalEvent && !printedText {
                     handleAnswerEvents(answerParser.consume(response.message))
                 }
+                break
             } else if response.isThinking {
                 sawNonFinalEvent = true
                 handleThinking(response.message)
@@ -160,8 +180,20 @@ class OutputFormatter {
         }
 
         handleAnswerEvents(answerParser.finish())
-        for line in traceLines(from: thinkingParser.finish()) {
-            renderTraceLine(line)
+        for event in thinkingParser.finish() {
+            switch event {
+            case .trace(let line):
+                renderTraceLine(line)
+            case .activity(let activity):
+                renderActivity(activity)
+            case .text(let text):
+                for line in text
+                    .split(separator: "\n", omittingEmptySubsequences: false)
+                    .map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) })
+                    .filter({ !$0.isEmpty }) {
+                    renderThinkingLine(line)
+                }
+            }
         }
         releasePendingAnswerIfReady(force: true)
 
@@ -186,31 +218,12 @@ class OutputFormatter {
 
     func printResponse(_ response: String, conversationId: String? = nil, responseId: String? = nil, debug: Bool = false, webSearchResults: [WebSearchResult]? = nil, xposts: [XPost]? = nil) {
         clearTransientStatus()
-        print("\n" + "Grok:".green.bold)
+        print("\n" + answerLabel())
+        let visibleResponse = GrokStreamMarkupParser.visibleText(from: response)
 
-        if useMarkdown {
-            markdownBuffer = ""
-            markdownInCodeBlock = false
-            pendingTableLines.removeAll()
-            printMarkdown(response)
-            markdownInCodeBlock = false
-            pendingTableLines.removeAll()
-        } else {
-            print(response)
-        }
+        printResponseBodyText(visibleResponse)
 
-        let webSearchCount = webSearchResults?.count ?? 0
-        let xpostsCount = xposts?.count ?? 0
-
-        if webSearchCount > 0 || xpostsCount > 0 {
-            print("\n" + "Sources:".cyan)
-            if webSearchCount > 0 {
-                print("Web search results: \(webSearchCount)".yellow)
-            }
-            if xpostsCount > 0 {
-                print("X posts: \(xpostsCount)".yellow)
-            }
-        }
+        printSourceSummary(webSearchResults: webSearchResults, xposts: xposts)
 
         if debug, let conversationId = conversationId, let responseId = responseId {
             print("\n" + "Debug Info:".cyan)
@@ -222,10 +235,79 @@ class OutputFormatter {
         fflush(stdout)
     }
 
+    func printQuietResponseBody(_ response: String) {
+        clearTransientStatus()
+        let visibleResponse = GrokStreamMarkupParser.visibleText(from: response)
+        printResponseBodyText(visibleResponse)
+        fflush(stdout)
+    }
+
+    private func printResponseBodyText(_ visibleResponse: String) {
+        if useMarkdown {
+            markdownBuffer = ""
+            markdownInCodeBlock = false
+            pendingTableLines.removeAll()
+            printMarkdown(visibleResponse)
+            markdownInCodeBlock = false
+            pendingTableLines.removeAll()
+        } else {
+            print(visibleResponse)
+        }
+    }
+
+    func printConversationReplayMessage(sender: String, message: String, isAssistant: Bool) {
+        clearTransientStatus()
+        print(sender)
+
+        guard isAssistant, useMarkdown else {
+            print(message)
+            print("")
+            fflush(stdout)
+            return
+        }
+
+        markdownBuffer = ""
+        markdownInCodeBlock = false
+        pendingTableLines.removeAll()
+
+        let parser = GrokStreamMarkupParser()
+        let events = parser.consume(message) + parser.finish()
+
+        var textBuffer = ""
+        func flushReplayText() {
+            guard !textBuffer.isEmpty else { return }
+            printMarkdown(textBuffer)
+            textBuffer = ""
+        }
+
+        for event in events {
+            switch event {
+            case .text(let text):
+                textBuffer += text
+            case .trace(let line):
+                flushReplayText()
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    print(ActivityTimelineRenderer.line(ActivityTimelineRenderer.event(fromTraceLine: trimmed)))
+                }
+            case .activity(let activity):
+                flushReplayText()
+                print(ActivityTimelineRenderer.line(activity))
+            }
+        }
+        flushReplayText()
+
+        flushBuffer(resetMarkdownState: true)
+        markdownInCodeBlock = false
+        pendingTableLines.removeAll()
+        print("")
+        fflush(stdout)
+    }
+
     func printStreamingChunk(_ chunk: String, isFirst: Bool, isLast: Bool) {
         clearTransientStatus()
         if isFirst {
-            print("\n" + "Grok:".green.bold, terminator: "")
+            print("\n" + answerLabel())
         }
 
         if useMarkdown {
@@ -238,18 +320,10 @@ class OutputFormatter {
         }
 
         if isLast {
-            let webSearchCount = GrokCLIApp.shared.getLastWebSearchResults()?.count ?? 0
-            let xpostsCount = GrokCLIApp.shared.getLastXPosts()?.count ?? 0
-
-            if webSearchCount > 0 || xpostsCount > 0 {
-                print("\n" + "Sources:".cyan)
-                if webSearchCount > 0 {
-                    print("Web search results: \(webSearchCount)".yellow)
-                }
-                if xpostsCount > 0 {
-                    print("X posts: \(xpostsCount)".yellow)
-                }
-            }
+            printSourceSummary(
+                webSearchResults: GrokCLIApp.shared.getLastWebSearchResults(),
+                xposts: GrokCLIApp.shared.getLastXPosts()
+            )
 
             print("")
         }
@@ -260,7 +334,7 @@ class OutputFormatter {
     func printChunk(_ chunk: String, isFirst: Bool) {
         clearTransientStatus()
         if isFirst {
-            print("\n" + "Grok:".green.bold, terminator: "")
+            print("\n" + answerLabel())
         }
         if useMarkdown {
             printMarkdownChunk(chunk)
@@ -274,18 +348,30 @@ class OutputFormatter {
         clearTransientStatus()
         flushBuffer(resetMarkdownState: true)
 
+        printSourceSummary(webSearchResults: webSearchResults, xposts: xposts)
+        print("")
+    }
+
+    private func answerLabel() -> String {
+        "Grok".green.bold
+    }
+
+    private func printSourceSummary(webSearchResults: [WebSearchResult]?, xposts: [XPost]?) {
         let webSearchCount = webSearchResults?.count ?? 0
         let xpostsCount = xposts?.count ?? 0
-        if webSearchCount > 0 || xpostsCount > 0 {
-            print("\n" + "Sources:".cyan)
-            if webSearchCount > 0 {
-                print("Web search results: \(webSearchCount)".yellow)
-            }
-            if xpostsCount > 0 {
-                print("X posts: \(xpostsCount)".yellow)
-            }
+        guard webSearchCount > 0 || xpostsCount > 0 else { return }
+
+        print("\n" + "Sources".cyan)
+        if webSearchCount > 0 {
+            print(sourceCountLine(webSearchCount, label: "web result").yellow)
         }
-        print("")
+        if xpostsCount > 0 {
+            print(sourceCountLine(xpostsCount, label: "X result").yellow)
+        }
+    }
+
+    private func sourceCountLine(_ count: Int, label: String) -> String {
+        "\(count) \(label)\(count == 1 ? "" : "s")"
     }
 
     func printError(_ message: String) {
@@ -293,61 +379,34 @@ class OutputFormatter {
     }
 
     func printHelp() {
-        print("""
+        print("")
+        print("Basic Commands:".cyan.bold)
+        print("- \("new".yellow): Start a new conversation thread")
+        print("- \("help".yellow): Show this help message")
+        print("- \("exit".yellow): Exit the app")
+        print("")
+        print("Slash Commands:".cyan.bold)
 
-        \("Basic Commands:".cyan.bold)
-        - \("new".yellow): Start a new conversation thread
-        - \("help".yellow): Show this help message
-        - \("exit".yellow): Exit the app
+        for category in GrokCLI.InteractiveCommandCategory.allCases {
+            let commands = GrokCLI.InteractiveCommandRegistry.visibleCommands.filter { $0.category == category }
+            guard !commands.isEmpty else { continue }
+            print("")
+            print("\(category.rawValue):".cyan.bold)
+            for spec in commands {
+                print("- \(spec.usage.yellow): \(spec.description)")
+            }
+        }
 
-        \("Slash Commands:".cyan.bold)
-        Type commands with \("/".yellow), for example \("/help".yellow).
-        - \("/new".yellow): Start a new conversation thread
-        - \("/help".yellow): Show this help message
-        - \("/list".yellow): List and load past conversations
-        - \("/tasks".yellow): List or manage tasks
-        - \("/agents".yellow): List or manage agent settings
-        - \("/skills".yellow): List Grok skills
-        - \("/auth".yellow): Refresh browser credentials
-        - \("/workspaces".yellow): List or manage workspaces
-        - \("/workspace".yellow): Choose the project for new chats
-        - \("/files".yellow): List files/assets
-        - \("/auth help".yellow): Show auth commands
-        - \("/agents help".yellow): Show agent management usage
-        - \("/agents show <id>".yellow): Show full agent instructions
-        - \("/agents edit <id>".yellow): Edit agent instructions in $EDITOR
-        - \("/tasks help".yellow): Show task command usage
-        - \("/skills help".yellow): Show skills command usage
-        - \("/workspaces help".yellow): Show workspace command usage
-        - \("/files help".yellow): Show file command usage
-        - \("/workspace select".yellow): Choose the project for new chats
-        - \("/attach".yellow): Browse files and attach one to following messages
-        - \("/attach upload <path>".yellow): Upload a local file and attach it
-        - \("/attach clear".yellow): Remove all attached files
-        - \("/model <mode>".yellow): Switch web model/mode
-        - \("/mode, /models, /modes".yellow): Model command aliases
-        - \("models <mode>".yellow): Common commands also work without the slash
-        - \("/format [md|raw]".yellow): Toggle or choose Markdown/Raw output
-        - \("/md, /markdown".yellow): Enable Markdown output
-        - \("/raw [on|off]".yellow): Toggle raw Markdown output
-        - \("/private [on|off]".yellow): Toggle private mode on/off
-        - \("/stream [on|off]".yellow): Toggle streaming responses on/off
-        - \("/reset-conversation".yellow): Clear the current conversation context
-        - \("/special".yellow): Start a private special-mode conversation
-        - \("/clear".yellow): Clear the screen
-        - \("/cls".yellow): Alias for /clear
-        - \("/exit, /quit".yellow): Exit the app
-
-        \("Modes:".cyan.bold)
-        - \("Model".yellow): auto, fast, expert, grok-4.3-beta, heavy, or a raw modeId
-        - \("Private Mode".yellow): When enabled, conversations will not be saved
-        - \("Streaming".yellow): Displays responses as they are generated
-        - \("Output Format".yellow): Markdown is default; Raw preserves source Markdown
-        - \("Agents".yellow): Configure instructions in Grok agent settings
-
-        \("Note:".cyan.bold) Reasoning is always enabled for all models; /reason is a legacy no-op deprecated on 2025-07-09, the Grok 4 release date.
-
-        """)
+        print("")
+        print("Modes:".cyan.bold)
+        print("- \("Model".yellow): auto, fast, expert, grok-4.3-beta, heavy, or a raw modeId")
+        print("- \("Private Mode".yellow): When enabled, conversations will not be saved")
+        print("- \("Streaming".yellow): Displays responses as they are generated")
+        print("- \("Output Format".yellow): Markdown is default; Raw preserves source Markdown")
+        print("- \("Agents".yellow): Configure instructions in Grok agent settings")
+        print("")
+        print("Note:".cyan.bold + " Reasoning is always enabled for all models; /reason is a legacy no-op deprecated on 2025-07-09, the Grok 4 release date.")
+        print("")
     }
 
     // temporarily hidden from slash commands

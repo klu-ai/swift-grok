@@ -325,8 +325,9 @@ extension GrokCLI {
         request: [String: AnyCodable],
         input: [String: AnyCodable]? = nil
     ) -> [String: AnyCodable] {
+        let visibleMessage = GrokStreamMarkupParser.visibleText(from: response.message)
         var data: [String: AnyCodable] = [
-            "message": AnyCodable(response.message),
+            "message": AnyCodable(visibleMessage),
             "conversationId": AnyCodable(response.conversationId),
             "responseId": AnyCodable(response.responseId),
             "model": AnyCodable(modeJSON(mode)),
@@ -336,6 +337,9 @@ extension GrokCLI {
             ]),
             "request": AnyCodable(request)
         ]
+        if visibleMessage != response.message {
+            data["rawMessage"] = AnyCodable(response.message)
+        }
         if let input {
             data["input"] = AnyCodable(input)
         }
@@ -409,9 +413,6 @@ extension GrokCLI {
             "resource": AnyCodable(resource),
             "items": AnyCodable(items)
         ]
-        if let raw {
-            data["raw"] = raw
-        }
         for (key, value) in extra {
             data[key] = value
         }
@@ -437,9 +438,6 @@ extension GrokCLI {
         }
         if let item {
             data["item"] = item
-        }
-        if let raw {
-            data["raw"] = raw
         }
         for (key, value) in extra {
             data[key] = value
@@ -482,7 +480,36 @@ extension GrokCLI {
         if let schedule = scheduleValue(in: raw) {
             data["schedule"] = AnyCodable(schedule)
         }
-        data["raw"] = AnyCodable(task.rawJSON)
+        return data
+    }
+
+    static func taskResultJSON(_ result: GrokTaskResult) -> [String: AnyCodable] {
+        let raw = jsonDictionary(from: result)
+        var data: [String: AnyCodable] = [:]
+        if let id = result.resultId ?? result.id ?? stringValue(in: raw, keys: ["taskResultId", "task_result_id", "resultId", "result_id", "id"]) {
+            data["id"] = AnyCodable(id)
+        }
+        if let resultId = result.resultId ?? stringValue(in: raw, keys: ["taskResultId", "task_result_id", "resultId", "result_id"]) {
+            data["resultId"] = AnyCodable(resultId)
+        }
+        if let taskId = result.taskId ?? stringValue(in: raw, keys: ["taskId", "task_id"]) {
+            data["taskId"] = AnyCodable(taskId)
+        }
+        if let conversationId = result.conversationId ?? stringValue(in: raw, keys: ["conversationId", "conversation_id"]) {
+            data["conversationId"] = AnyCodable(conversationId)
+        }
+        if let responseId = result.responseId ?? stringValue(in: raw, keys: ["responseId", "response_id"]) {
+            data["responseId"] = AnyCodable(responseId)
+        }
+        if let message = result.message ?? stringValue(in: raw, keys: ["summary", "message", "content", "output", "text", "result"]) {
+            data["message"] = AnyCodable(message)
+        }
+        if let status = result.status ?? stringValue(in: raw, keys: ["status", "state"]) {
+            data["status"] = AnyCodable(status)
+        }
+        if let created = stringValue(in: raw, keys: ["createTime", "createdAt", "created_at", "completedAt", "completed_at", "lastRunAt", "last_run_at"]) {
+            data["created"] = AnyCodable(created)
+        }
         return data
     }
 
@@ -507,7 +534,6 @@ extension GrokCLI {
         if let description = stringValue(in: raw, keys: ["description", "summary"]) {
             data["description"] = AnyCodable(description)
         }
-        data["raw"] = AnyCodable(skill.rawJSON)
         return data
     }
 
@@ -534,7 +560,6 @@ extension GrokCLI {
         if let customPersonality = workspace.customPersonality {
             data["customPersonality"] = AnyCodable(customPersonality)
         }
-        data["raw"] = AnyCodable(workspace.rawJSON)
         return data
     }
 
@@ -549,7 +574,6 @@ extension GrokCLI {
         if let mimeType = asset.mimeType {
             data["mimeType"] = AnyCodable(mimeType)
         }
-        data["raw"] = AnyCodable(asset.rawJSON)
         return data
     }
 
@@ -564,7 +588,6 @@ extension GrokCLI {
         if let asset = response.asset {
             data["asset"] = AnyCodable(assetJSON(asset))
         }
-        data["raw"] = response.rawJSON
         return data
     }
 }

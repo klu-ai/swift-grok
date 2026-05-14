@@ -3,10 +3,17 @@ import Foundation
 enum StreamDisplayEvent {
     case text(String)
     case trace(String)
+    case activity(ToolActivityEvent)
 }
 
 final class GrokStreamMarkupParser {
     private let hiddenPreamble = "Thinking about your request"
+    private let internalTagPrefixes = [
+        "<xai:",
+        "</xai:",
+        "<grok:",
+        "</grok:"
+    ]
     private let hidesHiddenPreamble: Bool
     private var buffer = ""
     private var emittedTraceLines = Set<String>()
@@ -28,12 +35,21 @@ final class GrokStreamMarkupParser {
         !buffer.isEmpty
     }
 
+    static func visibleText(from markup: String, hidesHiddenPreamble: Bool = true) -> String {
+        let parser = GrokStreamMarkupParser(hidesHiddenPreamble: hidesHiddenPreamble)
+        let events = parser.consume(markup) + parser.finish()
+        let text = events.compactMap { event -> String? in
+            guard case .text(let text) = event else { return nil }
+            return text
+        }.joined()
+        return stripResidualInlineCitationFragments(from: text)
+    }
+
     private func drain(final: Bool) -> [StreamDisplayEvent] {
         var events: [StreamDisplayEvent] = []
 
         while !buffer.isEmpty {
-            if hidesHiddenPreamble && buffer.hasPrefix(hiddenPreamble) {
-                buffer.removeFirst(hiddenPreamble.count)
+            if consumeHiddenPreambleIfAvailable(final: final) {
                 continue
             }
 
@@ -41,7 +57,38 @@ final class GrokStreamMarkupParser {
                 break
             }
 
+            if buffer.hasPrefix("<grok:render") {
+                if consumeRenderDirective() {
+                    continue
+                }
+                if final {
+                    buffer.removeAll(keepingCapacity: true)
+                }
+                break
+            }
+
+            let residualStart = residualInlineCitationStart(in: buffer)
+            let residualPrecedesNextTag = residualStart.map { start in
+                !buffer[..<start].contains("<")
+            } ?? false
+
+            if residualPrecedesNextTag {
+                if !final,
+                   let start = residualStart,
+                   start == buffer.startIndex,
+                   residualInlineCitationTailIsIncomplete(from: start) {
+                    break
+                }
+
+                if consumeResidualInlineCitationFragment(final: final, to: &events) {
+                    continue
+                }
+            }
+
             guard let tagStart = buffer.firstIndex(of: "<") else {
+                if holdIncompleteResidualInlineCitationFragment(final: final, to: &events) {
+                    break
+                }
                 appendVisibleText(buffer, to: &events)
                 buffer.removeAll(keepingCapacity: true)
                 break
@@ -54,18 +101,12 @@ final class GrokStreamMarkupParser {
                 continue
             }
 
-            if buffer.hasPrefix("<xai:tool_usage_card>") {
-                if consumeToolUsageCard(to: &events) {
-                    continue
-                }
-                if final {
-                    buffer.removeAll(keepingCapacity: true)
-                }
+            if !final && isPotentialInternalTagPrefix(buffer) {
                 break
             }
 
-            if buffer.hasPrefix("<grok:render") {
-                if consumeRenderDirective() {
+            if buffer.hasPrefix("<xai:tool_usage_card>") {
+                if consumeToolUsageCard(to: &events) {
                     continue
                 }
                 if final {
@@ -95,6 +136,30 @@ final class GrokStreamMarkupParser {
         return events
     }
 
+    private func consumeHiddenPreambleIfAvailable(final: Bool) -> Bool {
+        guard hidesHiddenPreamble else { return false }
+
+        if !final && buffer.count < hiddenPreamble.count && hiddenPreamble.hasPrefix(buffer) {
+            return false
+        }
+
+        guard buffer.hasPrefix(hiddenPreamble) else { return false }
+
+        let afterPreamble = buffer.index(buffer.startIndex, offsetBy: hiddenPreamble.count)
+        if afterPreamble < buffer.endIndex {
+            let next = buffer[afterPreamble]
+            guard next == "\n" || next == "\r" || next == "<" else {
+                return false
+            }
+        }
+
+        buffer.removeSubrange(..<afterPreamble)
+        while let first = buffer.first, first == "\n" || first == "\r" {
+            buffer.removeFirst()
+        }
+        return true
+    }
+
     private func consumeToolUsageCard(to events: inout [StreamDisplayEvent]) -> Bool {
         let closeTag = "</xai:tool_usage_card>"
         guard let closeRange = buffer.range(of: closeTag) else {
@@ -105,12 +170,17 @@ final class GrokStreamMarkupParser {
         let block = String(buffer[..<blockEnd])
         buffer.removeSubrange(..<blockEnd)
 
-        guard let traceLine = summarizeToolUsageCard(block), !emittedTraceLines.contains(traceLine) else {
+        guard let activity = summarizeToolUsageCard(block) else {
+            return true
+        }
+
+        let traceLine = activity.displayText
+        guard !emittedTraceLines.contains(traceLine) else {
             return true
         }
 
         emittedTraceLines.insert(traceLine)
-        events.append(.trace(traceLine))
+        events.append(.activity(activity))
         return true
     }
 
@@ -132,12 +202,98 @@ final class GrokStreamMarkupParser {
     }
 
     private func appendVisibleText(_ text: String, to events: inout [StreamDisplayEvent]) {
-        let cleaned = hidesHiddenPreamble ? text.replacingOccurrences(of: hiddenPreamble, with: "") : text
+        var cleaned = hidesHiddenPreamble ? removeHiddenPreambleLines(from: text) : text
+        cleaned = Self.stripResidualInlineCitationFragments(from: cleaned)
         guard !cleaned.isEmpty else { return }
         events.append(.text(cleaned))
     }
 
-    private func summarizeToolUsageCard(_ block: String) -> String? {
+    private func isPotentialInternalTagPrefix(_ text: String) -> Bool {
+        internalTagPrefixes.contains { prefix in
+            prefix.hasPrefix(text)
+        }
+    }
+
+    private func holdIncompleteResidualInlineCitationFragment(final: Bool, to events: inout [StreamDisplayEvent]) -> Bool {
+        guard !final,
+              let start = residualInlineCitationStart(in: buffer),
+              residualInlineCitationTailIsIncomplete(from: start) else {
+            return false
+        }
+
+        if start > buffer.startIndex {
+            appendVisibleText(String(buffer[..<start]), to: &events)
+            buffer.removeSubrange(..<start)
+        }
+        return true
+    }
+
+    private func consumeResidualInlineCitationFragment(final: Bool, to events: inout [StreamDisplayEvent]) -> Bool {
+        guard let start = residualInlineCitationStart(in: buffer) else {
+            return false
+        }
+
+        if start > buffer.startIndex {
+            appendVisibleText(String(buffer[..<start]), to: &events)
+            buffer.removeSubrange(..<start)
+            return true
+        }
+
+        if let closeRange = buffer.range(of: "</grok:render>") {
+            buffer.removeSubrange(..<closeRange.upperBound)
+            return true
+        }
+
+        if final {
+            buffer.removeAll(keepingCapacity: true)
+            return true
+        }
+
+        return false
+    }
+
+    private func residualInlineCitationStart(in text: String) -> String.Index? {
+        let markers = [
+            #"card_type="citation_card""#,
+            #"card_type=\"citation_card\""#,
+            #"type="render_inline_citation""#,
+            #"type=\"render_inline_citation\""#
+        ]
+
+        guard markers.contains(where: { text.contains($0) }) else {
+            return nil
+        }
+
+        let candidateTokens = [
+            #"card_id="#,
+            #"_id="#,
+            #"card_type="#,
+            #"type="#,
+            #"card_id=\""#,
+            #"_id=\""#,
+            #"card_type=\""#,
+            #"type=\""#
+        ]
+        return candidateTokens
+            .compactMap { text.range(of: $0)?.lowerBound }
+            .min()
+    }
+
+    private func residualInlineCitationTailIsIncomplete(from start: String.Index) -> Bool {
+        let tail = String(buffer[start...])
+        return tail.contains("render_inline_citation") && !tail.contains("</grok:render>")
+    }
+
+    private func removeHiddenPreambleLines(from text: String) -> String {
+        text
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { line in
+                line.trimmingCharacters(in: .whitespacesAndNewlines) != hiddenPreamble
+            }
+            .joined(separator: "\n")
+    }
+
+    private func summarizeToolUsageCard(_ block: String) -> ToolActivityEvent? {
         let toolName = xmlValue(named: "xai:tool_name", in: block) ?? "tool"
         let argsText = xmlValue(named: "xai:tool_args", in: block).map(stripCDATA)
         let args = argsText.flatMap(jsonDictionary)
@@ -145,25 +301,25 @@ final class GrokStreamMarkupParser {
         switch toolName {
         case "web_search":
             if let query = stringValue(args, key: "query") {
-                return "Search: \(compact(query))"
+                return ToolActivityEvent(kind: .search, detail: compact(query))
             }
-            return "Search"
+            return ToolActivityEvent(kind: .search, detail: "searching web")
         case "x_search":
             if let query = stringValue(args, key: "query") {
-                return "Search X: \(compact(query))"
+                return ToolActivityEvent(kind: .search, detail: "X \(compact(query))")
             }
-            return "Search X"
+            return ToolActivityEvent(kind: .search, detail: "searching X")
         case "code_execution", "code":
             let code = stringValue(args, key: "code") ?? argsText ?? ""
-            return "Thinking: \(summarizeCode(code))"
+            return ToolActivityEvent(kind: .thinking, detail: summarizeCode(code))
         default:
             let displayName = toolName
                 .replacingOccurrences(of: "_", with: " ")
                 .capitalized
             if let query = stringValue(args, key: "query") {
-                return "\(displayName): \(compact(query))"
+                return ToolActivityEvent(kind: .tool, detail: "\(displayName) \(compact(query))")
             }
-            return displayName
+            return ToolActivityEvent(kind: .tool, detail: displayName)
         }
     }
 
@@ -238,5 +394,43 @@ final class GrokStreamMarkupParser {
 
         let endIndex = compacted.index(compacted.startIndex, offsetBy: limit - 1)
         return "\(compacted[...endIndex])..."
+    }
+
+    private static func stripResidualInlineCitationFragments(from text: String) -> String {
+        var cleaned = text
+        let renderDirectivePatterns = [
+            #"<grok:render[\s\S]*?</grok:render>"#,
+            #"<grok:render\b[^>]*render_inline_citation[^>]*>(?:<argument\b[^>]*>[\s\S]*?</argument>)?</grok:render>"#
+        ]
+        for pattern in renderDirectivePatterns {
+            cleaned = cleaned.replacingOccurrences(
+                of: pattern,
+                with: "",
+                options: [.regularExpression]
+            )
+        }
+        let citationAttributePatterns = [
+            #"(?:\s*(?:card_)?_?id="[^"]*")?\s*card_type="citation_card"\s+type="render_inline_citation">(?:<argument\b[^>]*>[\s\S]*?</argument>)?"#,
+            #"(?:\s*(?:card_)?_?id=\\"[^"]*\\")?\s*card_type=\\"citation_card\\"\s+type=\\"render_inline_citation\\">(?:<argument\b[^>]*>[\s\S]*?</argument>)?"#
+        ]
+        for pattern in citationAttributePatterns {
+            cleaned = cleaned.replacingOccurrences(
+                of: pattern,
+                with: "",
+                options: [.regularExpression]
+            )
+        }
+        let argumentCitationPatterns = [
+            #"<argument\s+name="citation_id">[\s\S]*?</argument>"#,
+            #"<argument\s+name=\\"citation_id\\">[\s\S]*?</argument>"#
+        ]
+        for pattern in argumentCitationPatterns {
+            cleaned = cleaned.replacingOccurrences(
+                of: pattern,
+                with: "",
+                options: [.regularExpression]
+            )
+        }
+        return cleaned
     }
 }
