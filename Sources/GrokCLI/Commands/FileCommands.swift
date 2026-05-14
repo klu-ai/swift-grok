@@ -13,7 +13,14 @@ extension GrokCLI {
             parsed = try parseFilesCommand(args: args)
         } catch {
             if jsonRequested {
-                printJSONError(command: "files", error: error, exitCode: 2, debug: debug)
+                printJSONError(
+                    command: "files",
+                    message: error.localizedDescription,
+                    code: "usage_error",
+                    exitCode: 2,
+                    rawMessage: error.localizedDescription,
+                    debug: debug
+                )
             } else {
                 await app.handleError(error, debug: debug)
             }
