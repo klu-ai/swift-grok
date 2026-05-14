@@ -13,7 +13,14 @@ extension GrokCLI {
             parsed = try parseAgentCommand(args: args)
         } catch {
             if jsonRequested {
-                printJSONError(command: "agents", error: error, exitCode: 2, debug: debug)
+                printJSONError(
+                    command: "agents",
+                    message: error.localizedDescription,
+                    code: "usage_error",
+                    exitCode: 2,
+                    rawMessage: error.localizedDescription,
+                    debug: debug
+                )
             } else {
                 await app.handleError(error, debug: debug)
             }
@@ -254,7 +261,7 @@ private extension GrokCLI {
                 return ParsedAgentCommand(action: .help(agentsShowUsage), json: json, debug: debug, includeInstructions: includeInstructions)
             }
             guard remaining.count == 2, let agentId = Int(remaining[1]) else {
-                throw GrokError.apiError("Usage: \(agentsShowUsage)")
+                throw GrokError.apiError(agentsShowUsage)
             }
             try validateAgentId(agentId)
             return ParsedAgentCommand(action: .show(agentId), json: json, debug: debug, includeInstructions: includeInstructions)
@@ -271,7 +278,7 @@ private extension GrokCLI {
                 return ParsedAgentCommand(action: .help(agentsEditUsage), json: json, debug: debug, includeInstructions: includeInstructions)
             }
             guard remaining.count == 2, let agentId = Int(remaining[1]) else {
-                throw GrokError.apiError("Usage: \(agentsEditUsage)")
+                throw GrokError.apiError(agentsEditUsage)
             }
             try validateAgentId(agentId)
             return ParsedAgentCommand(action: .edit(agentId: agentId, replace: replace), json: json, debug: debug, includeInstructions: includeInstructions)
