@@ -33,8 +33,11 @@ extension GrokCLI {
             let client = try app.initializeClient()
             switch parsed.action {
             case .list:
-                let response = try await client.listSkillsResponse(locale: "en")
-                let skills = response.skills
+                async let builtInResponse = client.listSkillsResponse(locale: "en")
+                async let userResponse = client.listUserSkillsResponse()
+                let responses = try await (builtInResponse, userResponse)
+                let skills = responses.0.skills
+                let userSkills = responses.1.skills
                 if parsed.json {
                     try printJSONResult(
                         command: "skills",
@@ -43,14 +46,21 @@ extension GrokCLI {
                         data: AnyCodable(resourceListJSON(
                             resource: "skill",
                             items: skills.map { AnyCodable(skillJSON($0)) },
-                            raw: response.rawJSON,
-                            extra: ["scope": AnyCodable("available")]
+                            extra: [
+                                "scope": AnyCodable("available"),
+                                "builtInSkills": AnyCodable(skills.map { AnyCodable(skillJSON($0)) }),
+                                "userSkills": AnyCodable(userSkills.map { AnyCodable(skillJSON($0)) })
+                            ]
                         )),
                         debug: parsed.debug
                     )
                     return
                 }
-                printSkillRows(title: "Skills", skills: skills)
+                printSkillRows(title: "Grok Skills", skills: skills)
+                if !userSkills.isEmpty {
+                    print("")
+                    printSkillRows(title: "User Skills", skills: userSkills)
+                }
 
             case .user:
                 let response = try await client.listUserSkillsResponse()
@@ -70,7 +80,7 @@ extension GrokCLI {
                     )
                     return
                 }
-                printSkillRows(title: "My Skills", skills: skills)
+                printSkillRows(title: "User Skills", skills: skills)
 
             case .help(_):
                 return
@@ -143,7 +153,7 @@ private extension GrokCLI {
             return
         }
 
-        print("\(title):".cyan.bold)
+        print(title.cyan.bold)
         for skill in skills {
             printSkillSummary(skill)
         }
@@ -151,17 +161,16 @@ private extension GrokCLI {
 
     static func printSkillSummary(_ skill: GrokSkill) {
         let raw = jsonDictionary(from: skill)
-        let id = skill.skillId ?? skill.id ?? stringValue(in: raw, keys: ["skillId", "id"])
         let name = skill.name ?? skill.title ?? stringValue(in: raw, keys: ["displayName", "name", "title"])
-        let status = stringValue(in: raw, keys: ["status", "state"])
         let description = stringValue(in: raw, keys: ["description", "summary"])
 
-        printLabeledParts([
-            ("ID", id),
-            ("Name", name),
-            ("Status", status),
-            ("Description", description)
-        ])
+        let parts = [name, description].compactMap { value -> String? in
+            guard let value, !value.isEmpty else {
+                return nil
+            }
+            return value
+        }
+        print(parts.isEmpty ? "(no summary available)" : parts.joined(separator: " | "))
     }
 
     static var skillsUsage: String {

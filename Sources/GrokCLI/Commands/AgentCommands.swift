@@ -68,8 +68,7 @@ extension GrokCLI {
                         category: "resource_detail",
                         data: AnyCodable([
                             "resource": AnyCodable("agent"),
-                            "item": AnyCodable(agentJSON(agent, includeInstructions: true)),
-                            "raw": response.rawJSON
+                            "item": AnyCodable(agentJSON(agent, includeInstructions: true))
                         ] as [String: AnyCodable]),
                         debug: parsed.debug
                     )
