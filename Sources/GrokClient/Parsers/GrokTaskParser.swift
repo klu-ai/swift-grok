@@ -139,8 +139,8 @@ internal enum GrokTaskParser {
         if let schedule = firstScheduleDictionary(from: lookup) {
             copyTaskScheduleFields(from: schedule, into: &rawJSON)
             if !containsAnyValue(rawJSON, keys: taskEnabledKeys),
-               let scheduleEnabled = directBool(schedule, key: "isEnabled") {
-                rawJSON["isEnabled"] = AnyCodable(scheduleEnabled)
+               boolValue(schedule, keys: ["isEnabled", "is_enabled", "enabled"]) == true {
+                rawJSON["isEnabled"] = AnyCodable(true)
             }
         }
         if !containsAnyValue(rawJSON, keys: taskEnabledKeys),
@@ -206,11 +206,25 @@ internal enum GrokTaskParser {
         from schedule: [String: AnyCodable],
         into rawJSON: inout [String: AnyCodable]
     ) {
+        for key in ["scheduleId", "schedule_id"] {
+            guard rawJSON["scheduleId"] == nil, let value = schedule[key] else {
+                continue
+            }
+            rawJSON["scheduleId"] = value
+            break
+        }
         for key in ["dayOfYear", "date", "timeOfDay", "time", "timezone", "timeZone", "nextRun"] {
             guard rawJSON[key] == nil, let value = schedule[key] else {
                 continue
             }
             rawJSON[key] = value
+        }
+        for key in ["isEnabled", "is_enabled", "enabled"] {
+            guard let value = schedule[key] else {
+                continue
+            }
+            rawJSON["scheduleIsEnabled"] = value
+            break
         }
     }
 
@@ -412,13 +426,6 @@ internal enum GrokTaskParser {
         keys: [String]
     ) -> Bool {
         keys.contains { dictionary[$0] != nil }
-    }
-
-    private static func directBool(
-        _ dictionary: [String: AnyCodable],
-        key: String
-    ) -> Bool? {
-        dictionary[key]?.value as? Bool
     }
 
     private static func boolValue(

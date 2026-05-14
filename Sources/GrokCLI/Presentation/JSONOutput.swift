@@ -475,7 +475,12 @@ extension GrokCLI {
         }
         if let isEnabled = task.isEnabled ?? boolValue(in: raw, keys: ["isEnabled", "is_enabled"]) {
             data["isEnabled"] = AnyCodable(isEnabled)
-            data["status"] = AnyCodable(enabledStatus(isEnabled) ?? "")
+        }
+        if let scheduleIsEnabled = scheduleEnabled(in: raw) {
+            data["scheduleIsEnabled"] = AnyCodable(scheduleIsEnabled)
+        }
+        if let status = taskStatus(task) {
+            data["status"] = AnyCodable(status)
         }
         if let schedule = scheduleValue(in: raw) {
             data["schedule"] = AnyCodable(schedule)

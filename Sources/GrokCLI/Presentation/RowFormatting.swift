@@ -54,6 +54,19 @@ extension GrokCLI {
             if let value = dictionary[key] as? Bool {
                 return value
             }
+            if let value = dictionary[key] as? Int {
+                return value != 0
+            }
+            if let value = dictionary[key] as? String {
+                switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+                case "true", "yes", "1", "enabled", "active":
+                    return true
+                case "false", "no", "0", "disabled", "inactive", "archived", "paused":
+                    return false
+                default:
+                    continue
+                }
+            }
         }
         return nil
     }
@@ -81,6 +94,63 @@ extension GrokCLI {
             return nil
         }
         return isEnabled ? "enabled" : "archived"
+    }
+
+    static func taskDisplayStatus(isEnabled: Bool?, scheduleIsEnabled: Bool?) -> String? {
+        if isEnabled == false {
+            return "archived"
+        }
+        if scheduleIsEnabled == false {
+            return "paused"
+        }
+        return enabledStatus(isEnabled)
+    }
+
+    static func taskStatus(_ task: GrokTask) -> String? {
+        let raw = jsonDictionary(from: task)
+        let rawStatus = compactTaskStatus(stringValue(in: raw, keys: ["status", "state"]))
+        let isEnabled = task.isEnabled ?? boolValue(in: raw, keys: ["isEnabled", "is_enabled", "enabled"])
+        if isEnabled == false {
+            return rawStatus ?? "archived"
+        }
+        if scheduleEnabled(in: raw) == false {
+            return "paused"
+        }
+        return rawStatus ?? enabledStatus(isEnabled)
+    }
+
+    static func compactTaskStatus(_ value: String?) -> String? {
+        guard var status = value?.trimmingCharacters(in: .whitespacesAndNewlines), !status.isEmpty else {
+            return nil
+        }
+        for prefix in ["TASK_RESULT_", "TASK_", "RESULT_"] {
+            if status.uppercased().hasPrefix(prefix) {
+                status.removeFirst(prefix.count)
+                break
+            }
+        }
+        return status.replacingOccurrences(of: "_", with: " ").lowercased()
+    }
+
+    static func scheduleEnabled(in dictionary: [String: Any]) -> Bool? {
+        if let value = boolValue(in: dictionary, keys: ["scheduleIsEnabled", "schedule_is_enabled", "isScheduleEnabled", "is_schedule_enabled"]) {
+            return value
+        }
+
+        if let schedule = dictionary["schedule"] as? [String: Any],
+           let value = boolValue(in: schedule, keys: ["isEnabled", "is_enabled", "enabled"]) {
+            return value
+        }
+
+        if let schedules = dictionary["schedules"] as? [[String: Any]] {
+            for schedule in schedules {
+                if let value = boolValue(in: schedule, keys: ["isEnabled", "is_enabled", "enabled"]) {
+                    return value
+                }
+            }
+        }
+
+        return nil
     }
 
     static func scheduleValue(in dictionary: [String: Any]) -> String? {

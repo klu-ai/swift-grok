@@ -91,6 +91,42 @@ final class GrokClientTasksTests: XCTestCase {
         XCTAssertEqual(response.inactiveTasks.first?.isEnabled, false)
     }
 
+    func testListTasksResponsePreservesScheduleEnabledStateSeparately() async throws {
+        let mockData = """
+        {
+          "tasks": [
+            {
+              "taskId": "task-paused-1",
+              "name": "Paused daily brief",
+              "isEnabled": true,
+              "status": "enabled",
+              "schedule": {
+                "scheduleId": "schedule-paused-1",
+                "isEnabled": false,
+                "timeOfDay": "08:00",
+                "timezone": "Asia/Bangkok"
+              }
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let mockSession = makeMockSession(data: mockData, statusCode: 200)
+        let client = try GrokClient(
+            cookies: ["x-anonuserid": "123"],
+            baseURL: "https://example.test/rest",
+            session: mockSession
+        )
+
+        let response = try await client.listTasksResponse()
+        let task = try XCTUnwrap(response.tasks.first)
+
+        XCTAssertEqual(task.isEnabled, true)
+        XCTAssertEqual(task.status, "enabled")
+        XCTAssertEqual(task.rawJSON["scheduleIsEnabled"]?.value as? Bool, false)
+        XCTAssertEqual(task.rawJSON["scheduleId"]?.value as? String, "schedule-paused-1")
+    }
+
     func testListInactiveTasksResponseUsesInactiveEndpointAndDefaultsDisabled() async throws {
         let mockData = """
         {
@@ -179,6 +215,45 @@ final class GrokClientTasksTests: XCTestCase {
             request.url?.absoluteString,
             "https://example.test/rest/tasks/results/task%20space%2Fslash%3Fand%26unicode%E6%9D%B1%E4%BA%AC?limit=25"
         )
+    }
+
+    func testTaskResultsResponsePreservesMultipleRunsInApiOrder() async throws {
+        let mockData = """
+        {
+          "results": [
+            {
+              "taskResultId": "latest-result",
+              "taskId": "task-123",
+              "conversationId": "conv-latest",
+              "responseId": "resp-latest",
+              "summary": "Latest sanitized result",
+              "createdAt": "2026-05-14T08:30:00Z"
+            },
+            {
+              "taskResultId": "previous-result",
+              "taskId": "task-123",
+              "conversationId": "conv-previous",
+              "responseId": "resp-previous",
+              "summary": "Previous sanitized result",
+              "createdAt": "2026-05-13T08:30:00Z"
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let mockSession = makeMockSession(data: mockData, statusCode: 200)
+        let client = try GrokClient(
+            cookies: ["x-anonuserid": "123"],
+            baseURL: "https://example.test/rest",
+            session: mockSession
+        )
+
+        let results = try await client.taskResults(taskId: "task-123", limit: 2)
+
+        XCTAssertEqual(results.map(\.resolvedId), ["latest-result", "previous-result"])
+        XCTAssertEqual(results.map(\.conversationId), ["conv-latest", "conv-previous"])
+        XCTAssertEqual(results.map(\.responseId), ["resp-latest", "resp-previous"])
+        XCTAssertEqual(results.map(\.message), ["Latest sanitized result", "Previous sanitized result"])
     }
 
     func testLatestTaskResultDecodesSingularWrappedResult() async throws {
