@@ -58,6 +58,8 @@ extension GrokCLI {
           --quiet                     Suppress UI/status output; useful with --raw in scripts
           --stdin                     Read the message from stdin
           --prompt-file <path>        Read the message from a UTF-8 text file
+          --file, --upload <path>     Upload and attach a local file before sending
+          --attach <fileId>           Attach an existing Grok file ID before sending
           --audio <path|->            Transcribe audio and send the transcript as the message
           --audio-format <format>     Required with --audio - or unknown file extensions
           --refinement-level <level>  Speech-to-text refinement level
@@ -214,7 +216,10 @@ extension GrokCLI {
             "--audio",
             "--audio-format",
             "--refinement-level",
-            "--prompt-file"
+            "--prompt-file",
+            "--file",
+            "--upload",
+            "--attach"
             // Grok Code is disabled: the code harness concept will not work with grok.com because tool calls happen server side.
             // "--permission-mode",
             // "--max-turns",
@@ -229,7 +234,10 @@ extension GrokCLI {
             arg.hasPrefix("--audio=") ||
             arg.hasPrefix("--audio-format=") ||
             arg.hasPrefix("--refinement-level=") ||
-            arg.hasPrefix("--prompt-file=")
+            arg.hasPrefix("--prompt-file=") ||
+            arg.hasPrefix("--file=") ||
+            arg.hasPrefix("--upload=") ||
+            arg.hasPrefix("--attach=")
             // Grok Code is disabled: the code harness concept will not work with grok.com because tool calls happen server side.
             // arg.hasPrefix("--permission-mode=") ||
             // arg.hasPrefix("--max-turns=") ||

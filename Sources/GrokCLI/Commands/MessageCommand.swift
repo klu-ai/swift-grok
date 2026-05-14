@@ -131,6 +131,8 @@ extension GrokCLI {
         var explicitStdin = false
         var audioPath: String?
         var audioFormat: String?
+        var uploadPaths: [String] = []
+        var attachmentIds: [String] = []
         var refinementLevel = GrokClient.defaultSpeechRefinementLevel
         var reasoningRequested = false
         var enableDeepSearch = false
@@ -238,6 +240,56 @@ extension GrokCLI {
                     return
                 }
                 audioFormat = value
+            } else if arg == "--file" || arg == "--upload" {
+                guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
+                    reportUsageError("\(arg) requires a path", toStderr: quietRequested)
+                    if exitOnError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                uploadPaths.append(nextValue)
+                index += 1
+            } else if arg.hasPrefix("--file=") {
+                let value = String(arg.dropFirst("--file=".count))
+                guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    reportUsageError("--file requires a path", toStderr: quietRequested)
+                    if exitOnError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                uploadPaths.append(value)
+            } else if arg.hasPrefix("--upload=") {
+                let value = String(arg.dropFirst("--upload=".count))
+                guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    reportUsageError("--upload requires a path", toStderr: quietRequested)
+                    if exitOnError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                uploadPaths.append(value)
+            } else if arg == "--attach" {
+                guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
+                    reportUsageError("--attach requires a file ID", toStderr: quietRequested)
+                    if exitOnError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                attachmentIds.append(nextValue)
+                index += 1
+            } else if arg.hasPrefix("--attach=") {
+                let value = String(arg.dropFirst("--attach=".count))
+                guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    reportUsageError("--attach requires a file ID", toStderr: quietRequested)
+                    if exitOnError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                attachmentIds.append(value)
             } else if arg == "--refinement-level" {
                 guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
                     reportUsageError("--refinement-level requires a value", toStderr: quietRequested)
@@ -364,9 +416,6 @@ extension GrokCLI {
         // Execute the command
         if !jsonMode {
             printSearchConfigurationWarnings(warnings, toStderr: enableQuiet)
-            if !enableQuiet {
-                print("Calling Grok API...".cyan)
-            }
         }
 
         if enableDebug && !jsonMode {
@@ -378,6 +427,8 @@ extension GrokCLI {
                 "Debug: Output Format = \(outputFormat.description)",
                 "Debug: Streaming = \(enableStream)",
                 "Debug: Model = \(selectedMode.displayName) (\(selectedMode.id))",
+                "Debug: Upload Files = \(uploadPaths.count)",
+                "Debug: Existing Attachments = \(attachmentIds.count)",
                 "Debug: Custom instructions disable requested = \(enableNoCustomInstructions) (ignored)"
             ]
             for line in debugLines {
@@ -394,14 +445,35 @@ extension GrokCLI {
 
         let formatter = OutputFormatter(format: outputFormat)
 
-        if !jsonMode && !enableQuiet {
-            print("Sending: \(messageText)".cyan)
-            formatter.printThinkingStatus()
-        }
-
         do {
             // Initialize client
-            _ = try app.initializeClient()
+            let client = try app.initializeClient()
+
+            var fileAttachmentIds = attachmentIds
+            if !uploadPaths.isEmpty, !jsonMode, !enableQuiet {
+                print(uploadPaths.count == 1 ? "Uploading file...".cyan : "Uploading \(uploadPaths.count) files...".cyan)
+            }
+            for path in uploadPaths {
+                let response = try await client.uploadFile(
+                    at: path,
+                    mimeType: inferredMessageAttachmentMimeType(for: path)
+                )
+                guard let fileId = response.uploadedFileId?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !fileId.isEmpty else {
+                    throw GrokError.apiError("Uploaded file response did not include an attachment ID")
+                }
+                appendUniqueAttachmentId(fileId, to: &fileAttachmentIds)
+                if !jsonMode, !enableQuiet {
+                    let fileName = response.fileName ?? URL(fileURLWithPath: path).lastPathComponent
+                    print("Attached: \(fileName)".green)
+                }
+            }
+
+            if !jsonMode && !enableQuiet {
+                print("Calling Grok API...".cyan)
+                print("Sending: \(messageText)".cyan)
+                formatter.printThinkingStatus()
+            }
 
             // Send message
             let stream = try await app.msg(
@@ -412,6 +484,7 @@ extension GrokCLI {
                 customInstructions: "",
                 temporary: enablePrivate,
                 mode: selectedMode,
+                fileAttachments: fileAttachmentIds,
                 workspaceIds: app.getCurrentWorkspaceIds(),
                 streamOutput: enableStream
             )
@@ -424,7 +497,7 @@ extension GrokCLI {
                     privateMode: enablePrivate,
                     stream: enableStream,
                     workspaceIds: app.getCurrentWorkspaceIds(),
-                    fileAttachmentIds: []
+                    fileAttachmentIds: fileAttachmentIds
                 )
                 if enableStream {
                     let streamSucceeded = try await printMessageJSONStream(
@@ -621,6 +694,41 @@ extension GrokCLI {
             }
         }
         return nil
+    }
+
+    static func appendUniqueAttachmentId(_ fileId: String, to attachmentIds: inout [String]) {
+        guard !attachmentIds.contains(fileId) else {
+            return
+        }
+        attachmentIds.append(fileId)
+    }
+
+    static func inferredMessageAttachmentMimeType(for path: String) -> String {
+        let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
+        switch ext {
+        case "txt":
+            return "text/plain"
+        case "json":
+            return "application/json"
+        case "csv":
+            return "text/csv"
+        case "pdf":
+            return "application/pdf"
+        case "png":
+            return "image/png"
+        case "jpg", "jpeg":
+            return "image/jpeg"
+        case "docx":
+            return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        case "xlsx":
+            return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        case "pptx":
+            return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        case "md":
+            return "text/markdown"
+        default:
+            return "application/octet-stream"
+        }
     }
 
     static func printMessageJSONStream(

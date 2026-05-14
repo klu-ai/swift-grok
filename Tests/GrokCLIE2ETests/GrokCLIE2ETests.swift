@@ -216,6 +216,38 @@ final class GrokCLIE2ETests: XCTestCase {
         assertAnswerOnlyStdout(run.stdout, equals: answer)
     }
 
+    func testMessageUploadsFileAndAttachesExistingFileId() throws {
+        let answer = "document answer"
+        let server = try MockGrokServer(finalMessage: answer)
+        let environment = try TestEnvironment(server: server)
+        let pdfURL = environment.scratchURL.appendingPathComponent("paper.pdf")
+        let pdfData = Data("%PDF-1.4 test document".utf8)
+        try pdfData.write(to: pdfURL)
+
+        let run = try environment.run([
+            "message",
+            "--file",
+            pdfURL.path,
+            "--attach",
+            "existing-file-id",
+            "--raw",
+            "--quiet",
+            "What is novel here?"
+        ])
+
+        XCTAssertEqual(run.status, 0)
+        let uploadRequest = try XCTUnwrap(server.requests(matchingPath: "/rest/app-chat/upload-file", method: "POST").last)
+        XCTAssertEqual(uploadRequest.jsonString("fileName"), "paper.pdf")
+        XCTAssertEqual(uploadRequest.jsonString("fileMimeType"), "application/pdf")
+        XCTAssertEqual(uploadRequest.jsonString("content"), pdfData.base64EncodedString())
+
+        let chatRequest = try XCTUnwrap(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").last)
+        XCTAssertEqual(chatRequest.jsonString("message"), "What is novel here?")
+        let fileAttachments = try XCTUnwrap(chatRequest.json["fileAttachments"] as? [Any])
+        XCTAssertEqual(fileAttachments.compactMap { $0 as? String }, ["existing-file-id", "uploaded-file-1"])
+        assertAnswerOnlyStdout(run.stdout, equals: answer)
+    }
+
     func testMessageAudioTranscribesThenSendsTranscript() throws {
         let answer = "audio answer"
         let transcript = "mock audio transcript"
