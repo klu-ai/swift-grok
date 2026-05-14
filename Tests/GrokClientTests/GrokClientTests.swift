@@ -172,6 +172,32 @@ final class GrokClientTests: XCTestCase {
         XCTAssertEqual(response.resetAfterSeconds, 5_400)
     }
 
+    func testRateLimitsParsesWindowDurationWhenResetIsMissing() async throws {
+        let responseData = """
+        {
+          "rateLimit": {
+            "modelName": "fast",
+            "remainingResponses": 4,
+            "window": "1h"
+          }
+        }
+        """.data(using: .utf8)!
+        let session = makeMockSession(data: responseData, statusCode: 200)
+        let client = try GrokClient(
+            cookies: ["sso": "test-cookie"],
+            baseURL: "https://example.test/rest",
+            session: session
+        )
+
+        let response = try await client.rateLimits(modelName: "fast")
+
+        XCTAssertEqual(response.modelName, "fast")
+        XCTAssertEqual(response.remainingResponses, 4)
+        XCTAssertNil(response.resetAfterSeconds)
+        XCTAssertNil(response.resetAt)
+        XCTAssertEqual(response.windowSeconds, 3_600)
+    }
+
     func testSubscriptionsRequestUsesRootEndpointAndParsesCurrentPlan() async throws {
         let responseData = """
         {
@@ -637,6 +663,203 @@ final class GrokClientTests: XCTestCase {
         XCTAssertEqual(conversations.first?.conversationId, "111")
     }
 
+    func testListConversationsWithSearchQueryUsesEncodedURLAndPageSize() async throws {
+        let mockData = """
+        {
+          "conversations": [
+            {
+              "conversation_id": "conv-search",
+              "name": "Search Result"
+            }
+          ],
+          "textSearchMatches": [
+            { "text": "matched snippet" }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let mockSession = makeMockSession(data: mockData, statusCode: 200)
+        let client = try GrokClient(
+            cookies: ["x-anonuserid": "123"],
+            baseURL: "https://example.test/rest",
+            session: mockSession
+        )
+
+        let conversations = try await client.listConversations(
+            pageSize: 60,
+            searchQuery: "swift concurrency & actors"
+        )
+
+        XCTAssertEqual(conversations.first?.conversationId, "conv-search")
+        XCTAssertEqual(conversations.first?.title, "Search Result")
+        let request = try XCTUnwrap(MockURLProtocol.lastRequest)
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertEqual(
+            request.url?.absoluteString,
+            "https://example.test/rest/app-chat/conversations?pageSize=60&searchQuery=swift%20concurrency%20%26%20actors"
+        )
+        XCTAssertNil(MockURLProtocol.lastRequestBody)
+    }
+
+    func testTypeaheadUsesWorkerEndpointAndParsesSuggestions() async throws {
+        let mockData = """
+        {
+          "suggestions": [
+            { "text": "test driven development", "title": "TDD" },
+            { "query": "testing swift" },
+            "test cases"
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let mockSession = makeMockSession(data: mockData, statusCode: 200)
+        let client = try GrokClient(
+            cookies: ["x-anonuserid": "123"],
+            baseURL: "https://example.test/rest",
+            session: mockSession
+        )
+
+        let response = try await client.typeahead(query: "test", maxItems: 3)
+
+        XCTAssertEqual(response.suggestions.map(\.text), [
+            "test driven development",
+            "testing swift",
+            "test cases"
+        ])
+        XCTAssertEqual(response.suggestions.first?.title, "TDD")
+        let request = try XCTUnwrap(MockURLProtocol.lastRequest)
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertEqual(
+            request.url?.absoluteString,
+            "https://example.test/_worker/typeahead?lang=en&maxItems=3&q=test&platform=web&source=1"
+        )
+        XCTAssertNil(MockURLProtocol.lastRequestBody)
+    }
+
+    func testShareLinkURLUsesGetEndpointAndDecodesWrappedURL() async throws {
+        let mockData = """
+        {
+          "result": {
+            "share_links": [
+              {
+                "conversationId": "conv 123",
+                "share_url": " https://grok.com/share/share_abc123 "
+              }
+            ]
+          }
+        }
+        """.data(using: .utf8)!
+
+        let mockSession = makeMockSession(data: mockData, statusCode: 200)
+        let client = try GrokClient(
+            cookies: ["x-anonuserid": "123"],
+            baseURL: "https://example.test/rest",
+            session: mockSession
+        )
+
+        let shareURL = try await client.shareLinkURL(conversationId: "conv 123")
+
+        XCTAssertEqual(shareURL, "https://grok.com/share/share_abc123")
+        let request = try XCTUnwrap(MockURLProtocol.lastRequest)
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertEqual(
+            request.url?.absoluteString,
+            "https://example.test/rest/app-chat/share_links?pageSize=100&conversationId=conv%20123"
+        )
+        XCTAssertNil(MockURLProtocol.lastRequestBody)
+    }
+
+    func testShareLinkURLConstructsURLFromWrappedShareIdentifier() async throws {
+        let mockData = """
+        {
+          "data": {
+            "items": [
+              {
+                "share_link_id": "share_token_456"
+              }
+            ]
+          }
+        }
+        """.data(using: .utf8)!
+
+        let mockSession = makeMockSession(data: mockData, statusCode: 200)
+        let client = try GrokClient(
+            cookies: ["x-anonuserid": "123"],
+            baseURL: "https://example.test/rest",
+            session: mockSession
+        )
+
+        let shareURL = try await client.shareLinkURL(conversationId: "conv-token", pageSize: 25)
+
+        XCTAssertEqual(shareURL, "https://grok.com/share/share_token_456")
+        let request = try XCTUnwrap(MockURLProtocol.lastRequest)
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertEqual(
+            request.url?.absoluteString,
+            "https://example.test/rest/app-chat/share_links?pageSize=25&conversationId=conv-token"
+        )
+        XCTAssertNil(MockURLProtocol.lastRequestBody)
+    }
+
+    func testShareLinkURLCreatesLinkWhenExistingLookupIsEmpty() async throws {
+        let lookupData = #"{"shareLinks":[]}"#.data(using: .utf8)!
+        let createData = #"{"shareLinkId":"created_share_123"}"#.data(using: .utf8)!
+        let mockSession = makeMockSession(responses: [
+            (data: lookupData, statusCode: 200),
+            (data: createData, statusCode: 200)
+        ])
+        let client = try GrokClient(
+            cookies: ["x-anonuserid": "123"],
+            baseURL: "https://example.test/rest",
+            session: mockSession
+        )
+
+        let shareURL = try await client.shareLinkURL(
+            conversationId: "conv create",
+            responseId: "resp 1"
+        )
+
+        XCTAssertEqual(shareURL, "https://grok.com/share/created_share_123")
+        XCTAssertEqual(MockURLProtocol.requests.count, 2)
+
+        let lookupRequest = try XCTUnwrap(MockURLProtocol.requests.first)
+        XCTAssertEqual(lookupRequest.httpMethod, "GET")
+        XCTAssertEqual(
+            lookupRequest.url?.absoluteString,
+            "https://example.test/rest/app-chat/share_links?pageSize=100&conversationId=conv%20create&responseId=resp%201"
+        )
+
+        let createRequest = try XCTUnwrap(MockURLProtocol.requests.last)
+        XCTAssertEqual(createRequest.httpMethod, "POST")
+        XCTAssertEqual(
+            createRequest.url?.absoluteString,
+            "https://example.test/rest/app-chat/conversations/conv%20create/share"
+        )
+        let createBody = try XCTUnwrap(MockURLProtocol.requestBodies.last.flatMap { $0 })
+        let createJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: createBody) as? [String: Any])
+        XCTAssertEqual(createJSON["responseId"] as? String, "resp 1")
+        XCTAssertEqual(createJSON["allowIndexing"] as? Bool, true)
+    }
+
+    func testSoftDeleteConversationUsesDeleteEndpointWithNoBody() async throws {
+        let mockSession = makeMockSession(data: Data(), statusCode: 204)
+        let client = try GrokClient(
+            cookies: ["x-anonuserid": "123"],
+            baseURL: "https://example.test/rest",
+            session: mockSession
+        )
+
+        try await client.softDeleteConversation(conversationId: "conv 123")
+
+        let request = try XCTUnwrap(MockURLProtocol.lastRequest)
+        XCTAssertEqual(request.httpMethod, "DELETE")
+        XCTAssertEqual(
+            request.url?.absoluteString,
+            "https://example.test/rest/app-chat/conversations/soft/conv%20123"
+        )
+        XCTAssertNil(MockURLProtocol.lastRequestBody)
+    }
+
     func testSendMessage_success() async throws {
         let streamingData = """
         {"result":{"conversation":{"conversationId":"convo123"},"response":{"responseId":"resp777","token":"Hello "}}}
@@ -684,6 +907,126 @@ final class GrokClientTests: XCTestCase {
             }
         }
         XCTAssertEqual(finalResponse?.message, "Hello World")
+    }
+
+    func testStreamParserFinishesAfterFinalBeforeLineSourceCompletes() async throws {
+        let client = try GrokClient(cookies: ["x-anonuserid":"123"])
+        var lineContinuation: AsyncThrowingStream<String, Error>.Continuation?
+        let lines = AsyncThrowingStream<String, Error> { continuation in
+            lineContinuation = continuation
+        }
+        let continuation = try XCTUnwrap(lineContinuation)
+        let stream = client.streamResponses(from: lines)
+
+        let consumeTask = Task {
+            var responses: [ConversationResponse] = []
+            for try await response in stream {
+                responses.append(response)
+            }
+            return responses
+        }
+
+        continuation.yield(#"{"result":{"conversation":{"conversationId":"convo123"},"response":{"responseId":"resp777","token":"Hello "}}}"#)
+        continuation.yield(#"{"result":{"response":{"modelResponse":{"message":"Hello World","responseId":"resp777"}}}}"#)
+
+        let completedBeforeSourceEOF = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                do {
+                    _ = try await consumeTask.value
+                    return true
+                } catch {
+                    return false
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                return false
+            }
+
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
+        }
+
+        continuation.finish()
+        let responses = try await consumeTask.value
+
+        XCTAssertTrue(completedBeforeSourceEOF, "Stream parser should finish as soon as final modelResponse arrives.")
+        XCTAssertEqual(responses.map(\.message), ["Hello ", "Hello World"])
+        XCTAssertEqual(responses.last?.isFinal, true)
+    }
+
+    func testStreamParserTreatsPlainEmptyTokenAsTerminalBeforeDelayedModelResponse() async throws {
+        let client = try GrokClient(cookies: ["x-anonuserid":"123"])
+        var lineContinuation: AsyncThrowingStream<String, Error>.Continuation?
+        let lines = AsyncThrowingStream<String, Error> { continuation in
+            lineContinuation = continuation
+        }
+        let continuation = try XCTUnwrap(lineContinuation)
+        let stream = client.streamResponses(from: lines)
+
+        let consumeTask = Task {
+            var responses: [ConversationResponse] = []
+            for try await response in stream {
+                responses.append(response)
+            }
+            return responses
+        }
+
+        continuation.yield(#"{"result":{"conversation":{"conversationId":"convo123"},"response":{"responseId":"resp777","token":"Hello "}}}"#)
+        continuation.yield(#"{"result":{"response":{"responseId":"resp777","token":"World"}}}"#)
+        continuation.yield(#"{"result":{"response":{"responseId":"resp777","token":"","isThinking":false,"isSoftStop":false}}}"#)
+
+        let completedBeforeDelayedMetadata = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                do {
+                    _ = try await consumeTask.value
+                    return true
+                } catch {
+                    return false
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                return false
+            }
+
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
+        }
+
+        continuation.yield(#"{"result":{"response":{"modelResponse":{"message":"Hello World","responseId":"resp777"}}}}"#)
+        continuation.finish()
+        let responses = try await consumeTask.value
+
+        XCTAssertTrue(completedBeforeDelayedMetadata, "Stream parser should finish on the terminal empty token before delayed final metadata arrives.")
+        XCTAssertEqual(responses.map(\.message), ["Hello ", "World", "Hello World"])
+        XCTAssertEqual(responses.last?.isFinal, true)
+    }
+
+    func testStreamParserDoesNotTreatToolEmptyTokenAsTerminal() async throws {
+        let client = try GrokClient(cookies: ["x-anonuserid":"123"])
+        let lines = AsyncThrowingStream<String, Error> { continuation in
+            continuation.yield(#"{"result":{"conversation":{"conversationId":"convo123"},"response":{"responseId":"resp777","token":"Hello "}}}"#)
+            continuation.yield(#"{"result":{"responseId":"resp777","token":"","isThinking":false,"isSoftStop":false,"messageTag":"raw_function_result","messageStepId":0,"toolUsageCardId":"tool-1"}}"#)
+            continuation.yield(#"{"result":{"response":{"responseId":"resp777","token":"World"}}}"#)
+            continuation.yield(#"{"result":{"response":{"modelResponse":{"message":"Hello World","responseId":"resp777"}}}}"#)
+            continuation.finish()
+        }
+
+        let stream = client.streamResponses(from: lines)
+        var responses: [ConversationResponse] = []
+        for try await response in stream {
+            responses.append(response)
+        }
+
+        XCTAssertEqual(responses.count, 4)
+        XCTAssertEqual(responses[1].message, "")
+        XCTAssertEqual(responses[1].responseId, "resp777")
+        XCTAssertFalse(responses[1].isFinal)
+        XCTAssertEqual(responses.map(\.message), ["Hello ", "", "World", "Hello World"])
+        XCTAssertEqual(responses.last?.isFinal, true)
     }
 
     func testStreamMessageYieldsFallbackFinalWhenNoModelResponseArrives() async throws {
@@ -804,6 +1147,228 @@ final class GrokClientTests: XCTestCase {
         XCTAssertEqual(responses.first?.message, "Loaded")
     }
 
+    func testLoadResponsesDecodesLiveScalarModelMetadata() async throws {
+        let mockData = """
+        {
+          "responses": [
+            {
+              "responseId": "resp001",
+              "message": "Loaded",
+              "sender": "ASSISTANT",
+              "createTime": "2026-05-13T21:58:08.392Z",
+              "parentResponseId": "resp-user",
+              "model": "grok-420-computer-use-sa",
+              "metadata": {
+                "request_metadata": {
+                  "mode": "grok-4-3",
+                  "model": "grok-420-computer-use-sa"
+                },
+                "llm_info": {
+                  "modelHash": "redacted"
+                }
+              }
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let mockSession = makeMockSession(data: mockData, statusCode: 200)
+        let client = try GrokClient(cookies: ["x-anonuserid":"123"], session: mockSession)
+
+        let responses = try await client.loadResponses(conversationId: "convoXYZ", specificResponseIds: ["resp001"])
+        XCTAssertEqual(responses.count, 1)
+        XCTAssertEqual(responses.first?.modelId, "grok-420-computer-use-sa")
+        XCTAssertEqual(responses.first?.modeId, "grok-4-3")
+    }
+
+    func testListTasksResponseDecodesActiveAndInactiveTaskBuckets() async throws {
+        let mockData = """
+        {
+          "activeTasks": [
+            {
+              "taskId": "task-active-1",
+              "name": "Morning brief",
+              "prompt": "Summarize sanitized market headlines",
+              "schedule": {
+                "taskCadence": "TASK_CADENCE_DAILY",
+                "timezone": "Asia/Bangkok"
+              }
+            }
+          ],
+          "inactiveTasks": [
+            {
+              "task_id": "task-inactive-1",
+              "title": "Old reminder",
+              "prompt": "Sanitized inactive prompt",
+              "state": "ARCHIVED"
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let mockSession = makeMockSession(data: mockData, statusCode: 200)
+        let client = try GrokClient(
+            cookies: ["x-anonuserid": "123"],
+            baseURL: "https://example.test/rest",
+            session: mockSession
+        )
+
+        let response = try await client.listTasksResponse()
+
+        XCTAssertEqual(response.tasks.map(\.resolvedId), ["task-active-1", "task-inactive-1"])
+        XCTAssertEqual(response.activeTasks.count, 1)
+        XCTAssertEqual(response.inactiveTasks.count, 1)
+        XCTAssertEqual(response.activeTasks.first?.isEnabled, true)
+        XCTAssertEqual(response.inactiveTasks.first?.isEnabled, false)
+        XCTAssertEqual(response.inactiveTasks.first?.name, "Old reminder")
+        XCTAssertEqual(response.inactiveTasks.first?.status, "ARCHIVED")
+
+        let request = try XCTUnwrap(MockURLProtocol.lastRequest)
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertEqual(request.url?.absoluteString, "https://example.test/rest/tasks")
+        XCTAssertNil(MockURLProtocol.lastRequestBody)
+    }
+
+    func testListTasksResponseDecodesNestedActiveInactiveTaskBuckets() async throws {
+        let mockData = """
+        {
+          "data": {
+            "tasks": {
+              "active": [
+                {
+                  "task": {
+                    "id": "nested-active",
+                    "name": "Nested active",
+                    "enabled": true
+                  }
+                }
+              ],
+              "archived": [
+                {
+                  "task": {
+                    "id": "nested-archived",
+                    "name": "Nested archived"
+                  }
+                }
+              ]
+            }
+          }
+        }
+        """.data(using: .utf8)!
+
+        let mockSession = makeMockSession(data: mockData, statusCode: 200)
+        let client = try GrokClient(
+            cookies: ["x-anonuserid": "123"],
+            baseURL: "https://example.test/rest",
+            session: mockSession
+        )
+
+        let response = try await client.listTasksResponse()
+
+        XCTAssertEqual(response.tasks.map(\.resolvedId), ["nested-active", "nested-archived"])
+        XCTAssertEqual(response.activeTasks.first?.isEnabled, true)
+        XCTAssertEqual(response.inactiveTasks.first?.isEnabled, false)
+    }
+
+    func testListInactiveTasksResponseUsesInactiveEndpointAndDefaultsDisabled() async throws {
+        let mockData = """
+        {
+          "tasks": [
+            {
+              "taskId": "task-archived-1",
+              "title": "Archived reminder",
+              "taskPrompt": "Sanitized archived prompt"
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let mockSession = makeMockSession(data: mockData, statusCode: 200)
+        let client = try GrokClient(
+            cookies: ["x-anonuserid": "123"],
+            baseURL: "https://example.test/rest",
+            session: mockSession
+        )
+
+        let response = try await client.listInactiveTasksResponse()
+
+        XCTAssertEqual(response.tasks.map(\.resolvedId), ["task-archived-1"])
+        XCTAssertEqual(response.tasks.first?.name, "Archived reminder")
+        XCTAssertEqual(response.tasks.first?.prompt, "Sanitized archived prompt")
+        XCTAssertEqual(response.tasks.first?.isEnabled, false)
+
+        let request = try XCTUnwrap(MockURLProtocol.lastRequest)
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertEqual(request.url?.absoluteString, "https://example.test/rest/tasks/inactive")
+        XCTAssertNil(MockURLProtocol.lastRequestBody)
+    }
+
+    func testTaskResultsResponseUsesRootResultsEndpointAndLimitOne() async throws {
+        let mockData = """
+        {
+          "results": [
+            {
+              "taskResultId": "result-1",
+              "taskId": "task-123",
+              "conversationId": "conv-123",
+              "responseId": "resp-123",
+              "summary": "Sanitized task result text",
+              "status": "COMPLETE"
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let mockSession = makeMockSession(data: mockData, statusCode: 200)
+        let client = try GrokClient(
+            cookies: ["x-anonuserid": "123"],
+            baseURL: "https://example.test/rest",
+            session: mockSession
+        )
+
+        let response = try await client.taskResultsResponse(taskId: "task 123")
+
+        XCTAssertEqual(response.results.count, 1)
+        XCTAssertEqual(response.results.first?.resolvedId, "result-1")
+        XCTAssertEqual(response.results.first?.taskId, "task-123")
+        XCTAssertEqual(response.results.first?.conversationId, "conv-123")
+        XCTAssertEqual(response.results.first?.responseId, "resp-123")
+        XCTAssertEqual(response.results.first?.message, "Sanitized task result text")
+        XCTAssertEqual(response.results.first?.status, "COMPLETE")
+
+        let request = try XCTUnwrap(MockURLProtocol.lastRequest)
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertEqual(request.url?.absoluteString, "https://example.test/rest/tasks/results/task%20123?limit=1")
+        XCTAssertNil(MockURLProtocol.lastRequestBody)
+    }
+
+    func testLatestTaskResultDecodesSingularWrappedResult() async throws {
+        let mockData = """
+        {
+          "data": {
+            "id": "result-single",
+            "task_id": "task-single",
+            "conversation_id": "conv-single",
+            "output": "Sanitized single result"
+          }
+        }
+        """.data(using: .utf8)!
+
+        let mockSession = makeMockSession(data: mockData, statusCode: 200)
+        let client = try GrokClient(
+            cookies: ["x-anonuserid": "123"],
+            baseURL: "https://example.test/rest",
+            session: mockSession
+        )
+
+        let result = try await client.latestTaskResult(taskId: "task-single")
+
+        XCTAssertEqual(result?.resolvedId, "result-single")
+        XCTAssertEqual(result?.taskId, "task-single")
+        XCTAssertEqual(result?.conversationId, "conv-single")
+        XCTAssertEqual(result?.message, "Sanitized single result")
+    }
+
     // MARK: - Helpers
 
     private func makeMockSession(data: Data, statusCode: Int, useStreaming: Bool = false, chunkDelay: TimeInterval = 0.01) -> URLSession {
@@ -818,6 +1383,9 @@ final class GrokClientTests: XCTestCase {
         let session = URLSession(configuration: config)
         MockURLProtocol.lastRequest = nil
         MockURLProtocol.lastRequestBody = nil
+        MockURLProtocol.requests = []
+        MockURLProtocol.requestBodies = []
+        MockURLProtocol.queuedResponses = []
 
         // Provide the static response
         if let streamingProto = protocolClass as? StreamingURLProtocol.Type {
@@ -831,6 +1399,31 @@ final class GrokClientTests: XCTestCase {
 
         return session
     }
+
+    private func makeMockSession(responses: [(data: Data, statusCode: Int)]) -> URLSession {
+        let url = URL(string: "https://mocked.url")!
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        MockURLProtocol.lastRequest = nil
+        MockURLProtocol.lastRequestBody = nil
+        MockURLProtocol.requests = []
+        MockURLProtocol.requestBodies = []
+        MockURLProtocol.mockData = nil
+        MockURLProtocol.mockResponse = nil
+        MockURLProtocol.queuedResponses = responses.map { response in
+            let httpResponse = HTTPURLResponse(
+                url: url,
+                statusCode: response.statusCode,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return (data: response.data, response: httpResponse)
+        }
+
+        return session
+    }
 }
 
 // MARK: - Custom URLProtocols for Mocks
@@ -840,18 +1433,29 @@ class MockURLProtocol: URLProtocol {
     static var mockResponse: URLResponse?
     static var lastRequest: URLRequest?
     static var lastRequestBody: Data?
+    static var requests: [URLRequest] = []
+    static var requestBodies: [Data?] = []
+    static var queuedResponses: [(data: Data, response: URLResponse)] = []
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
         MockURLProtocol.lastRequest = request
-        MockURLProtocol.lastRequestBody = request.httpBody ?? request.httpBodyStream.flatMap(Self.readBodyStream)
-        if let response = MockURLProtocol.mockResponse {
+        let requestBody = request.httpBody ?? request.httpBodyStream.flatMap(Self.readBodyStream)
+        MockURLProtocol.lastRequestBody = requestBody
+        MockURLProtocol.requests.append(request)
+        MockURLProtocol.requestBodies.append(requestBody)
+
+        if !MockURLProtocol.queuedResponses.isEmpty {
+            let queuedResponse = MockURLProtocol.queuedResponses.removeFirst()
+            client?.urlProtocol(self, didReceive: queuedResponse.response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: queuedResponse.data)
+        } else if let response = MockURLProtocol.mockResponse {
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        }
-        if let data = MockURLProtocol.mockData {
-            client?.urlProtocol(self, didLoad: data)
+            if let data = MockURLProtocol.mockData {
+                client?.urlProtocol(self, didLoad: data)
+            }
         }
         client?.urlProtocolDidFinishLoading(self)
     }
