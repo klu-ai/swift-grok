@@ -94,6 +94,7 @@ struct MessageCommand: ParsableCommand {
                 }
             }
         } catch {
+            formatter.clearTransientStatusBeforeError()
             await app.handleError(error, debug: options.debug)
         }
     }
@@ -101,9 +102,23 @@ struct MessageCommand: ParsableCommand {
 
 
 extension GrokCLI {
-    static func handleMessageCommand(args: [String], exitOnError: Bool = false) async throws {
+    static func handleMessageCommand(
+        args: [String],
+        exitOnError: Bool = false,
+        jsonCommandName: String = "message"
+    ) async throws {
         let jsonRequested = isJSONRequested(args)
         let quietRequested = args.contains("--quiet")
+
+        func reportUsageError(_ message: String, toStderr: Bool) {
+            reportMessageUsageError(
+                message,
+                jsonRequested: jsonRequested,
+                exitOnError: exitOnError,
+                command: jsonCommandName,
+                toStderr: toStderr
+            )
+        }
 
         if args.count == 1, let first = args.first, isHelpArgument(first) {
             printMessageUsage()
@@ -135,7 +150,7 @@ extension GrokCLI {
             let modelOption = applyModelOption(arg, nextValue: nextValue)
 
             if modelOption.missingValue {
-                reportMessageUsageError("\(arg) requires a model value", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                reportUsageError("\(arg) requires a model value", toStderr: quietRequested)
                 if exitOnError {
                     exit(with: 2)
                 }
@@ -148,13 +163,13 @@ extension GrokCLI {
 
             let outputFormatOption = applyOutputFormatOption(arg, nextValue: nextValue)
             if outputFormatOption.missingValue {
-                reportMessageUsageError("\(arg) requires a format value", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                reportUsageError("\(arg) requires a format value", toStderr: quietRequested)
                 if exitOnError {
                     exit(with: 2)
                 }
                 return
             } else if let invalidValue = outputFormatOption.invalidValue {
-                reportMessageUsageError("Invalid output format '\(invalidValue)'. Use md, raw, or json.", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                reportUsageError("Invalid output format '\(invalidValue)'. Use md, raw, or json.", toStderr: quietRequested)
                 if exitOnError {
                     exit(with: 2)
                 }
@@ -185,7 +200,7 @@ extension GrokCLI {
                 explicitStdin = true
             } else if arg == "--audio" {
                 guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
-                    reportMessageUsageError("--audio requires a path or -", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    reportUsageError("--audio requires a path or -", toStderr: quietRequested)
                     if exitOnError {
                         exit(with: 2)
                     }
@@ -196,7 +211,7 @@ extension GrokCLI {
             } else if arg.hasPrefix("--audio=") {
                 let value = String(arg.dropFirst("--audio=".count))
                 guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    reportMessageUsageError("--audio requires a path or -", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    reportUsageError("--audio requires a path or -", toStderr: quietRequested)
                     if exitOnError {
                         exit(with: 2)
                     }
@@ -205,7 +220,7 @@ extension GrokCLI {
                 audioPath = value
             } else if arg == "--audio-format" {
                 guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
-                    reportMessageUsageError("--audio-format requires a value", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    reportUsageError("--audio-format requires a value", toStderr: quietRequested)
                     if exitOnError {
                         exit(with: 2)
                     }
@@ -216,7 +231,7 @@ extension GrokCLI {
             } else if arg.hasPrefix("--audio-format=") {
                 let value = String(arg.dropFirst("--audio-format=".count))
                 guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    reportMessageUsageError("--audio-format requires a value", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    reportUsageError("--audio-format requires a value", toStderr: quietRequested)
                     if exitOnError {
                         exit(with: 2)
                     }
@@ -225,7 +240,7 @@ extension GrokCLI {
                 audioFormat = value
             } else if arg == "--refinement-level" {
                 guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
-                    reportMessageUsageError("--refinement-level requires a value", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    reportUsageError("--refinement-level requires a value", toStderr: quietRequested)
                     if exitOnError {
                         exit(with: 2)
                     }
@@ -236,7 +251,7 @@ extension GrokCLI {
             } else if arg.hasPrefix("--refinement-level=") {
                 let value = String(arg.dropFirst("--refinement-level=".count))
                 guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    reportMessageUsageError("--refinement-level requires a value", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    reportUsageError("--refinement-level requires a value", toStderr: quietRequested)
                     if exitOnError {
                         exit(with: 2)
                     }
@@ -245,7 +260,7 @@ extension GrokCLI {
                 refinementLevel = value
             } else if arg == "--prompt-file" {
                 guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
-                    reportMessageUsageError("--prompt-file requires a path", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    reportUsageError("--prompt-file requires a path", toStderr: quietRequested)
                     if exitOnError {
                         exit(with: 2)
                     }
@@ -256,7 +271,7 @@ extension GrokCLI {
             } else if arg.hasPrefix("--prompt-file=") {
                 let value = String(arg.dropFirst("--prompt-file=".count))
                 guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    reportMessageUsageError("--prompt-file requires a path", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    reportUsageError("--prompt-file requires a path", toStderr: quietRequested)
                     if exitOnError {
                         exit(with: 2)
                     }
@@ -272,7 +287,7 @@ extension GrokCLI {
         let jsonMode = outputFormat.isJSON
         let promptSourceCount = (message.isEmpty ? 0 : 1) + (promptFile == nil ? 0 : 1) + (explicitStdin ? 1 : 0) + (audioPath == nil ? 0 : 1)
         guard promptSourceCount <= 1 else {
-            reportMessageUsageError("Inline message arguments, --audio, --prompt-file, and --stdin are mutually exclusive", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: enableQuiet)
+            reportUsageError("Inline message arguments, --audio, --prompt-file, and --stdin are mutually exclusive", toStderr: enableQuiet)
             if exitOnError {
                 exit(with: 2)
             }
@@ -316,7 +331,7 @@ extension GrokCLI {
                 messageCameFromStdin = false
             }
         } catch {
-            reportMessageUsageError(error.localizedDescription, jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: enableQuiet)
+            reportUsageError(error.localizedDescription, toStderr: enableQuiet)
             if exitOnError {
                 exit(with: 2)
             }
@@ -327,7 +342,7 @@ extension GrokCLI {
             let message = messageCameFromStdin
                 ? "Please provide a message to send on stdin"
                 : "Please provide a message to send"
-            reportMessageUsageError(message, jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: enableQuiet)
+            reportUsageError(message, toStderr: enableQuiet)
             if exitOnError {
                 exit(with: 2)
             }
@@ -429,7 +444,7 @@ extension GrokCLI {
                         throw GrokError.streamingError
                     }
                     try printJSONResult(
-                        command: "message",
+                        command: jsonCommandName,
                         category: "assistant_response",
                         data: AnyCodable(assistantResponseJSON(response: response, mode: selectedMode, request: request, input: resolvedAudioInput?.json)),
                         debug: enableDebug,
@@ -479,9 +494,10 @@ extension GrokCLI {
                         "phase": AnyCodable("aborted")
                     ]))
                 } else {
-                    printJSONError(command: "message", error: error, exitCode: 1, debug: enableDebug)
+                    printJSONError(command: jsonCommandName, error: error, exitCode: 1, debug: enableDebug)
                 }
             } else {
+                formatter.clearTransientStatusBeforeError()
                 await app.handleError(error, debug: enableDebug)
             }
             if exitOnError {
@@ -490,10 +506,16 @@ extension GrokCLI {
         }
     }
 
-    static func reportMessageUsageError(_ message: String, jsonRequested: Bool, exitOnError: Bool, toStderr: Bool = false) {
+    static func reportMessageUsageError(
+        _ message: String,
+        jsonRequested: Bool,
+        exitOnError: Bool,
+        command: String = "message",
+        toStderr: Bool = false
+    ) {
         if jsonRequested {
             printJSONError(
-                command: "message",
+                command: command,
                 message: message,
                 code: "usage_error",
                 exitCode: 2
