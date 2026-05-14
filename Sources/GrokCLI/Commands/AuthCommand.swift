@@ -70,6 +70,7 @@ extension GrokCLI {
         exitOnImportFailure: Bool = false
     ) async throws {
         let jsonRequested = isJSONRequested(args)
+        let quietRequested = args.contains("--quiet")
         let args = removingJSONOutputArgs(normalizedAuthArgs(args))
 
         if args.first?.lowercased() == "help" || args.first == "-h" || args.first == "--help" {
@@ -94,11 +95,12 @@ extension GrokCLI {
             )
 
         case "import":
-            if containsHelpArgument(Array(args.dropFirst())) {
+            let importArgs = Array(args.dropFirst()).filter { $0 != "--quiet" }
+            if containsHelpArgument(importArgs) {
                 printAuthImportUsage()
                 return
             }
-            guard args.count > 1 else {
+            guard importArgs.count == 1 else {
                 if jsonRequested {
                     printJSONError(command: "auth", subcommand: "import", message: "Please provide a path to the credentials file", code: "usage_error", exitCode: 2)
                 } else {
@@ -110,8 +112,8 @@ extension GrokCLI {
                 return
             }
 
-            let path = args[1]
-            if !jsonRequested {
+            let path = importArgs[0]
+            if !jsonRequested && !quietRequested {
                 print("Importing credentials from \(path)...".cyan)
             }
 
@@ -127,12 +129,14 @@ extension GrokCLI {
                             "path": AnyCodable(path)
                         ])
                     )
-                } else {
+                } else if !quietRequested {
                     print("Successfully imported credentials!".green)
                 }
             } catch {
                 if jsonRequested {
                     printJSONError(command: "auth", subcommand: "import", error: error, exitCode: 1)
+                } else if quietRequested {
+                    CLIOutput.stderr("Error importing credentials: \(error.localizedDescription)")
                 } else {
                     print("Error importing credentials: \(error.localizedDescription)".red)
                     print("Please make sure the file exists and contains valid credentials.".yellow)
@@ -201,13 +205,14 @@ extension GrokCLI {
     }
 
     static func generateAuthCredentials(app: GrokCLIApp, args: [String], exitOnFailure: Bool, jsonRequested: Bool = false) async {
+        let quietRequested = args.contains("--quiet")
         let extractorArgs = jsonRequested && !args.contains("--quiet") ? args + ["--quiet"] : args
-        if !jsonRequested {
+        if !jsonRequested && !quietRequested {
             print("Extracting credentials from browser...".cyan)
             fflush(stdout)
         }
         do {
-            let credentialsPath = try await app.generateCredentials(args: extractorArgs, suppressOutput: jsonRequested)
+            let credentialsPath = try await app.generateCredentials(args: extractorArgs, suppressOutput: jsonRequested || quietRequested)
             if jsonRequested {
                 var data: [String: AnyCodable] = [
                     "action": AnyCodable("generate"),
@@ -222,13 +227,15 @@ extension GrokCLI {
                     category: "auth_result",
                     data: AnyCodable(data)
                 )
-            } else {
+            } else if !quietRequested {
                 print("Successfully generated credentials!".green)
                 print("Saved to: \(credentialsPath)".cyan)
             }
         } catch {
             if jsonRequested {
                 printJSONError(command: "auth", subcommand: "generate", error: error, exitCode: 1)
+            } else if quietRequested {
+                CLIOutput.stderr("Error generating credentials: \(error.localizedDescription)")
             } else {
                 print("Error generating credentials: \(error.localizedDescription)".red)
                 print("Please make sure you're logged in to Grok in your browser.".yellow)
