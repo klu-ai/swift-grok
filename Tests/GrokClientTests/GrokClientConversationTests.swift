@@ -165,6 +165,38 @@ final class GrokClientConversationTests: XCTestCase {
         XCTAssertEqual(nodes.first?.responseId, "r1")
     }
 
+    func testGetResponseNodesCanIncludeThreads() async throws {
+        let mockData = """
+        {
+          "responseNodes": [
+            {
+              "responseId": "result-response",
+              "sender": "assistant",
+              "parentResponseId": "thread-parent"
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let mockSession = makeMockSession(data: mockData, statusCode: 200)
+        let client = try GrokClient(
+            cookies: ["x-anonuserid": "123"],
+            baseURL: "https://example.test/rest",
+            session: mockSession
+        )
+
+        let nodes = try await client.getResponseNodes(conversationId: "conv-thread", includeThreads: true)
+
+        XCTAssertEqual(nodes.first?.responseId, "result-response")
+        XCTAssertEqual(nodes.first?.parentResponseId, "thread-parent")
+
+        let request = try XCTUnwrap(MockURLProtocol.lastRequest)
+        XCTAssertEqual(
+            request.url?.absoluteString,
+            "https://example.test/rest/app-chat/conversations/conv-thread/response-node?includeThreads=true"
+        )
+    }
+
     func testLoadResponsesSuccess() async throws {
         let mockData = """
         {

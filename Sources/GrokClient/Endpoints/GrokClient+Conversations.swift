@@ -58,8 +58,11 @@ extension GrokClient {
     }
 
     /// Get the response nodes for a conversation
-    public func getResponseNodes(conversationId: String) async throws -> [ResponseNode] {
-        let path = try endpointPath(["conversations", conversationId, "response-node"], queryItems: [])
+    public func getResponseNodes(conversationId: String, includeThreads: Bool = false) async throws -> [ResponseNode] {
+        let queryItems = includeThreads
+            ? [URLQueryItem(name: "includeThreads", value: "true")]
+            : []
+        let path = try endpointPath(["conversations", conversationId, "response-node"], queryItems: queryItems)
         let request = try makeRequest(path: path, method: "GET")
 
         if isDebug {
