@@ -34,6 +34,30 @@ class ConfigManager {
         }
     }
 
+    // Grok Code is disabled: the code harness concept will not work with grok.com because tool calls happen server side.
+//    func codeModeSettingsDirectory() throws -> URL {
+//        try ensureConfigDirectoryExists()
+//        let directory = configDirectory.appendingPathComponent("code-mode", isDirectory: true)
+//        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+//        return directory
+//    }
+//
+//    func codeModeSettingsBackupsDirectory() throws -> URL {
+//        let directory = try codeModeSettingsDirectory().appendingPathComponent("settings-backups", isDirectory: true)
+//        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+//        return directory
+//    }
+//
+//    func codeModeSessionsDirectory() throws -> URL {
+//        let directory = try codeModeSettingsDirectory().appendingPathComponent("sessions", isDirectory: true)
+//        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+//        return directory
+//    }
+//
+//    func activeCodeModeSettingsScopePath() throws -> URL {
+//        try codeModeSettingsDirectory().appendingPathComponent("active-settings-scope.json")
+//    }
+
     // Get path to saved credentials if they exist
     func getSavedCredentialsPath() -> String? {
         return fileManager.fileExists(atPath: credentialsPath.path) ? credentialsPath.path : nil

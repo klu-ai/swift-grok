@@ -74,6 +74,32 @@ extension GrokCLI {
         """)
     }
 
+    // Grok Code is disabled: the code harness concept will not work with grok.com because tool calls happen server side.
+    // static func printCodeUsage() {
+    //     print("""
+    //     Usage: grok code [options] [task...]
+    //            grok code restore --backup <path>
+    //
+    //     Starts Grok Code mode. With task args, queues the task and exits after the current scaffold turn.
+    //
+    //     Options:
+    //       --model, --mode <mode>      Use expert (default), beta/grok-4.3-beta, heavy, or a raw modeId
+    //       --format <md|raw|json>      Choose output format
+    //       --json                      Emit scriptable JSON output
+    //       --private                   Do not save Grok conversations created by code mode
+    //       --permission-mode <mode>    Use default, read-only, accept-edits, bypass, or plan
+    //       --prompt-file <path>        Read the code task from a UTF-8 text file
+    //       --dry-run-settings          Enter the settings-scope hook without applying real settings changes
+    //       --max-turns <count>         Stop after a positive number of scaffold turns
+    //       --agent-timeout-seconds <n> Stop a stalled agent response after n seconds
+    //
+    //     Restore:
+    //       grok code restore --backup ~/.config/grok-cli/code-mode/settings-backups/<file>.json
+    //
+    //     Code mode installs temporary coding agents, runs a local transcript and tool loop, then restores settings on exit.
+    //     """)
+    // }
+
     static func printTranscribeUsage() {
         print("""
         Usage: grok transcribe [options] <path|->
@@ -99,9 +125,11 @@ extension GrokCLI {
     static func printListUsage() {
         print("""
         Usage: grok list [--json|--format json] [--conversation <conversationId>] [--debug]
+               grok list delete <conversationId> --yes [--json|--format json]
 
         Lists saved conversations and optionally loads one by number.
         With JSON output, prints conversation JSON to stdout instead of opening the selector.
+        Delete is scriptable and requires --yes.
         """)
     }
 
@@ -114,8 +142,14 @@ extension GrokCLI {
     }
 
     static let recognizedTopLevelCommands: Set<String> = [
+        // Grok Code is disabled: the code harness concept will not work with grok.com because tool calls happen server side.
+        // "code",
         "chat", "message", "auth", "help", "list", "models", "modes", "agents", "tasks",
         "skills", "workspaces", "workspace", "files", "transcribe", "test"
+    ]
+
+    static let disabledTopLevelCommands: Set<String> = [
+        "code"
     ]
 
     static func normalizedTopLevelArguments(_ arguments: [String]) -> [String] {
@@ -146,7 +180,7 @@ extension GrokCLI {
         }
 
         let candidate = arguments[index].lowercased()
-        guard recognizedTopLevelCommands.contains(candidate) || isHelpArgument(candidate) else {
+        guard recognizedTopLevelCommands.contains(candidate) || disabledTopLevelCommands.contains(candidate) || isHelpArgument(candidate) else {
             return arguments
         }
 
@@ -167,11 +201,25 @@ extension GrokCLI {
             "--no-custom-instructions",
             "--private",
             "--stream"
+            // Grok Code is disabled: the code harness concept will not work with grok.com because tool calls happen server side.
+            // "--dry-run-settings"
         ].contains(arg)
     }
 
     private static func isTopLevelValueOption(_ arg: String) -> Bool {
-        ["--format", "--model", "--mode", "--audio", "--audio-format", "--refinement-level", "--prompt-file"].contains(arg)
+        [
+            "--format",
+            "--model",
+            "--mode",
+            "--audio",
+            "--audio-format",
+            "--refinement-level",
+            "--prompt-file"
+            // Grok Code is disabled: the code harness concept will not work with grok.com because tool calls happen server side.
+            // "--permission-mode",
+            // "--max-turns",
+            // "--agent-timeout-seconds"
+        ].contains(arg)
     }
 
     private static func isInlineTopLevelValueOption(_ arg: String) -> Bool {
@@ -182,6 +230,10 @@ extension GrokCLI {
             arg.hasPrefix("--audio-format=") ||
             arg.hasPrefix("--refinement-level=") ||
             arg.hasPrefix("--prompt-file=")
+            // Grok Code is disabled: the code harness concept will not work with grok.com because tool calls happen server side.
+            // arg.hasPrefix("--permission-mode=") ||
+            // arg.hasPrefix("--max-turns=") ||
+            // arg.hasPrefix("--agent-timeout-seconds=")
     }
 
 
@@ -207,6 +259,11 @@ extension GrokCLI {
             return
         }
 
+        if disabledTopLevelCommands.contains(command) {
+            print("Grok Code is disabled: the code harness concept will not work with grok.com because tool calls happen server side.")
+            return
+        }
+
         // Check if first argument is a recognized command
         // If not a recognized command, treat all arguments as an initial message for chat
         if !recognizedTopLevelCommands.contains(command) {
@@ -224,6 +281,9 @@ extension GrokCLI {
             try await handleChatCommand(args: remainingArgs, exitOnParseError: true)
         case "message":
             try await handleMessageCommand(args: remainingArgs, exitOnError: true)
+        // Grok Code is disabled: the code harness concept will not work with grok.com because tool calls happen server side.
+        // case "code":
+        //     try await handleCodeCommand(args: remainingArgs, exitOnError: true)
         case "transcribe":
             try await handleTranscribeCommand(args: remainingArgs, exitOnError: true)
         case "auth":
