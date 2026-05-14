@@ -55,6 +55,19 @@ class GrokCLIApp {
         lastXPosts = nil
     }
 
+    func seedConversation(
+        conversationId: String,
+        title: String? = nil,
+        parentResponseId: String? = nil
+    ) {
+        currentConversationId = conversationId
+        currentConversationTitle = title
+        lastResponseId = parentResponseId
+        lastWebSearchResults = nil
+        lastXPosts = nil
+        lastLoadedConversationMode = nil
+    }
+
     func getCurrentWorkspace() -> GrokWorkspace? {
         currentWorkspace
     }
