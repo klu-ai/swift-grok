@@ -10,6 +10,7 @@ class GrokCLIApp {
     private var isDebug = false
     private var isQuiet = false
     private var currentConversationId: String?
+    private var currentConversationTitle: String?
     private var lastResponseId: String?
     private var lastWebSearchResults: [WebSearchResult]?
     private var lastXPosts: [XPost]?
@@ -19,6 +20,9 @@ class GrokCLIApp {
     private var cachedSubscriptionDisplayName: String?
     private var lastRateLimit: GrokRateLimit?
     private var lastRateLimitModeId: String?
+    private var lastRateLimitResetEstimate: RateLimitResetEstimate?
+    private var lastRateLimitResetEstimateModeId: String?
+    private var lastLoadedConversationMode: GrokMode?
     private var currentWorkspace: GrokWorkspace?
     private var attachedFileIds: [String] = []
 
@@ -45,6 +49,7 @@ class GrokCLIApp {
     // Reset the current conversation ID
     func resetConversation() {
         currentConversationId = nil
+        currentConversationTitle = nil
         lastResponseId = nil
         lastWebSearchResults = nil
         lastXPosts = nil
@@ -100,6 +105,33 @@ class GrokCLIApp {
         return lastXPosts
     }
 
+    func shareLinkForCurrentConversation() async throws -> String {
+        guard let conversationId = currentConversationId else {
+            throw GrokError.apiError("No active conversation to share")
+        }
+
+        let client = try initializeClient()
+        return try await client.shareLinkURL(conversationId: conversationId, responseId: lastResponseId)
+    }
+
+    func deleteCurrentConversation() async throws -> String {
+        guard let conversationId = currentConversationId else {
+            throw GrokError.apiError("No active conversation to delete")
+        }
+        let trimmedTitle = currentConversationTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let conversationDisplayName: String
+        if let trimmedTitle, !trimmedTitle.isEmpty {
+            conversationDisplayName = trimmedTitle
+        } else {
+            conversationDisplayName = conversationId
+        }
+
+        let client = try initializeClient()
+        try await client.softDeleteConversation(conversationId: conversationId)
+        resetConversation()
+        return conversationDisplayName
+    }
+
     // Get current personality
     func getCurrentPersonality() -> GrokClient.PersonalityType {
         return currentPersonality
@@ -122,6 +154,10 @@ class GrokCLIApp {
             lastRateLimitModeId = nil
         }
         self.currentMode = mode
+    }
+
+    func getLastLoadedConversationMode() -> GrokMode? {
+        lastLoadedConversationMode
     }
 
     func loadModes() async -> [GrokMode] {
@@ -161,34 +197,64 @@ class GrokCLIApp {
         cachedSubscriptionDisplayName ?? "Grok"
     }
 
-    func refreshRateLimitStatus(for mode: GrokMode) async -> String? {
+    @discardableResult
+    func refreshRateLimit(for mode: GrokMode) async -> GrokRateLimit? {
         guard let client else {
-            return currentRateLimitStatus(for: mode)
+            return cachedRateLimit(for: mode)
         }
 
         do {
             let rateLimit = try await client.rateLimits(mode: mode)
             lastRateLimit = rateLimit
             lastRateLimitModeId = mode.id
-            return rateLimitStatusText(for: rateLimit)
+            return rateLimit
         } catch {
             if isDebug {
                 print("Debug: Could not fetch rate limits: \(error.localizedDescription)")
             }
-            return currentRateLimitStatus(for: mode)
+            return cachedRateLimit(for: mode)
         }
     }
 
+    func refreshRateLimitStatus(for mode: GrokMode) async -> String? {
+        guard let rateLimit = await refreshRateLimit(for: mode) else {
+            return nil
+        }
+        return rateLimitStatusText(for: rateLimit)
+    }
+
+    func refreshRateLimitSummary(for mode: GrokMode) async -> String {
+        guard let rateLimit = await refreshRateLimit(for: mode) else {
+            return currentRateLimitSummary(for: mode)
+        }
+
+        let estimate = await inferredRateLimitReset(for: rateLimit, mode: mode)
+        lastRateLimitResetEstimate = estimate
+        lastRateLimitResetEstimateModeId = mode.id
+        return rateLimitSummaryText(for: rateLimit, mode: mode, resetEstimate: estimate)
+    }
+
     func currentRateLimitStatus(for mode: GrokMode) -> String? {
-        guard lastRateLimitModeId == mode.id, let lastRateLimit else {
+        guard let lastRateLimit = cachedRateLimit(for: mode) else {
             return nil
         }
         return rateLimitStatusText(for: lastRateLimit)
     }
 
+    func currentRateLimitSummary(for mode: GrokMode) -> String {
+        guard let rateLimit = cachedRateLimit(for: mode) else {
+            return """
+            Rate limits for \(mode.displayName) (\(mode.id))
+            Current rate-limit data is unavailable.
+            """
+        }
+
+        let resetEstimate = lastRateLimitResetEstimateModeId == mode.id ? lastRateLimitResetEstimate : nil
+        return rateLimitSummaryText(for: rateLimit, mode: mode, resetEstimate: resetEstimate)
+    }
+
     func currentRateLimitWarning(for mode: GrokMode) -> String? {
-        guard lastRateLimitModeId == mode.id,
-              let rateLimit = lastRateLimit,
+        guard let rateLimit = cachedRateLimit(for: mode),
               let remaining = rateLimit.remainingResponses,
               remaining < 10 else {
             return nil
@@ -202,16 +268,125 @@ class GrokCLIApp {
         return warning + "."
     }
 
+    private func cachedRateLimit(for mode: GrokMode) -> GrokRateLimit? {
+        guard lastRateLimitModeId == mode.id else {
+            return nil
+        }
+        return lastRateLimit
+    }
+
     private func rateLimitStatusText(for rateLimit: GrokRateLimit) -> String? {
         guard let remaining = rateLimit.remainingResponses, remaining < 10 else {
             return nil
         }
 
-        var status = "Rate: \(remaining) left"
+        var status = "\(remaining) left"
         if let reset = resetDurationDescription(for: rateLimit) {
-            status += ", resets in \(reset)"
+            status += " | reset \(reset)"
         }
         return status
+    }
+
+    private func rateLimitSummaryText(
+        for rateLimit: GrokRateLimit,
+        mode: GrokMode,
+        resetEstimate: RateLimitResetEstimate? = nil
+    ) -> String {
+        var lines = ["Rate limits for \(mode.displayName) (\(mode.id))"]
+        if let modelName = rateLimit.modelName, !modelName.isEmpty, modelName != mode.id {
+            lines.append("API model: \(modelName)")
+        }
+
+        if let remaining = rateLimit.remainingResponses {
+            let noun = remaining == 1 ? "response" : "responses"
+            lines.append("Remaining responses: \(remaining) \(noun)")
+        } else {
+            lines.append("Remaining responses: unavailable")
+        }
+
+        if let reset = resetDurationDescription(for: rateLimit) {
+            lines.append("Resets in \(reset)")
+        } else if rateLimit.resetAt != nil || rateLimit.resetAfterSeconds != nil {
+            lines.append("Resets now")
+        } else if let resetEstimate {
+            let reset = durationDescription(seconds: resetEstimate.secondsUntilReset)
+            lines.append("Resets in about \(reset)")
+            lines.append("Window: rolling \(durationDescription(seconds: resetEstimate.windowSeconds))")
+        } else if rateLimit.windowSeconds != nil {
+            lines.append("Resets as messages age out of the rolling \(durationDescription(seconds: rateLimit.windowSeconds ?? 0)) window.")
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private struct RateLimitResetEstimate {
+        let secondsUntilReset: Int
+        let windowSeconds: Int
+    }
+
+    private func inferredRateLimitReset(for rateLimit: GrokRateLimit, mode: GrokMode) async -> RateLimitResetEstimate? {
+        guard rateLimit.resetAt == nil,
+              rateLimit.resetAfterSeconds == nil,
+              rateLimit.remainingResponses != nil,
+              let windowSeconds = rateLimit.windowSeconds,
+              windowSeconds > 0,
+              let client else {
+            return nil
+        }
+
+        do {
+            let now = Date()
+            let windowStart = now.addingTimeInterval(-TimeInterval(windowSeconds))
+            let conversations = try await client.listConversations(pageSize: 20)
+                .filter { !$0.temporary }
+            var timestamps: [Date] = []
+
+            for conversation in conversations.prefix(10) {
+                let responses = try await client.loadResponses(conversationId: conversation.conversationId)
+                let userResponses = responses.filter(Self.isUserResponse)
+                timestamps.append(contentsOf: candidateRateLimitDates(
+                    from: userResponses.map(\.createTime),
+                    since: windowStart,
+                    through: now
+                ))
+            }
+
+            guard let oldest = timestamps.min() else {
+                return nil
+            }
+
+            let resetAt = oldest.addingTimeInterval(TimeInterval(windowSeconds))
+            return RateLimitResetEstimate(
+                secondsUntilReset: max(0, Int(ceil(resetAt.timeIntervalSince(now)))),
+                windowSeconds: windowSeconds
+            )
+        } catch {
+            if isDebug {
+                print("Debug: Could not infer rate-limit reset for \(mode.id): \(error.localizedDescription)")
+            }
+            return nil
+        }
+    }
+
+    private func candidateRateLimitDates(from values: [String], since windowStart: Date, through now: Date) -> [Date] {
+        values.compactMap(parseGrokTimestamp).filter { date in
+            date >= windowStart && date <= now
+        }
+    }
+
+    private func parseGrokTimestamp(_ value: String) -> Date? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        let formatterWithFractions = ISO8601DateFormatter()
+        formatterWithFractions.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatterWithFractions.date(from: trimmed) {
+            return date
+        }
+
+        return ISO8601DateFormatter().date(from: trimmed)
     }
 
     private func resetDurationDescription(for rateLimit: GrokRateLimit) -> String? {
@@ -520,7 +695,7 @@ class GrokCLIApp {
 
         // Handle both new conversations and continuing existing ones
         return AsyncThrowingStream<ConversationResponse, Error> { continuation in
-            Task {
+            let forwardingTask = Task {
                 do {
                     let stream: AsyncThrowingStream<ConversationResponse, Error>
                     if let conversationId = currentConversationId {
@@ -575,6 +750,10 @@ class GrokCLIApp {
                         }
 
                         continuation.yield(response)
+                        if response.isFinal {
+                            continuation.finish()
+                            return
+                        }
                     }
                     continuation.finish()
                 } catch {
@@ -584,20 +763,56 @@ class GrokCLIApp {
                     continuation.finish(throwing: error)
                 }
             }
+            continuation.onTermination = { _ in
+                forwardingTask.cancel()
+            }
         }
+    }
+
+    func createSkillConversation(
+        prompt: String,
+        temporary: Bool = false,
+        fileAttachments: [String] = [],
+        workspaceIds: [String] = [],
+        streamOutput: Bool = true
+    ) async throws -> AsyncThrowingStream<ConversationResponse, Error> {
+        resetConversation()
+        let message = "skill-creator skill \(prompt)"
+        // Skills/connectors are only available through the Grok 4.3 web mode.
+        let skillMode = GrokMode.grok43Beta
+        return try await msg(
+            message: message,
+            enableReasoning: true,
+            enableDeepSearch: false,
+            disableSearch: false,
+            customInstructions: "",
+            temporary: temporary,
+            mode: skillMode,
+            fileAttachments: fileAttachments,
+            workspaceIds: workspaceIds,
+            streamOutput: streamOutput
+        )
     }
 
     /// Loads a conversation by its ID and sets up context for continuing it
     /// - Parameter conversationId: The ID of the conversation to load
     /// - Returns: An array of Response objects containing the conversation history
     /// - Throws: Network, decoding, or API errors
-    func loadConversation(conversationId: String) async throws -> [Response] {
+    func loadConversation(conversationId: String, title: String? = nil) async throws -> [Response] {
         let client = try initializeClient()
         let responses = try await client.loadResponses(conversationId: conversationId)
 
         // Set conversation context
         self.currentConversationId = conversationId
-        self.lastResponseId = responses.last?.responseId
+        self.currentConversationTitle = title
+        self.lastResponseId = Self.continuationParentResponseId(in: responses)
+        self.lastLoadedConversationMode = nil
+
+        let modes = await loadModes()
+        if let mode = Self.mostRecentMode(in: responses, modes: modes) {
+            setCurrentMode(mode)
+            lastLoadedConversationMode = mode
+        }
 
         if isDebug {
             print("Debug: Loaded conversation \(conversationId) with \(responses.count) responses")
@@ -606,9 +821,129 @@ class GrokCLIApp {
             } else {
                 print("Debug: No responses in conversation")
             }
+            if let lastLoadedConversationMode {
+                print("Debug: Resumed model: \(lastLoadedConversationMode.displayName) (\(lastLoadedConversationMode.id))")
+            }
         }
 
         return responses
+    }
+
+    private static func mostRecentMode(in responses: [Response], modes: [GrokMode]) -> GrokMode? {
+        for response in responses.reversed() {
+            let ids = [response.modeId, response.modelId].compactMap(cleanModeToken)
+            for id in ids {
+                if let exactMode = exactMode(for: id, modes: modes) {
+                    return exactMode
+                }
+            }
+            for id in ids {
+                let resolved = GrokMode.resolve(id, modes: modes)
+                if isKnownMode(resolved, requestedValue: id, modes: modes) {
+                    return resolved
+                }
+            }
+            if let id = ids.first {
+                return GrokMode.resolve(id, modes: modes)
+            }
+
+            for name in [response.modeName, response.modelName].compactMap(cleanModeToken) {
+                let resolved = GrokMode.resolve(name, modes: modes)
+                if isKnownMode(resolved, requestedValue: name, modes: modes) {
+                    return resolved
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private static func continuationParentResponseId(in responses: [Response]) -> String? {
+        let parentIds = Set(responses.compactMap { cleanModeToken($0.parentResponseId) })
+        let indexedResponses = responses.enumerated().map { ($0.offset, $0.element) }
+
+        let assistantLeaves = indexedResponses.filter {
+            isAssistantResponse($0.1) && !parentIds.contains($0.1.responseId)
+        }
+        if let response = latestResponse(in: assistantLeaves) {
+            return response.responseId
+        }
+
+        let leaves = indexedResponses.filter { !parentIds.contains($0.1.responseId) }
+        if let response = latestResponse(in: leaves) {
+            return response.responseId
+        }
+
+        let assistants = indexedResponses.filter { isAssistantResponse($0.1) }
+        if let response = latestResponse(in: assistants) {
+            return response.responseId
+        }
+
+        return latestResponse(in: indexedResponses)?.responseId
+    }
+
+    private static func latestResponse(in candidates: [(Int, Response)]) -> Response? {
+        candidates.max { lhs, rhs in
+            let lhsDate = responseDate(lhs.1)
+            let rhsDate = responseDate(rhs.1)
+            if lhsDate == rhsDate {
+                return lhs.0 < rhs.0
+            }
+            return lhsDate < rhsDate
+        }?.1
+    }
+
+    private static func isAssistantResponse(_ response: Response) -> Bool {
+        let sender = response.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return sender == "assistant" || sender == "grok" || sender == "model"
+    }
+
+    private static func isUserResponse(_ response: Response) -> Bool {
+        let sender = response.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return sender == "human" || sender == "user"
+    }
+
+    private static func responseDate(_ response: Response) -> Date {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: response.createTime) {
+            return date
+        }
+
+        let standard = ISO8601DateFormatter()
+        if let date = standard.date(from: response.createTime) {
+            return date
+        }
+
+        return .distantPast
+    }
+
+    private static func exactMode(for value: String, modes: [GrokMode]) -> GrokMode? {
+        let normalized = normalizedModeToken(value)
+        return modes.first { normalizedModeToken($0.id) == normalized } ??
+            GrokMode.knownModes.first { normalizedModeToken($0.id) == normalized }
+    }
+
+    private static func isKnownMode(_ mode: GrokMode, requestedValue: String, modes: [GrokMode]) -> Bool {
+        if modes.contains(where: { $0.id == mode.id }) ||
+            GrokMode.knownModes.contains(where: { $0.id == mode.id }) {
+            return true
+        }
+
+        return normalizedModeToken(mode.id) != normalizedModeToken(requestedValue)
+    }
+
+    private static func cleanModeToken(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func normalizedModeToken(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "-")
+            .replacingOccurrences(of: " ", with: "-")
     }
 
     // Save credentials for future use
