@@ -151,7 +151,7 @@ public struct GrokMode: Hashable, Sendable {
             return .expert
         case "heavy":
             return .heavy
-        case "grok-4.3", "grok-43", "4.3", "43", "beta", "grok-4.3-beta", "grok-43-beta", "grok-420", "grok-420-computer-use-sa":
+        case "grok-4.3", "grok-4-3", "grok-43", "4.3", "43", "beta", "grok-4.3-beta", "grok-4-3-beta", "grok-43-beta", "grok-420", "grok-420-computer-use-sa":
             return .grok43Beta
         default:
             return GrokMode(id: trimmed, displayName: trimmed, summary: "Custom web mode ID")
@@ -217,6 +217,7 @@ public struct GrokRateLimit: Codable {
     public let remainingResponses: Int?
     public let resetAt: Date?
     public let resetAfterSeconds: Int?
+    public let windowSeconds: Int?
     public let fetchedAt: Date
     public let rawJSON: AnyCodable
 
@@ -225,6 +226,7 @@ public struct GrokRateLimit: Codable {
         remainingResponses: Int? = nil,
         resetAt: Date? = nil,
         resetAfterSeconds: Int? = nil,
+        windowSeconds: Int? = nil,
         fetchedAt: Date = Date(),
         rawJSON: AnyCodable
     ) {
@@ -232,6 +234,7 @@ public struct GrokRateLimit: Codable {
         self.remainingResponses = remainingResponses
         self.resetAt = resetAt
         self.resetAfterSeconds = resetAfterSeconds
+        self.windowSeconds = windowSeconds
         self.fetchedAt = fetchedAt
         self.rawJSON = rawJSON
     }
@@ -443,8 +446,9 @@ public struct Conversation: Codable {
     public let systemPromptName: String
     public let temporary: Bool
     public let mediaTypes: [String]
+    public let preview: String
 
-    public init(conversationId: String, title: String, starred: Bool = false, createTime: String = "", modifyTime: String = "", systemPromptName: String = "", temporary: Bool = false, mediaTypes: [String] = []) {
+    public init(conversationId: String, title: String, starred: Bool = false, createTime: String = "", modifyTime: String = "", systemPromptName: String = "", temporary: Bool = false, mediaTypes: [String] = [], preview: String = "") {
         self.conversationId = conversationId
         self.title = title
         self.starred = starred
@@ -453,6 +457,94 @@ public struct Conversation: Codable {
         self.systemPromptName = systemPromptName
         self.temporary = temporary
         self.mediaTypes = mediaTypes
+        self.preview = preview
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case conversationId
+        case conversationID = "conversation_id"
+        case id
+        case title
+        case name
+        case starred
+        case createTime
+        case createTimeSnake = "create_time"
+        case modifyTime
+        case modifyTimeSnake = "modify_time"
+        case systemPromptName
+        case systemPromptNameSnake = "system_prompt_name"
+        case temporary
+        case mediaTypes
+        case mediaTypesSnake = "media_types"
+        case preview
+        case snippet
+        case lastMessage
+        case lastMessageSnake = "last_message"
+        case lastResponse
+        case lastResponseSnake = "last_response"
+        case description
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let conversationId = try Self.decodeFirstString(
+            in: container,
+            keys: [.conversationId, .conversationID, .id]
+        )
+        guard let conversationId else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.conversationId,
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Conversation did not include an id"
+                )
+            )
+        }
+
+        self.conversationId = conversationId
+        self.title = try Self.decodeFirstString(in: container, keys: [.title, .name]) ?? conversationId
+        self.starred = try container.decodeIfPresent(Bool.self, forKey: .starred) ?? false
+        self.createTime = try Self.decodeFirstString(in: container, keys: [.createTime, .createTimeSnake]) ?? ""
+        self.modifyTime = try Self.decodeFirstString(in: container, keys: [.modifyTime, .modifyTimeSnake]) ?? ""
+        self.systemPromptName = try Self.decodeFirstString(
+            in: container,
+            keys: [.systemPromptName, .systemPromptNameSnake]
+        ) ?? ""
+        self.temporary = try container.decodeIfPresent(Bool.self, forKey: .temporary) ?? false
+        if let mediaTypes = try container.decodeIfPresent([String].self, forKey: .mediaTypes) {
+            self.mediaTypes = mediaTypes
+        } else {
+            self.mediaTypes = try container.decodeIfPresent([String].self, forKey: .mediaTypesSnake) ?? []
+        }
+        self.preview = try Self.decodeFirstString(
+            in: container,
+            keys: [.preview, .snippet, .lastMessage, .lastMessageSnake, .lastResponse, .lastResponseSnake, .description]
+        ) ?? ""
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(conversationId, forKey: .conversationId)
+        try container.encode(title, forKey: .title)
+        try container.encode(starred, forKey: .starred)
+        try container.encode(createTime, forKey: .createTime)
+        try container.encode(modifyTime, forKey: .modifyTime)
+        try container.encode(systemPromptName, forKey: .systemPromptName)
+        try container.encode(temporary, forKey: .temporary)
+        try container.encode(mediaTypes, forKey: .mediaTypes)
+        try container.encode(preview, forKey: .preview)
+    }
+
+    private static func decodeFirstString(
+        in container: KeyedDecodingContainer<CodingKeys>,
+        keys: [CodingKeys]
+    ) throws -> String? {
+        for key in keys {
+            if let value = try container.decodeIfPresent(String.self, forKey: key), !value.isEmpty {
+                return value
+            }
+        }
+        return nil
     }
 }
 
@@ -476,13 +568,158 @@ public struct Response: Codable {
     public let sender: String
     public let createTime: String
     public let parentResponseId: String?
+    public let modeId: String?
+    public let modelId: String?
+    public let modeName: String?
+    public let modelName: String?
 
-    public init(responseId: String, message: String, sender: String, createTime: String, parentResponseId: String? = nil) {
+    public init(
+        responseId: String,
+        message: String,
+        sender: String,
+        createTime: String,
+        parentResponseId: String? = nil,
+        modeId: String? = nil,
+        modelId: String? = nil,
+        modeName: String? = nil,
+        modelName: String? = nil
+    ) {
         self.responseId = responseId
         self.message = message
         self.sender = sender
         self.createTime = createTime
         self.parentResponseId = parentResponseId
+        self.modeId = modeId
+        self.modelId = modelId
+        self.modeName = modeName
+        self.modelName = modelName
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case responseId
+        case message
+        case sender
+        case createTime
+        case parentResponseId
+        case modeId
+        case modeID = "mode_id"
+        case modelId
+        case modelID = "model_id"
+        case modeName
+        case modeNameSnake = "mode_name"
+        case modelName
+        case modelNameSnake = "model_name"
+        case mode
+        case model
+        case metadata
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        responseId = try container.decode(String.self, forKey: .responseId)
+        message = try container.decode(String.self, forKey: .message)
+        sender = try container.decode(String.self, forKey: .sender)
+        createTime = try container.decode(String.self, forKey: .createTime)
+        parentResponseId = try container.decodeIfPresent(String.self, forKey: .parentResponseId)
+
+        let modeDictionary = try? container.decodeIfPresent([String: AnyCodable].self, forKey: .mode)
+        let modelDictionary = try? container.decodeIfPresent([String: AnyCodable].self, forKey: .model)
+        let metadataDictionary = try? container.decodeIfPresent([String: AnyCodable].self, forKey: .metadata)
+        let requestMetadataDictionary = Self.nestedDictionary(
+            in: metadataDictionary ?? nil,
+            keys: ["request_metadata", "requestMetadata"]
+        )
+        let modeValue = try? container.decodeIfPresent(String.self, forKey: .mode)
+        let modelValue = try? container.decodeIfPresent(String.self, forKey: .model)
+
+        modeId = try Self.decodeFirstString(
+            in: container,
+            keys: [.modeId, .modeID],
+            scalarValues: [modeValue ?? nil],
+            nested: [modeDictionary ?? nil, requestMetadataDictionary, metadataDictionary ?? nil],
+            nestedKeys: ["modeId", "mode_id", "mode", "id", "value"]
+        )
+        modelId = try Self.decodeFirstString(
+            in: container,
+            keys: [.modelId, .modelID],
+            scalarValues: [modelValue ?? nil],
+            nested: [modelDictionary ?? nil, requestMetadataDictionary, metadataDictionary ?? nil],
+            nestedKeys: ["modelId", "model_id", "model", "id", "value"]
+        )
+        modeName = try Self.decodeFirstString(
+            in: container,
+            keys: [.modeName, .modeNameSnake],
+            nested: [modeDictionary ?? nil, requestMetadataDictionary, metadataDictionary ?? nil],
+            nestedKeys: ["displayName", "display_name", "name", "title", "label", "modeName", "mode_name"]
+        )
+        modelName = try Self.decodeFirstString(
+            in: container,
+            keys: [.modelName, .modelNameSnake],
+            nested: [modelDictionary ?? nil, requestMetadataDictionary, metadataDictionary ?? nil],
+            nestedKeys: ["displayName", "display_name", "name", "title", "label", "modelName", "model_name"]
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(responseId, forKey: .responseId)
+        try container.encode(message, forKey: .message)
+        try container.encode(sender, forKey: .sender)
+        try container.encode(createTime, forKey: .createTime)
+        try container.encodeIfPresent(parentResponseId, forKey: .parentResponseId)
+        try container.encodeIfPresent(modeId, forKey: .modeId)
+        try container.encodeIfPresent(modelId, forKey: .modelId)
+        try container.encodeIfPresent(modeName, forKey: .modeName)
+        try container.encodeIfPresent(modelName, forKey: .modelName)
+    }
+
+    private static func decodeFirstString(
+        in container: KeyedDecodingContainer<CodingKeys>,
+        keys: [CodingKeys],
+        scalarValues: [String?] = [],
+        nested dictionaries: [[String: AnyCodable]?],
+        nestedKeys: [String]
+    ) throws -> String? {
+        for key in keys {
+            if let value = try container.decodeIfPresent(String.self, forKey: key), !value.isEmpty {
+                return value
+            }
+        }
+
+        for value in scalarValues {
+            if let value, !value.isEmpty {
+                return value
+            }
+        }
+
+        for dictionary in dictionaries {
+            guard let dictionary else {
+                continue
+            }
+            for key in nestedKeys {
+                guard let value = dictionary[key]?.value as? String, !value.isEmpty else {
+                    continue
+                }
+                return value
+            }
+        }
+
+        return nil
+    }
+
+    private static func nestedDictionary(
+        in dictionary: [String: AnyCodable]?,
+        keys: [String]
+    ) -> [String: AnyCodable]? {
+        guard let dictionary else {
+            return nil
+        }
+        for key in keys {
+            if let nested = dictionary[key]?.value as? [String: AnyCodable] {
+                return nested
+            }
+        }
+        return nil
     }
 }
 
@@ -496,6 +733,102 @@ public struct ConversationsResponse: Codable {
         self.conversations = conversations
         self.nextPageToken = nextPageToken
         self.textSearchMatches = textSearchMatches
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case conversations
+        case data
+        case result
+        case items
+        case nextPageToken
+        case nextPageTokenSnake = "next_page_token"
+        case textSearchMatches
+        case textSearchMatchesSnake = "text_search_matches"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        conversations = try Self.decodeConversations(from: container)
+        nextPageToken = try container.decodeIfPresent(String.self, forKey: .nextPageToken)
+            ?? container.decodeIfPresent(String.self, forKey: .nextPageTokenSnake)
+        textSearchMatches = try Self.decodeTextSearchMatches(from: container)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(conversations, forKey: .conversations)
+        try container.encodeIfPresent(nextPageToken, forKey: .nextPageToken)
+        try container.encode(textSearchMatches, forKey: .textSearchMatches)
+    }
+
+    private static func decodeConversations(
+        from container: KeyedDecodingContainer<CodingKeys>
+    ) throws -> [Conversation] {
+        for key in [CodingKeys.conversations, .items] {
+            if let conversations = try container.decodeIfPresent([Conversation].self, forKey: key) {
+                return conversations
+            }
+        }
+
+        for key in [CodingKeys.data, .result] {
+            if let conversations = try container.decodeIfPresent([Conversation].self, forKey: key) {
+                return conversations
+            }
+            if let nested = try container.decodeIfPresent(ConversationsResponse.self, forKey: key) {
+                return nested.conversations
+            }
+        }
+
+        return []
+    }
+
+    private static func decodeTextSearchMatches(
+        from container: KeyedDecodingContainer<CodingKeys>
+    ) throws -> [String] {
+        for key in [CodingKeys.textSearchMatches, .textSearchMatchesSnake] {
+            if let matches = try? container.decodeIfPresent([String].self, forKey: key) {
+                return matches
+            }
+            if let values = try? container.decodeIfPresent([AnyCodable].self, forKey: key) {
+                return values.compactMap { value in
+                    if let string = value.value as? String {
+                        return string
+                    }
+                    if let dictionary = value.value as? [String: AnyCodable] {
+                        for matchKey in ["text", "snippet", "message", "value"] {
+                            if let string = dictionary[matchKey]?.value as? String, !string.isEmpty {
+                                return string
+                            }
+                        }
+                    }
+                    return nil
+                }
+            }
+        }
+
+        return []
+    }
+}
+
+public struct GrokTypeaheadSuggestion: Codable {
+    public let text: String
+    public let title: String?
+    public let rawJSON: [String: AnyCodable]
+
+    public init(text: String, title: String? = nil, rawJSON: [String: AnyCodable] = [:]) {
+        self.text = text
+        self.title = title
+        self.rawJSON = rawJSON
+    }
+}
+
+public struct GrokTypeaheadResponse: Codable {
+    public let suggestions: [GrokTypeaheadSuggestion]
+    public let rawJSON: AnyCodable
+
+    public init(suggestions: [GrokTypeaheadSuggestion], rawJSON: AnyCodable) {
+        self.suggestions = suggestions
+        self.rawJSON = rawJSON
     }
 }
 
@@ -628,7 +961,12 @@ public struct GrokTask: Codable {
     public let name: String?
     public let prompt: String?
     public let isEnabled: Bool?
+    public let status: String?
     public let rawJSON: [String: AnyCodable]
+
+    public var resolvedId: String? {
+        taskId ?? id
+    }
 
     public init(
         taskId: String? = nil,
@@ -636,6 +974,7 @@ public struct GrokTask: Codable {
         name: String? = nil,
         prompt: String? = nil,
         isEnabled: Bool? = nil,
+        status: String? = nil,
         rawJSON: [String: AnyCodable] = [:]
     ) {
         self.taskId = taskId
@@ -643,21 +982,63 @@ public struct GrokTask: Codable {
         self.name = name
         self.prompt = prompt
         self.isEnabled = isEnabled
+        self.status = status
         self.rawJSON = rawJSON
     }
 
     public init(from decoder: Decoder) throws {
         let rawJSON = try [String: AnyCodable](from: decoder)
         self.rawJSON = rawJSON
-        self.taskId = rawJSON["taskId"]?.value as? String
+        self.taskId = rawJSON["taskId"]?.value as? String ?? rawJSON["task_id"]?.value as? String
         self.id = rawJSON["id"]?.value as? String
-        self.name = rawJSON["name"]?.value as? String
-        self.prompt = rawJSON["prompt"]?.value as? String
-        self.isEnabled = rawJSON["isEnabled"]?.value as? Bool
+        self.name = Self.stringValue(rawJSON, keys: ["name", "title", "displayName", "display_name"])
+        self.prompt = Self.stringValue(rawJSON, keys: [
+            "prompt",
+            "taskPrompt",
+            "task_prompt",
+            "description",
+            "summary",
+            "query",
+            "instructions"
+        ])
+        self.isEnabled = Self.boolValue(rawJSON, keys: ["isEnabled", "is_enabled", "isActive", "is_active", "enabled", "active"])
+        self.status = rawJSON["status"]?.value as? String ?? rawJSON["state"]?.value as? String
     }
 
     public func encode(to encoder: Encoder) throws {
         try rawJSON.encode(to: encoder)
+    }
+
+    private static func stringValue(_ dictionary: [String: AnyCodable], keys: [String]) -> String? {
+        for key in keys {
+            if let value = dictionary[key]?.value as? String,
+               !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func boolValue(_ dictionary: [String: AnyCodable], keys: [String]) -> Bool? {
+        for key in keys {
+            if let value = dictionary[key]?.value as? Bool {
+                return value
+            }
+            if let value = dictionary[key]?.value as? Int {
+                return value != 0
+            }
+            if let value = dictionary[key]?.value as? String {
+                switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+                case "true", "yes", "1", "enabled", "active":
+                    return true
+                case "false", "no", "0", "disabled", "inactive", "archived":
+                    return false
+                default:
+                    continue
+                }
+            }
+        }
+        return nil
     }
 }
 
@@ -698,12 +1079,96 @@ public struct GrokSkill: Codable {
 
 public struct GrokTasksResponse: Codable {
     public let tasks: [GrokTask]
+    public let activeTasks: [GrokTask]
+    public let inactiveTasks: [GrokTask]
     public let rawJSON: AnyCodable
+
+    public init(
+        tasks: [GrokTask],
+        activeTasks: [GrokTask] = [],
+        inactiveTasks: [GrokTask] = [],
+        rawJSON: AnyCodable
+    ) {
+        self.tasks = tasks
+        self.activeTasks = activeTasks
+        self.inactiveTasks = inactiveTasks
+        self.rawJSON = rawJSON
+    }
 }
 
 public struct GrokTaskMutationResponse: Codable {
     public let task: GrokTask?
     public let rawJSON: AnyCodable
+}
+
+public struct GrokTaskResult: Codable {
+    public let resultId: String?
+    public let id: String?
+    public let taskId: String?
+    public let conversationId: String?
+    public let responseId: String?
+    public let message: String?
+    public let status: String?
+    public let rawJSON: [String: AnyCodable]
+
+    public var resolvedId: String? {
+        resultId ?? id
+    }
+
+    public init(
+        resultId: String? = nil,
+        id: String? = nil,
+        taskId: String? = nil,
+        conversationId: String? = nil,
+        responseId: String? = nil,
+        message: String? = nil,
+        status: String? = nil,
+        rawJSON: [String: AnyCodable] = [:]
+    ) {
+        self.resultId = resultId
+        self.id = id
+        self.taskId = taskId
+        self.conversationId = conversationId
+        self.responseId = responseId
+        self.message = message
+        self.status = status
+        self.rawJSON = rawJSON
+    }
+
+    public init(from decoder: Decoder) throws {
+        let rawJSON = try [String: AnyCodable](from: decoder)
+        self.rawJSON = rawJSON
+        self.resultId = Self.stringValue(rawJSON, keys: ["taskResultId", "task_result_id", "resultId", "result_id"])
+        self.id = Self.stringValue(rawJSON, keys: ["id"])
+        self.taskId = Self.stringValue(rawJSON, keys: ["taskId", "task_id"])
+        self.conversationId = Self.stringValue(rawJSON, keys: ["conversationId", "conversation_id"])
+        self.responseId = Self.stringValue(rawJSON, keys: ["responseId", "response_id"])
+        self.message = Self.stringValue(rawJSON, keys: ["summary", "message", "content", "output", "text", "result"])
+        self.status = Self.stringValue(rawJSON, keys: ["status", "state"])
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try rawJSON.encode(to: encoder)
+    }
+
+    private static func stringValue(_ dictionary: [String: AnyCodable], keys: [String]) -> String? {
+        for key in keys {
+            if let value = dictionary[key]?.value as? String, !value.isEmpty {
+                return value
+            }
+        }
+        return nil
+    }
+}
+
+public struct GrokTaskResultsResponse: Codable {
+    public let results: [GrokTaskResult]
+    public let rawJSON: AnyCodable
+
+    public init(results: [GrokTaskResult], rawJSON: AnyCodable) {
+        self.results = results
+        self.rawJSON = rawJSON
+    }
 }
 
 public struct GrokSkillsResponse: Codable {
@@ -973,6 +1438,7 @@ internal struct ModelResponse: Codable {
 public class GrokClient {
     private let baseURL: String
     private let rootBaseURL: String
+    private let webBaseURL: String
     private let cookies: [String: String]
     private var session: URLSession
     public var isDebug: Bool = false
@@ -998,9 +1464,10 @@ public class GrokClient {
 	    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
 	]
 
-    private enum RestNamespace {
+    enum RestNamespace {
         case appChat
         case root
+        case web
 
         var pathPrefix: String {
             switch self {
@@ -1008,6 +1475,8 @@ public class GrokClient {
                 return "/rest/app-chat"
             case .root:
                 return "/rest"
+            case .web:
+                return ""
             }
         }
     }
@@ -1062,7 +1531,7 @@ public class GrokClient {
         }
     }
 
-    private static func normalizedBaseURLs(from configuredBaseURL: String?) -> (appChat: String, root: String) {
+    private static func normalizedBaseURLs(from configuredBaseURL: String?) -> (appChat: String, root: String, web: String) {
         let rawBaseURL = configuredBaseURL
             ?? ProcessInfo.processInfo.environment["GROK_BASE_URL"]
             ?? "https://grok.com/rest"
@@ -1070,15 +1539,17 @@ public class GrokClient {
 
         if trimmed.hasSuffix("/rest/app-chat") {
             let root = String(trimmed.dropLast("/app-chat".count))
-            return (trimmed, root)
+            let web = String(root.dropLast("/rest".count))
+            return (trimmed, root, web)
         }
 
         if trimmed.hasSuffix("/rest") {
-            return ("\(trimmed)/app-chat", trimmed)
+            let web = String(trimmed.dropLast("/rest".count))
+            return ("\(trimmed)/app-chat", trimmed, web)
         }
 
         let root = "\(trimmed)/rest"
-        return ("\(root)/app-chat", root)
+        return ("\(root)/app-chat", root, trimmed)
     }
 
     /// Initializes the GrokClient with cookie credentials
@@ -1099,6 +1570,7 @@ public class GrokClient {
         let resolvedBaseURLs = Self.normalizedBaseURLs(from: configuredBaseURL)
         self.baseURL = resolvedBaseURLs.appChat
         self.rootBaseURL = resolvedBaseURLs.root
+        self.webBaseURL = resolvedBaseURLs.web
         self.cookies = cookies
         self.isDebug = isDebug
 
@@ -1233,7 +1705,7 @@ public class GrokClient {
 	    #endif
 	}
 
-	private func makeRequest(
+	func makeRequest(
         path: String,
         method: String = "POST",
         payload: [String: Any]? = nil,
@@ -1245,6 +1717,8 @@ public class GrokClient {
             requestBaseURL = baseURL
         case .root:
             requestBaseURL = rootBaseURL
+        case .web:
+            requestBaseURL = webBaseURL
         }
 
         let url = URL(string: "\(requestBaseURL)\(path)")!
@@ -1405,6 +1879,22 @@ public class GrokClient {
         "resetIn",
         "ttlSeconds"
     ]
+    private static let rateLimitWindowKeys = [
+        "windowSeconds",
+        "windowLengthSeconds",
+        "windowDurationSeconds",
+        "limitWindowSeconds",
+        "rateLimitWindowSeconds",
+        "periodSeconds",
+        "durationSeconds",
+        "window",
+        "windowLength",
+        "windowDuration",
+        "limitWindow",
+        "rateLimitWindow",
+        "period",
+        "duration"
+    ]
     private static let activeSubscriptionStatuses: Set<String> = [
         "active",
         "trialing",
@@ -1421,6 +1911,88 @@ public class GrokClient {
         "past_due",
         "unpaid"
     ]
+    private static let shareLinkWrapperKeys = [
+        "shareLinks",
+        "share_links",
+        "items",
+        "result",
+        "data"
+    ]
+    private static let shareLinkURLKeys = [
+        "url",
+        "shareUrl",
+        "share_url",
+        "link",
+        "shareLink",
+        "share_link"
+    ]
+    private static let shareLinkIDKeys = [
+        "publicId",
+        "public_id",
+        "token",
+        "id",
+        "shareId",
+        "share_id",
+        "shareLinkId",
+        "share_link_id"
+    ]
+    private static let nonTerminalEmptyTokenMarkerKeys = [
+        "messageTag",
+        "message_tag",
+        "messageStepId",
+        "message_step_id",
+        "toolUsageCardId",
+        "tool_usage_card_id",
+        "toolUsageCard",
+        "toolCallId",
+        "tool_call_id",
+        "toolName",
+        "tool_name",
+        "cardId",
+        "card_id"
+    ]
+    private static let activeTaskKeys = [
+        "activeTasks",
+        "active_tasks",
+        "enabledTasks",
+        "enabled_tasks",
+        "active",
+        "enabled"
+    ]
+    private static let inactiveTaskKeys = [
+        "inactiveTasks",
+        "inactive_tasks",
+        "archivedTasks",
+        "archived_tasks",
+        "disabledTasks",
+        "disabled_tasks",
+        "inactive",
+        "archived",
+        "disabled"
+    ]
+    private static let generalTaskKeys = [
+        "tasks",
+        "taskList",
+        "task_list",
+        "data",
+        "result",
+        "items",
+        "values"
+    ]
+    private static let taskWrapperKeys = [
+        "task",
+        "taskData",
+        "task_data"
+    ]
+    private static let taskResultKeys = [
+        "results",
+        "taskResults",
+        "task_results",
+        "data",
+        "result",
+        "items",
+        "values"
+    ]
 
     private func dictionary(_ value: Any?) -> JSONDictionary? {
         value as? JSONDictionary
@@ -1436,6 +2008,16 @@ public class GrokClient {
         return nil
     }
 
+    private func stringValueAllowingEmpty(_ dictionary: JSONDictionary?, keys: [String]) -> String? {
+        guard let dictionary else { return nil }
+        for key in keys {
+            if let value = dictionary[key] as? String {
+                return value
+            }
+        }
+        return nil
+    }
+
     private func boolValue(_ dictionary: JSONDictionary?, keys: [String]) -> Bool? {
         guard let dictionary else { return nil }
         for key in keys {
@@ -1444,6 +2026,19 @@ public class GrokClient {
             }
         }
         return nil
+    }
+
+    private func containsAnyValue(_ dictionary: JSONDictionary?, keys: [String]) -> Bool {
+        guard let dictionary else { return false }
+        return keys.contains { dictionary[$0] != nil }
+    }
+
+    private func isTerminalEmptyToken(_ token: String, response: JSONDictionary?, result: JSONDictionary, isThinking: Bool, isSoftStop: Bool) -> Bool {
+        token.isEmpty &&
+            !isThinking &&
+            !isSoftStop &&
+            !containsAnyValue(response, keys: Self.nonTerminalEmptyTokenMarkerKeys) &&
+            !containsAnyValue(result, keys: Self.nonTerminalEmptyTokenMarkerKeys)
     }
 
     private func firstBool(in value: Any, keys: [String]) -> Bool? {
@@ -1515,7 +2110,7 @@ public class GrokClient {
         return String(describing: value)
     }
 
-    private func jsonObject(for request: URLRequest) async throws -> Any {
+    func jsonObject(for request: URLRequest) async throws -> Any {
         let (data, response) = try await session.data(for: request)
         try validateHTTPResponse(response, data: data)
 
@@ -1594,6 +2189,43 @@ public class GrokClient {
         return []
     }
 
+    private func allDictionaries(from value: Any, keys: [String]) -> [JSONDictionary] {
+        if let array = value as? [Any] {
+            return array.flatMap { allDictionaries(from: $0, keys: keys) }
+        }
+
+        guard let dictionary = value as? JSONDictionary else {
+            return []
+        }
+
+        var results: [JSONDictionary] = []
+        for (key, nested) in dictionary {
+            if keys.contains(key) {
+                results.append(contentsOf: directDictionaries(from: nested))
+            } else {
+                results.append(contentsOf: allDictionaries(from: nested, keys: keys))
+            }
+        }
+        return results
+    }
+
+    private func directDictionaries(from value: Any) -> [JSONDictionary] {
+        if let array = value as? [JSONDictionary] {
+            return array
+        }
+
+        if let array = value as? [Any] {
+            return array.flatMap { directDictionaries(from: $0) }
+        }
+
+        guard let dictionary = value as? JSONDictionary else {
+            return []
+        }
+
+        let nested = dictionaries(from: dictionary, preferredKeys: Self.generalTaskKeys + Self.taskWrapperKeys)
+        return nested.isEmpty ? [dictionary] : nested
+    }
+
     private func firstDictionary(from value: Any, preferredKeys: [String]) -> JSONDictionary? {
         if let dictionary = value as? JSONDictionary {
             for key in preferredKeys {
@@ -1614,6 +2246,102 @@ public class GrokClient {
         }
 
         return nil
+    }
+
+    private func makeShareLinkURL(from json: Any) throws -> String {
+        if let url = firstShareLinkURL(in: json) {
+            return url
+        }
+
+        throw GrokError.apiError("Share link response did not include a share URL")
+    }
+
+    private func firstShareLinkURL(in value: Any) -> String? {
+        if let dictionary = value as? JSONDictionary {
+            if let url = shareLinkURL(from: dictionary) {
+                return url
+            }
+
+            for key in Self.shareLinkWrapperKeys {
+                guard let nested = dictionary[key],
+                      let url = firstShareLinkURL(in: nested) else {
+                    continue
+                }
+                return url
+            }
+
+            for nested in dictionary.values {
+                if let url = firstShareLinkURL(in: nested) {
+                    return url
+                }
+            }
+        }
+
+        if let array = value as? [Any] {
+            for nested in array {
+                if let url = firstShareLinkURL(in: nested) {
+                    return url
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func shareLinkURL(from dictionary: JSONDictionary) -> String? {
+        if let url = firstString(in: dictionary, keys: Self.shareLinkURLKeys)
+            .flatMap(cleanShareLinkURL) {
+            return url
+        }
+
+        if let shareID = firstString(in: dictionary, keys: Self.shareLinkIDKeys) {
+            return shareLinkURL(fromIdentifier: shareID)
+        }
+
+        return nil
+    }
+
+    private func cleanShareLinkURL(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        if trimmed.hasPrefix("https://") || trimmed.hasPrefix("http://") {
+            return trimmed
+        }
+
+        if trimmed.hasPrefix("grok.com/") {
+            return "https://\(trimmed)"
+        }
+
+        if trimmed.hasPrefix("/share/") {
+            return "https://grok.com\(trimmed)"
+        }
+
+        return shareLinkURL(fromIdentifier: trimmed)
+    }
+
+    private func shareLinkURL(fromIdentifier value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        if trimmed.hasPrefix("https://") || trimmed.hasPrefix("http://") {
+            return trimmed
+        }
+
+        if trimmed.hasPrefix("grok.com/") {
+            return "https://\(trimmed)"
+        }
+
+        if trimmed.hasPrefix("/share/") {
+            return "https://grok.com\(trimmed)"
+        }
+
+        let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? trimmed
+        return "https://grok.com/share/\(encoded)"
     }
 
     private struct ParsedModeAvailability {
@@ -1731,16 +2459,218 @@ public class GrokClient {
         return ParsedModeAvailability(isAvailable: true, reason: nil, minimumSubscriptionTier: nil)
     }
 
-    private func makeTask(from dictionary: JSONDictionary) -> GrokTask {
-        let rawJSON = anyCodableDictionary(dictionary)
+    private func makeTask(from dictionary: JSONDictionary, defaultIsEnabled: Bool? = nil) -> GrokTask {
+        let taskDictionary = firstDictionary(from: dictionary, preferredKeys: Self.taskWrapperKeys) ?? dictionary
+        var rawJSON = anyCodableDictionary(taskDictionary)
+        if let schedule = firstScheduleDictionary(from: dictionary) {
+            copyTaskScheduleFields(from: schedule, into: &rawJSON)
+            if rawJSON["isEnabled"] == nil,
+               rawJSON["is_enabled"] == nil,
+               rawJSON["isActive"] == nil,
+               rawJSON["is_active"] == nil,
+               rawJSON["enabled"] == nil,
+               rawJSON["active"] == nil,
+               let scheduleEnabled = schedule["isEnabled"] as? Bool {
+                rawJSON["isEnabled"] = AnyCodable(scheduleEnabled)
+            }
+        }
+        if rawJSON["isEnabled"] == nil,
+           rawJSON["is_enabled"] == nil,
+           rawJSON["isActive"] == nil,
+           rawJSON["is_active"] == nil,
+           rawJSON["enabled"] == nil,
+           rawJSON["active"] == nil,
+           let defaultIsEnabled {
+            rawJSON["isEnabled"] = AnyCodable(defaultIsEnabled)
+        }
         return GrokTask(
             taskId: stringValue(rawJSON, keys: ["taskId", "task_id"]),
             id: stringValue(rawJSON, keys: ["id"]),
-            name: stringValue(rawJSON, keys: ["name"]),
-            prompt: stringValue(rawJSON, keys: ["prompt"]),
-            isEnabled: boolValue(rawJSON, keys: ["isEnabled", "is_enabled"]),
+            name: stringValue(rawJSON, keys: ["name", "title", "displayName", "display_name"]),
+            prompt: stringValue(rawJSON, keys: [
+                "prompt",
+                "taskPrompt",
+                "task_prompt",
+                "description",
+                "summary",
+                "query",
+                "instructions"
+            ]),
+            isEnabled: boolValue(rawJSON, keys: ["isEnabled", "is_enabled", "isActive", "is_active", "enabled", "active"]),
+            status: stringValue(rawJSON, keys: ["status", "state"]),
             rawJSON: rawJSON
         )
+    }
+
+    private func firstScheduleDictionary(from dictionary: JSONDictionary) -> JSONDictionary? {
+        if let schedule = dictionary["schedule"] as? JSONDictionary {
+            return schedule
+        }
+        if let schedules = dictionary["schedules"] as? [JSONDictionary] {
+            return schedules.first
+        }
+        if let schedules = dictionary["schedules"] as? [Any] {
+            return schedules.first { $0 is JSONDictionary } as? JSONDictionary
+        }
+        return nil
+    }
+
+    private func copyTaskScheduleFields(
+        from schedule: JSONDictionary,
+        into rawJSON: inout [String: AnyCodable]
+    ) {
+        for key in ["dayOfYear", "date", "timeOfDay", "time", "timezone", "timeZone", "nextRun"] {
+            guard rawJSON[key] == nil, let value = schedule[key] else {
+                continue
+            }
+            rawJSON[key] = AnyCodable(value)
+        }
+    }
+
+    private func makeTasksResponse(from json: Any, defaultIsEnabled: Bool? = nil) -> GrokTasksResponse {
+        let activeTasks = allDictionaries(from: json, keys: Self.activeTaskKeys)
+            .map { makeTask(from: $0, defaultIsEnabled: true) }
+        let inactiveTasks = allDictionaries(from: json, keys: Self.inactiveTaskKeys)
+            .map { makeTask(from: $0, defaultIsEnabled: false) }
+
+        let tasks: [GrokTask]
+        if activeTasks.isEmpty && inactiveTasks.isEmpty {
+            tasks = dictionaries(from: json, preferredKeys: Self.generalTaskKeys)
+                .map { makeTask(from: $0, defaultIsEnabled: defaultIsEnabled) }
+        } else {
+            tasks = activeTasks + inactiveTasks
+        }
+
+        return GrokTasksResponse(
+            tasks: tasks,
+            activeTasks: activeTasks,
+            inactiveTasks: inactiveTasks,
+            rawJSON: AnyCodable(json)
+        )
+    }
+
+    private func makeTaskResult(from dictionary: JSONDictionary) -> GrokTaskResult {
+        let rawJSON = anyCodableDictionary(dictionary)
+        return GrokTaskResult(
+            resultId: stringValue(rawJSON, keys: ["taskResultId", "task_result_id", "resultId", "result_id"]),
+            id: stringValue(rawJSON, keys: ["id"]),
+            taskId: stringValue(rawJSON, keys: ["taskId", "task_id"]),
+            conversationId: stringValue(rawJSON, keys: ["conversationId", "conversation_id"]),
+            responseId: stringValue(rawJSON, keys: ["responseId", "response_id"]),
+            message: taskResultMessage(from: dictionary) ?? stringValue(rawJSON, keys: ["summary", "message", "content", "output", "text", "result"]),
+            status: stringValue(rawJSON, keys: ["status", "state"]),
+            rawJSON: rawJSON
+        )
+    }
+
+    private func makeTaskResultsResponse(from json: Any) -> GrokTaskResultsResponse {
+        let resultDictionaries = dictionaries(from: json, preferredKeys: Self.taskResultKeys)
+        let results: [GrokTaskResult]
+        if !resultDictionaries.isEmpty {
+            results = resultDictionaries.map { makeTaskResult(from: $0) }
+        } else if let dictionary = firstTaskResultDictionary(in: json) {
+            results = [makeTaskResult(from: dictionary)]
+        } else {
+            results = []
+        }
+
+        return GrokTaskResultsResponse(results: results, rawJSON: AnyCodable(json))
+    }
+
+    private func firstTaskResultDictionary(in value: Any) -> JSONDictionary? {
+        if let array = value as? [Any] {
+            for item in array {
+                if let dictionary = firstTaskResultDictionary(in: item) {
+                    return dictionary
+                }
+            }
+            return nil
+        }
+
+        guard let dictionary = value as? JSONDictionary else {
+            return nil
+        }
+
+        if isTaskResultDictionary(dictionary) {
+            return dictionary
+        }
+
+        for key in Self.taskResultKeys + [
+            "taskResult",
+            "task_result",
+            "latestResult",
+            "latest_result",
+            "lastResult",
+            "last_result",
+            "response",
+            "modelResponse",
+            "model_response"
+        ] {
+            if let nested = dictionary[key],
+               let result = firstTaskResultDictionary(in: nested) {
+                return result
+            }
+        }
+
+        return nil
+    }
+
+    private func isTaskResultDictionary(_ dictionary: JSONDictionary) -> Bool {
+        containsAnyValue(dictionary, keys: [
+            "taskResultId",
+            "task_result_id",
+            "resultId",
+            "result_id",
+            "id",
+            "taskId",
+            "task_id",
+            "conversationId",
+            "conversation_id",
+            "responseId",
+            "response_id",
+            "summary",
+            "message",
+            "content",
+            "output",
+            "text"
+        ])
+    }
+
+    private func taskResultMessage(from dictionary: JSONDictionary) -> String? {
+        if let direct = stringValue(dictionary, keys: ["summary", "message", "content", "output", "text", "result"]) {
+            return direct
+        }
+
+        for key in ["result", "response", "modelResponse", "model_response", "conversation"] {
+            if let nested = dictionary[key] as? JSONDictionary,
+               let text = taskResultMessage(from: nested) {
+                return text
+            }
+        }
+
+        for key in ["messages", "responses", "contents", "parts"] {
+            if let array = dictionary[key] as? [JSONDictionary] {
+                for nested in array {
+                    if let text = taskResultMessage(from: nested) {
+                        return text
+                    }
+                }
+            }
+            if let array = dictionary[key] as? [Any] {
+                for item in array {
+                    if let nested = item as? JSONDictionary,
+                       let text = taskResultMessage(from: nested) {
+                        return text
+                    }
+                    if let text = item as? String,
+                       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        return text
+                    }
+                }
+            }
+        }
+
+        return nil
     }
 
     private func makeSkill(from dictionary: JSONDictionary) -> GrokSkill {
@@ -2101,6 +3031,7 @@ public class GrokClient {
             remainingResponses: firstInt(in: rateLimit, keys: Self.rateLimitRemainingKeys),
             resetAt: firstDate(in: rateLimit, keys: Self.rateLimitResetAtKeys, fetchedAt: fetchedAt),
             resetAfterSeconds: firstDurationSeconds(in: rateLimit, keys: Self.rateLimitResetAfterKeys),
+            windowSeconds: firstDurationSeconds(in: rateLimit, keys: Self.rateLimitWindowKeys),
             fetchedAt: fetchedAt,
             rawJSON: AnyCodable(json)
         )
@@ -2473,6 +3404,85 @@ public class GrokClient {
         return GrokConversationV2Response(conversationId: conversationId, rawJSON: AnyCodable(json))
     }
 
+    private func makeTypeaheadResponse(from json: Any, maxItems: Int) -> GrokTypeaheadResponse {
+        var seen = Set<String>()
+        let suggestions = typeaheadValues(from: json)
+            .compactMap(makeTypeaheadSuggestion)
+            .filter { suggestion in
+                seen.insert(suggestion.text.lowercased()).inserted
+            }
+            .prefix(max(0, maxItems))
+            .map { $0 }
+
+        return GrokTypeaheadResponse(suggestions: suggestions, rawJSON: AnyCodable(json))
+    }
+
+    private func typeaheadValues(from value: Any) -> [Any] {
+        if let array = value as? [Any] {
+            return array
+        }
+
+        guard let dictionary = value as? JSONDictionary else {
+            return []
+        }
+
+        if typeaheadText(in: dictionary) != nil {
+            return [dictionary]
+        }
+
+        for key in ["suggestions", "items", "results", "data", "result", "queries", "completions"] {
+            guard let nested = dictionary[key] else {
+                continue
+            }
+            let values = typeaheadValues(from: nested)
+            if !values.isEmpty {
+                return values
+            }
+        }
+
+        return []
+    }
+
+    private func makeTypeaheadSuggestion(from value: Any) -> GrokTypeaheadSuggestion? {
+        if let string = value as? String {
+            let text = normalizedTypeaheadText(string)
+            return text.isEmpty ? nil : GrokTypeaheadSuggestion(text: text)
+        }
+
+        guard let dictionary = value as? JSONDictionary,
+              let text = typeaheadText(in: dictionary) else {
+            return nil
+        }
+
+        let title = stringValue(dictionary, keys: ["title", "label", "display", "name"])
+        return GrokTypeaheadSuggestion(
+            text: text,
+            title: title == text ? nil : title,
+            rawJSON: anyCodableDictionary(dictionary)
+        )
+    }
+
+    private func typeaheadText(in dictionary: JSONDictionary) -> String? {
+        for key in ["text", "query", "value", "completion", "suggestion", "title", "name", "label"] {
+            guard let value = dictionary[key] as? String else {
+                continue
+            }
+            let text = normalizedTypeaheadText(value)
+            if !text.isEmpty {
+                return text
+            }
+        }
+
+        return nil
+    }
+
+    private func normalizedTypeaheadText(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private func extractWebSearchResults(from modelResponse: JSONDictionary?) -> [WebSearchResult]? {
         guard let rawResults = modelResponse?["webSearchResults"] as? [JSONDictionary] else {
             return nil
@@ -2577,7 +3587,14 @@ public class GrokClient {
             boolValue(result, keys: ["isThinking"]) ??
             false
 
-        if let token = stringValue(response, keys: ["token"]) ?? stringValue(result, keys: ["token"]) {
+        if let token = stringValueAllowingEmpty(response, keys: ["token"]) ?? stringValueAllowingEmpty(result, keys: ["token"]) {
+            let isFinal = isTerminalEmptyToken(
+                token,
+                response: response,
+                result: result,
+                isThinking: isThinking,
+                isSoftStop: isSoftStop
+            )
             return ConversationResponse(
                 message: token,
                 conversationId: conversationId,
@@ -2587,7 +3604,7 @@ public class GrokClient {
                 xposts: nil,
                 isThinking: isThinking,
                 isSoftStop: isSoftStop,
-                isFinal: false
+                isFinal: isFinal
             )
         }
 
@@ -2672,12 +3689,17 @@ public class GrokClient {
 
                     for try await line in lines {
                         if let response = try parseStreamLine(line, conversationId: &conversationId, responseId: &responseId) {
+                            let isFinal = response.isFinal
                             yieldParsedResponse(
                                 response,
                                 continuation: continuation,
                                 accumulatedMessage: &accumulatedMessage,
                                 yieldedFinal: &yieldedFinal
                             )
+                            if isFinal {
+                                continuation.finish()
+                                return
+                            }
                         }
                     }
 
@@ -3003,11 +4025,27 @@ public class GrokClient {
     }
 
     /// Fetch a list of past conversations
-    /// - Parameter pageSize: The number of conversations to fetch (default 100)
+    /// - Parameters:
+    ///   - pageSize: The number of conversations to fetch (default 100)
+    ///   - searchQuery: Optional query to search saved conversation threads.
     /// - Returns: An array of Conversation objects
     /// - Throws: Network, decoding, or API errors
-    public func listConversations(pageSize: Int = 100) async throws -> [Conversation] {
-        let request = try makeRequest(path: "/conversations?pageSize=\(pageSize)", method: "GET")
+    public func listConversations(pageSize: Int = 100, searchQuery: String? = nil) async throws -> [Conversation] {
+        var components = URLComponents()
+        components.path = "/conversations"
+        components.queryItems = [
+            URLQueryItem(name: "pageSize", value: String(pageSize))
+        ]
+        if let searchQuery = searchQuery?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !searchQuery.isEmpty {
+            components.queryItems?.append(URLQueryItem(name: "searchQuery", value: searchQuery))
+        }
+
+        guard let path = components.string else {
+            throw GrokError.apiError("Could not build conversations request URL")
+        }
+
+        let request = try makeRequest(path: path, method: "GET")
 
         if isDebug {
             print("Debug URL: \(request.url?.absoluteString ?? "")")
@@ -3036,6 +4074,87 @@ public class GrokClient {
             // old API format
             return try decoder.decode([Conversation].self, from: data)
         }
+    }
+
+    public func typeahead(
+        query: String,
+        lang: String = "en",
+        maxItems: Int = 3,
+        platform: String = "web",
+        source: Int = 1
+    ) async throws -> GrokTypeaheadResponse {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else {
+            return GrokTypeaheadResponse(suggestions: [], rawJSON: AnyCodable([:]))
+        }
+
+        var components = URLComponents()
+        components.path = "/_worker/typeahead"
+        components.queryItems = [
+            URLQueryItem(name: "lang", value: lang),
+            URLQueryItem(name: "maxItems", value: String(maxItems)),
+            URLQueryItem(name: "q", value: trimmedQuery),
+            URLQueryItem(name: "platform", value: platform),
+            URLQueryItem(name: "source", value: String(source))
+        ]
+
+        guard let path = components.string else {
+            throw GrokError.apiError("Could not build typeahead request URL")
+        }
+
+        let request = try makeRequest(path: path, method: "GET", namespace: .web)
+        let json = try await jsonObject(for: request)
+        return self.makeTypeaheadResponse(from: json, maxItems: maxItems)
+    }
+
+    public func shareLinkURL(conversationId: String, responseId: String? = nil, pageSize: Int = 100) async throws -> String {
+        var components = URLComponents()
+        components.path = "/share_links"
+        components.queryItems = [
+            URLQueryItem(name: "pageSize", value: String(pageSize)),
+            URLQueryItem(name: "conversationId", value: conversationId)
+        ]
+        if let responseId, !responseId.isEmpty {
+            components.queryItems?.append(URLQueryItem(name: "responseId", value: responseId))
+        }
+
+        guard let path = components.string else {
+            throw GrokError.apiError("Could not build share links request URL")
+        }
+
+        let request = try makeRequest(path: path, method: "GET")
+        let json = try await jsonObject(for: request)
+        if let shareURL = firstShareLinkURL(in: json) {
+            return shareURL
+        }
+
+        guard let responseId, !responseId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw GrokError.apiError("No existing share link found and no response ID available to create one")
+        }
+
+        return try await createShareLinkURL(conversationId: conversationId, responseId: responseId)
+    }
+
+    public func createShareLinkURL(conversationId: String, responseId: String) async throws -> String {
+        let encodedConversationId = conversationId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? conversationId
+        let payload: [String: Any] = [
+            "responseId": responseId,
+            "allowIndexing": true
+        ]
+        let request = try makeRequest(
+            path: "/conversations/\(encodedConversationId)/share",
+            method: "POST",
+            payload: payload
+        )
+        let json = try await jsonObject(for: request)
+        return try makeShareLinkURL(from: json)
+    }
+
+    public func softDeleteConversation(conversationId: String) async throws {
+        let encodedConversationId = conversationId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? conversationId
+        let request = try makeRequest(path: "/conversations/soft/\(encodedConversationId)", method: "DELETE")
+        let (data, response) = try await session.data(for: request)
+        try validateHTTPResponse(response, data: data)
     }
 
     /// Get the response nodes for a conversation
@@ -3199,14 +4318,45 @@ public class GrokClient {
     public func listTasksResponse() async throws -> GrokTasksResponse {
         let request = try makeRequest(path: "/tasks", method: "GET", namespace: .root)
         let json = try await jsonObject(for: request)
-        let tasks = dictionaries(from: json, preferredKeys: ["tasks", "data", "result", "items"])
-            .map { makeTask(from: $0) }
-
-        return GrokTasksResponse(tasks: tasks, rawJSON: AnyCodable(json))
+        return makeTasksResponse(from: json)
     }
 
     public func listTasks() async throws -> [GrokTask] {
         try await listTasksResponse().tasks
+    }
+
+    public func listInactiveTasksResponse() async throws -> GrokTasksResponse {
+        let request = try makeRequest(path: "/tasks/inactive", method: "GET", namespace: .root)
+        let json = try await jsonObject(for: request)
+        return makeTasksResponse(from: json, defaultIsEnabled: false)
+    }
+
+    public func listInactiveTasks() async throws -> [GrokTask] {
+        try await listInactiveTasksResponse().tasks
+    }
+
+    public func taskResultsResponse(taskId: String, limit: Int = 1) async throws -> GrokTaskResultsResponse {
+        var components = URLComponents()
+        components.path = "/tasks/results/\(taskId)"
+        components.queryItems = [
+            URLQueryItem(name: "limit", value: String(limit))
+        ]
+
+        guard let path = components.string else {
+            throw GrokError.apiError("Could not build task results request URL")
+        }
+
+        let request = try makeRequest(path: path, method: "GET", namespace: .root)
+        let json = try await jsonObject(for: request)
+        return makeTaskResultsResponse(from: json)
+    }
+
+    public func taskResults(taskId: String, limit: Int = 1) async throws -> [GrokTaskResult] {
+        try await taskResultsResponse(taskId: taskId, limit: limit).results
+    }
+
+    public func latestTaskResult(taskId: String) async throws -> GrokTaskResult? {
+        try await taskResults(taskId: taskId, limit: 1).first
     }
 
     public func createTask(
