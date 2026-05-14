@@ -250,6 +250,11 @@ extension GrokCLI {
         let command = arguments[0].lowercased() // Convert to lowercase for case-insensitive comparison
         let remainingArgs = Array(arguments.dropFirst())
 
+        if command == "--version" || command == "-v" {
+            print("SwiftGrok CLI")
+            return
+        }
+
         if command == "--help" || command == "-h" {
             if isJSONRequested(arguments) {
                 try printHelpJSON()
@@ -296,17 +301,18 @@ extension GrokCLI {
         case "list":
             try await handleListCommand(args: remainingArgs, exitOnError: true)
         case "models", "modes":
-            let modes = await GrokCLIApp.shared.loadModes()
-            if isJSONRequested(remainingArgs) {
+            if containsHelpArgument(remainingArgs) {
+                printModelsUsage()
+                printAvailableModels(currentMode: GrokCLIApp.shared.getCurrentMode(), modes: GrokMode.knownModes)
+            } else if isJSONRequested(remainingArgs) {
+                let modes = await GrokCLIApp.shared.loadModes()
                 try printJSONResult(
                     command: command == "modes" ? "modes" : "models",
                     category: "model_list",
                     data: AnyCodable(selectedModelJSON(currentMode: GrokCLIApp.shared.getCurrentMode(), modes: modes))
                 )
-            } else if containsHelpArgument(remainingArgs) {
-                printModelsUsage()
-                printAvailableModels(currentMode: GrokCLIApp.shared.getCurrentMode(), modes: modes)
             } else {
+                let modes = await GrokCLIApp.shared.loadModes()
                 printAvailableModels(currentMode: GrokCLIApp.shared.getCurrentMode(), modes: modes)
             }
         case "agents":
