@@ -84,8 +84,11 @@ extension GrokCLI {
     }
 
     static func scheduleValue(in dictionary: [String: Any]) -> String? {
-        if let value = stringValue(in: dictionary, keys: ["schedule", "scheduledTime", "scheduledAt"]) {
-            return value
+        for key in ["schedule", "scheduledTime", "scheduledAt"] {
+            if let value = dictionary[key] as? String,
+               !value.isEmpty {
+                return value
+            }
         }
 
         let schedule = dictionary["schedule"] as? [String: Any] ?? dictionary
