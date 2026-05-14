@@ -22,15 +22,23 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertContains(help.cleanOutput, "Usage: grok [command] [options]")
         XCTAssertContains(help.cleanOutput, "message <text>")
 
+        let versionRequestCount = server.requests().count
+        let version = try environment.run(["--version"])
+        XCTAssertEqual(version.status, 0)
+        XCTAssertContains(version.cleanOutput, "SwiftGrok CLI")
+        XCTAssertEqual(server.requests().count, versionRequestCount)
+
         let models = try environment.run(["models"])
         XCTAssertEqual(models.status, 0)
         XCTAssertContains(models.cleanOutput, "Available web modes:")
         XCTAssertContains(models.cleanOutput, "Grok 4.3 (beta)")
 
+        let modeRequestCount = server.requests(matchingPath: "/rest/modes", method: "POST").count
         let modelsHelp = try environment.run(["models", "--help"])
         XCTAssertEqual(modelsHelp.status, 0)
         XCTAssertContains(modelsHelp.cleanOutput, "Usage: grok models")
         XCTAssertContains(modelsHelp.cleanOutput, "Available web modes:")
+        XCTAssertEqual(server.requests(matchingPath: "/rest/modes", method: "POST").count, modeRequestCount)
 
         let modes = try environment.run(["modes"])
         XCTAssertEqual(modes.status, 0)
@@ -68,6 +76,11 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertEqual(testCommand.status, 0)
         XCTAssertContains(testCommand.cleanOutput, "Test command executed successfully!")
         XCTAssertContains(testCommand.cleanOutput, #"Message provided: "hello""#)
+
+        let testCommandHelp = try environment.run(["test", "--help"])
+        XCTAssertEqual(testCommandHelp.status, 0)
+        XCTAssertContains(testCommandHelp.cleanOutput, "Usage: grok test")
+        XCTAssertFalse(testCommandHelp.cleanOutput.contains("Message provided"))
 
         let chatCommand = try environment.run(["chat", "hello"], input: "/quit\n")
         XCTAssertEqual(chatCommand.status, 0)
@@ -355,6 +368,34 @@ final class GrokCLIE2ETests: XCTestCase {
         let markdownFormat = try environment.run(["transcribe", "--format", "md", audioURL.path])
         XCTAssertNotEqual(markdownFormat.status, 0)
         XCTAssertContains(markdownFormat.cleanOutput, "Use raw or json")
+        XCTAssertTrue(server.requests(matchingPath: "/rest/voice/speech-to-text", method: "POST").isEmpty)
+    }
+
+    func testTranscribeCommandUsageErrorsReturnStatusTwo() throws {
+        let server = try MockGrokServer()
+        let environment = try TestEnvironment(server: server)
+        let unknownAudioURL = environment.scratchURL.appendingPathComponent("clip.audio")
+        try Data("audio bytes".utf8).write(to: unknownAudioURL)
+
+        let missingPath = try environment.run(["transcribe"])
+        assertUsageError(missingPath, mentions: ["transcribe", "path"])
+
+        let unknownFormat = try environment.run(["transcribe", unknownAudioURL.path])
+        assertUsageError(unknownFormat, mentions: ["audio format"])
+        XCTAssertFalse(unknownFormat.cleanOutput.contains("Transcribing audio"))
+
+        let missingAudioURL = environment.scratchURL.appendingPathComponent("missing.wav")
+        let missingFile = try environment.run(["transcribe", missingAudioURL.path])
+        assertUsageError(missingFile, mentions: ["Could not read audio file"])
+        XCTAssertFalse(missingFile.cleanOutput.contains("Transcribing audio"))
+
+        let unknownFormatJSON = try environment.run(["transcribe", "--json", unknownAudioURL.path])
+        XCTAssertEqual(unknownFormatJSON.status, 2)
+        let envelope = try jsonObject(from: unknownFormatJSON)
+        XCTAssertEqual(envelope["ok"] as? Bool, false)
+        XCTAssertEqual((envelope["error"] as? [String: Any])?["code"] as? String, "api_error")
+        XCTAssertEqual((envelope["error"] as? [String: Any])?["exitCode"] as? Int, 2)
+
         XCTAssertTrue(server.requests(matchingPath: "/rest/voice/speech-to-text", method: "POST").isEmpty)
     }
 
@@ -855,7 +896,7 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertEqual(chatAlias.status, 0)
         _ = try assertResultEnvelope(
             try jsonObject(from: chatAlias),
-            command: "message",
+            command: "chat",
             category: "assistant_response"
         )
 
@@ -1211,12 +1252,15 @@ final class GrokCLIE2ETests: XCTestCase {
         let server = try MockGrokServer()
         let environment = try TestEnvironment(server: server)
 
-        let run = try environment.run([], input: "/tasks\n1\n/quit\n", timeout: 15)
+        let run = try environment.run([], input: "/tasks\n1\n1\n2\n5\n/quit\n", timeout: 15)
 
         XCTAssertEqual(run.status, 0)
         XCTAssertContains(run.cleanOutput, "Tasks")
         XCTAssertContains(run.cleanOutput, "Morning Research Brief")
-        XCTAssertContains(run.cleanOutput, "Latest run  done  2026-05-15 12:00")
+        XCTAssertContains(run.cleanOutput, "Task actions")
+        XCTAssertContains(run.cleanOutput, "Show latest result")
+        XCTAssertContains(run.cleanOutput, "Task run")
+        XCTAssertContains(run.cleanOutput, "done")
         XCTAssertContains(run.cleanOutput, "Three notable product research updates landed overnight.")
         XCTAssertFalse(run.cleanOutput.contains("task-summary-daily"))
         XCTAssertFalse(run.cleanOutput.contains("conv-task-summary-daily"))
@@ -1225,6 +1269,22 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertEqual(server.requests(matchingPath: "/rest/tasks", method: "GET").count, 1)
         XCTAssertTrue(server.requests(method: "GET").contains {
             $0.path == "/rest/tasks/results/task-summary-daily" && $0.target.contains("limit=1")
+        })
+    }
+
+    func testTasksInteractiveShowRunsListsAndViewsPreviousRun() throws {
+        let server = try MockGrokServer()
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run([], input: "/tasks\n1\n2\n2\n2\n\n5\n/quit\n", timeout: 15)
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Task runs:")
+        XCTAssertContains(run.cleanOutput, "latest")
+        XCTAssertContains(run.cleanOutput, "previous")
+        XCTAssertContains(run.cleanOutput, "Previous run captured one older product research update.")
+        XCTAssertTrue(server.requests(method: "GET").contains {
+            $0.path == "/rest/tasks/results/task-summary-daily" && $0.target.contains("limit=10")
         })
     }
 
@@ -1280,7 +1340,32 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertEqual(chatJSON.status, 2)
         let chatEnvelope = try jsonObject(from: chatJSON)
         XCTAssertEqual(chatEnvelope["ok"] as? Bool, false)
-        XCTAssertEqual(chatEnvelope["command"] as? String, "message")
+        XCTAssertEqual(chatEnvelope["command"] as? String, "chat")
+        XCTAssertEqual((chatEnvelope["error"] as? [String: Any])?["code"] as? String, "usage_error")
+
+        let filesUploadMissingJSON = try environment.run(["files", "upload", "--json"])
+        XCTAssertEqual(filesUploadMissingJSON.status, 2)
+        let filesUploadEnvelope = try jsonObject(from: filesUploadMissingJSON)
+        XCTAssertEqual(filesUploadEnvelope["ok"] as? Bool, false)
+        XCTAssertEqual(filesUploadEnvelope["command"] as? String, "files")
+        XCTAssertEqual((filesUploadEnvelope["error"] as? [String: Any])?["code"] as? String, "usage_error")
+
+        let skillsUnknownJSON = try environment.run(["skills", "bogus", "--json"])
+        XCTAssertEqual(skillsUnknownJSON.status, 2)
+        let skillsUnknownEnvelope = try jsonObject(from: skillsUnknownJSON)
+        XCTAssertEqual(skillsUnknownEnvelope["ok"] as? Bool, false)
+        XCTAssertEqual(skillsUnknownEnvelope["command"] as? String, "skills")
+        XCTAssertEqual((skillsUnknownEnvelope["error"] as? [String: Any])?["code"] as? String, "usage_error")
+
+        let agentsShowMissingJSON = try environment.run(["agents", "show", "--json"])
+        XCTAssertEqual(agentsShowMissingJSON.status, 2)
+        let agentsShowEnvelope = try jsonObject(from: agentsShowMissingJSON)
+        XCTAssertEqual(agentsShowEnvelope["ok"] as? Bool, false)
+        let agentsShowError = try XCTUnwrap(agentsShowEnvelope["error"] as? [String: Any])
+        XCTAssertEqual(agentsShowEnvelope["command"] as? String, "agents")
+        XCTAssertEqual(agentsShowError["code"] as? String, "usage_error")
+        XCTAssertContains(agentsShowError["message"] as? String ?? "", "Usage: grok agents show")
+        XCTAssertFalse((agentsShowError["message"] as? String ?? "").contains("Usage: Usage:"))
 
         let modelsFormat = try environment.run(["models", "--format", "json"])
         XCTAssertEqual(modelsFormat.status, 0)
@@ -1383,6 +1468,16 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertEqual(chatMissingModel.status, 2)
         XCTAssertContains(chatMissingModel.cleanOutput, "requires a model value")
         XCTAssertFalse(chatMissingModel.cleanOutput.contains("Calling Grok API"))
+
+        let chatStdin = try environment.run(["chat", "--stdin"])
+        XCTAssertEqual(chatStdin.status, 2)
+        XCTAssertContains(chatStdin.cleanOutput, "--stdin is only supported by grok message")
+        XCTAssertFalse(chatStdin.cleanOutput.contains("Calling Grok API"))
+
+        let chatPromptFile = try environment.run(["chat", "--prompt-file", "prompt.txt"])
+        XCTAssertEqual(chatPromptFile.status, 2)
+        XCTAssertContains(chatPromptFile.cleanOutput, "--prompt-file is only supported by grok message")
+        XCTAssertFalse(chatPromptFile.cleanOutput.contains("Calling Grok API"))
     }
 
     func testStreamingThinkingChunksRenderAboveAnswer() throws {
@@ -1429,6 +1524,14 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertEqual(imported.status, 0)
         XCTAssertContains(imported.cleanOutput, "Successfully imported credentials!")
 
+        let quietImportLeading = try environment.run(["auth", "import", "--quiet", importFile.path])
+        XCTAssertEqual(quietImportLeading.status, 0)
+        XCTAssertEqual(quietImportLeading.cleanOutput, "")
+
+        let quietImportTrailing = try environment.run(["auth", "import", importFile.path, "--quiet"])
+        XCTAssertEqual(quietImportTrailing.status, 0)
+        XCTAssertEqual(quietImportTrailing.cleanOutput, "")
+
         let savedCredentials = try String(contentsOf: environment.credentialsURL, encoding: .utf8)
         XCTAssertContains(savedCredentials, "imported")
 
@@ -1473,7 +1576,7 @@ final class GrokCLIE2ETests: XCTestCase {
             extraEnvironment: ["GROK_COOKIE_EXTRACTOR": extractor.path]
         )
         XCTAssertEqual(generated.status, 0)
-        XCTAssertContains(generated.cleanOutput, "Successfully generated credentials!")
+        XCTAssertEqual(generated.cleanOutput, "")
         XCTAssertContains(try String(contentsOf: environment.credentialsURL, encoding: .utf8), "generated")
 
         var extractorArgs = try String(contentsOf: extractorLog, encoding: .utf8)
@@ -1488,7 +1591,7 @@ final class GrokCLIE2ETests: XCTestCase {
             extraEnvironment: ["GROK_COOKIE_EXTRACTOR": extractor.path]
         )
         XCTAssertEqual(safariShortcut.status, 0)
-        XCTAssertContains(safariShortcut.cleanOutput, "Successfully generated credentials!")
+        XCTAssertEqual(safariShortcut.cleanOutput, "")
 
         extractorArgs = try String(contentsOf: extractorLog, encoding: .utf8)
         XCTAssertContains(extractorArgs, "--browser")
@@ -1557,7 +1660,7 @@ final class GrokCLIE2ETests: XCTestCase {
         )
 
         XCTAssertEqual(run.status, 0)
-        XCTAssertContains(run.cleanOutput, "Successfully generated credentials!")
+        XCTAssertFalse(run.cleanOutput.contains("Successfully generated credentials!"))
         XCTAssertContains(run.cleanOutput, "Goodbye!")
         XCTAssertContains(try String(contentsOf: environment.credentialsURL, encoding: .utf8), "interactive-safari")
 
@@ -1621,6 +1724,7 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertContains(run.cleanOutput, "Model set to: Heavy (heavy)")
         XCTAssertContains(run.cleanOutput, "Grok denied access to Heavy (heavy)")
         XCTAssertContains(run.cleanOutput, "Switch models")
+        XCTAssertFalse(run.cleanOutput.contains("ThinkingError"))
         XCTAssertFalse(run.cleanOutput.contains("Authentication failed. Your saved Grok browser cookies may have expired."))
         XCTAssertFalse(run.cleanOutput.contains("Trying to refresh credentials from your browser..."))
         XCTAssertFalse(FileManager.default.fileExists(atPath: extractorMarker.path))
@@ -3519,6 +3623,16 @@ private struct RecordedRequest {
     func jsonBool(_ key: String) -> Bool? {
         json[key] as? Bool
     }
+
+    func queryInt(_ key: String) -> Int? {
+        guard let components = URLComponents(string: "http://localhost\(target)") else {
+            return nil
+        }
+        return components.queryItems?
+            .first(where: { $0.name == key })?
+            .value
+            .flatMap(Int.init)
+    }
 }
 
 private final class MockGrokServer {
@@ -3817,7 +3931,19 @@ private final class MockGrokServer {
             return jsonResponse(["tasks": inactiveTaskJSON()])
         case ("GET", let path) where path.hasPrefix("/rest/tasks/results/"):
             let taskId = request.pathComponent(after: "results") ?? "task-summary-daily"
-            return jsonResponse(["results": [taskResultJSON(taskId: taskId)]])
+            let limit = request.queryInt("limit") ?? 1
+            let results = [
+                taskResultJSON(taskId: taskId),
+                taskResultJSON(
+                    taskId: taskId,
+                    resultId: "previous-result-\(taskId)",
+                    conversationId: "previous-conv-\(taskId)",
+                    responseId: "previous-resp-\(taskId)",
+                    message: "Previous run captured one older product research update.",
+                    createTime: "2026-05-08T12:00:00Z"
+                )
+            ]
+            return jsonResponse(["results": Array(results.prefix(max(limit, 0)))])
         case ("POST", "/rest/tasks"):
             return jsonResponse(["task": taskJSON(prompt: request.jsonString("prompt") ?? "created prompt")])
         case ("PUT", "/rest/tasks/archive"):
@@ -3970,16 +4096,23 @@ private final class MockGrokServer {
         return task
     }
 
-    private func taskResultJSON(taskId: String) -> [String: Any] {
+    private func taskResultJSON(
+        taskId: String,
+        resultId: String? = nil,
+        conversationId: String? = nil,
+        responseId: String? = nil,
+        message: String = "Three notable product research updates landed overnight.",
+        createTime: String = "2026-05-15T12:00:00Z"
+    ) -> [String: Any] {
         [
-            "taskResultId": "result-\(taskId)",
+            "taskResultId": resultId ?? "result-\(taskId)",
             "taskId": taskId,
-            "conversationId": "conv-\(taskId)",
-            "responseId": "resp-\(taskId)",
+            "conversationId": conversationId ?? "conv-\(taskId)",
+            "responseId": responseId ?? "resp-\(taskId)",
             "status": "done",
-            "summary": "Three notable product research updates landed overnight.",
-            "message": "Three notable product research updates landed overnight.",
-            "createTime": "2026-05-15T12:00:00Z"
+            "summary": message,
+            "message": message,
+            "createTime": createTime
         ]
     }
 
@@ -4133,6 +4266,16 @@ private struct HTTPRequest {
             return nil
         }
         return parts[index + 1]
+    }
+
+    func queryInt(_ key: String) -> Int? {
+        guard let components = URLComponents(string: "http://localhost\(target)") else {
+            return nil
+        }
+        return components.queryItems?
+            .first(where: { $0.name == key })?
+            .value
+            .flatMap(Int.init)
     }
 }
 
