@@ -133,10 +133,7 @@ extension GrokCLI {
                         command: "workspaces",
                         subcommand: "conversation",
                         category: "conversation_detail",
-                        data: AnyCodable([
-                            "conversationId": AnyCodable(response.conversationId ?? conversationId),
-                            "raw": response.rawJSON
-                        ]),
+                        data: AnyCodable(conversationV2JSON(response, fallbackId: conversationId)),
                         debug: parsed.debug
                     )
                     return
@@ -321,6 +318,27 @@ private extension GrokCLI {
             ("Workspaces", workspaceCount.map(String.init)),
             ("TaskResult", hasTaskResult ? "yes" : nil)
         ])
+    }
+
+    static func conversationV2JSON(_ response: GrokConversationV2Response, fallbackId: String) -> [String: AnyCodable] {
+        let raw = anyDictionary(from: response.rawJSON)
+        let conversation = firstDictionary(in: raw, keys: ["conversation", "data", "result"]) ?? raw
+        let id = response.conversationId ?? stringValue(in: conversation, keys: ["conversationId", "conversation_id", "id"]) ?? fallbackId
+        let title = stringValue(in: conversation, keys: ["title", "name"])
+        let workspaceCount = arrayCount(in: conversation, keys: ["workspaces", "workspaceIds", "workspace_ids"])
+        let hasTaskResult = conversation["taskResult"] != nil || conversation["task_result"] != nil
+
+        var data: [String: AnyCodable] = [
+            "conversationId": AnyCodable(id),
+            "hasTaskResult": AnyCodable(hasTaskResult)
+        ]
+        if let title {
+            data["title"] = AnyCodable(title)
+        }
+        if let workspaceCount {
+            data["workspaceCount"] = AnyCodable(workspaceCount)
+        }
+        return data
     }
 
     static var workspacesUsage: String {

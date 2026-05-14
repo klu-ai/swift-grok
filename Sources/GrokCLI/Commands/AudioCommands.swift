@@ -308,12 +308,27 @@ extension GrokCLI {
 
         #if os(macOS)
         if let deviceName = defaultAudioInputDeviceName(),
-           !deviceName.contains(":") {
-            return deviceName
+           let specifier = avFoundationSpecifierForDefaultAudioDeviceName(deviceName) {
+            return specifier
         }
         #endif
 
         return "default"
+    }
+
+    static func avFoundationSpecifierForDefaultAudioDeviceName(_ deviceName: String) -> String? {
+        let trimmed = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        guard !trimmed.contains(":") else {
+            return nil
+        }
+        guard let firstScalar = trimmed.unicodeScalars.first,
+              !CharacterSet.decimalDigits.contains(firstScalar) else {
+            return nil
+        }
+        return trimmed
     }
 
     static func avFoundationAudioInputArgument(for deviceSpecifier: String) -> String {
@@ -395,10 +410,15 @@ extension GrokCLI {
                 if exitOnError { exit(with: 2) }
                 return
             } else if let invalidValue = outputFormatOption.invalidValue {
-                reportTranscribeUsageError("Invalid output format '\(invalidValue)'. Use raw, md, or json.", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                reportTranscribeUsageError("Invalid output format '\(invalidValue)'. Use raw or json.", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
                 if exitOnError { exit(with: 2) }
                 return
             } else if let format = outputFormatOption.format {
+                guard format != .markdown else {
+                    reportTranscribeUsageError("Invalid output format 'markdown'. Use raw or json.", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    if exitOnError { exit(with: 2) }
+                    return
+                }
                 outputFormat = format
                 index += outputFormatOption.consumedNext ? 2 : 1
                 continue

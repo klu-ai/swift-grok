@@ -8,9 +8,9 @@ struct ChatCommand: ParsableCommand {
         commandName: "chat",
         abstract: "Start an interactive chat session with Grok"
     )
-    static let hiddenMode = """
-    You are a highly capable, thoughtful, and precise assistant. Your goal is to deeply understand the user's intent, ask clarifying questions when needed, think step-by-step through complex problems, provide clear and accurate answers, and proactively anticipate helpful follow-up information. Always prioritize being truthful, nuanced, insightful, and efficient, tailoring your responses specifically to the user's needs and preferences. If conversational dialogue, be more human. when possible, use brevity.
-    """
+//    static let hiddenMode = """
+//    You are a highly capable, thoughtful, and precise assistant. Your goal is to deeply understand the user's intent, ask clarifying questions when needed, think step-by-step through complex problems, provide clear and accurate answers, and proactively anticipate helpful follow-up information. Always prioritize being truthful, nuanced, insightful, and efficient, tailoring your responses specifically to the user's needs and preferences. If conversational dialogue, be more human. when possible, use brevity.
+//    """
 
     @OptionGroup var options: GrokCommandOptions
 
@@ -19,19 +19,29 @@ struct ChatCommand: ParsableCommand {
 
     // Print the current settings status line
     static func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool, currentStream: Bool, currentFormat: OutputFormat = .defaultFormat, currentMode: GrokMode = GrokCLIApp.shared.getCurrentMode()) {
-        print("Chat mode".cyan + " | " +
-              "Model: \(currentMode.displayName)".yellow + " | " +
-              (currentPrivate ? "Private".red : "Saved".blue) + " | " +
-              (currentStream ? "Streaming".green : "Not Streaming".red) + " | " +
-              currentFormat.statusName.yellow)
+        GrokCLI.printSettingsStatus(
+            currentReasoning: currentReasoning,
+            currentDeepSearch: currentDeepSearch,
+            currentNoCustomInstructions: currentNoCustomInstructions,
+            currentNoSearch: currentNoSearch,
+            currentPrivate: currentPrivate,
+            currentStream: currentStream,
+            currentFormat: currentFormat,
+            currentMode: currentMode
+        )
     }
 
     // Print the current settings status line
     func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool, currentStream: Bool, currentFormat: OutputFormat = .defaultFormat, currentMode: GrokMode = GrokCLIApp.shared.getCurrentMode()) {
-        print("Chat mode".cyan + " | " +
-              "Model: \(currentMode.displayName)".yellow + " | " +
-              (currentPrivate ? "Private".red : "Saved".blue) + " | " +
-              (currentStream ? "Stream".green : "Not Streaming".red) + " | " +
-              currentFormat.statusName.yellow)
+        Self.printSettingsStatus(
+            currentReasoning: currentReasoning,
+            currentDeepSearch: currentDeepSearch,
+            currentNoCustomInstructions: currentNoCustomInstructions,
+            currentNoSearch: currentNoSearch,
+            currentPrivate: currentPrivate,
+            currentStream: currentStream,
+            currentFormat: currentFormat,
+            currentMode: currentMode
+        )
     }
 }

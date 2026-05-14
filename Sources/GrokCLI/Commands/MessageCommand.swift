@@ -438,12 +438,12 @@ extension GrokCLI {
                 }
             } else if enableQuiet {
                 if enableStream {
-                    try await printQuietStreamingResponse(stream)
+                    try await printQuietStreamingResponse(stream, format: outputFormat)
                 } else {
                     guard let response = try await finalResponse(from: stream) else {
                         throw GrokError.streamingError
                     }
-                    printQuietResponse(response.message)
+                    printQuietResponse(response.message, format: outputFormat)
                 }
             } else if enableStream {
                 // If streaming is enabled, print each chunk as it comes in
@@ -505,25 +505,66 @@ extension GrokCLI {
         }
     }
 
-    static func printQuietResponse(_ message: String) {
-        CLIOutput.stdout(message, terminator: message.hasSuffix("\n") ? "" : "\n")
+    static func printQuietResponse(_ message: String, format: OutputFormat = .raw) {
+        guard format == .markdown else {
+            let visibleMessage = GrokStreamMarkupParser.visibleText(from: message)
+            CLIOutput.stdout(visibleMessage, terminator: visibleMessage.hasSuffix("\n") ? "" : "\n")
+            return
+        }
+
+        OutputFormatter(format: .markdown).printQuietResponseBody(message)
     }
 
-    static func printQuietStreamingResponse(_ stream: AsyncThrowingStream<ConversationResponse, Error>) async throws {
+    static func printQuietStreamingResponse(_ stream: AsyncThrowingStream<ConversationResponse, Error>, format: OutputFormat = .raw) async throws {
+        if format == .markdown {
+            try await printQuietMarkdownStreamingResponse(stream)
+            return
+        }
+
+        try await printRawQuietStreamingResponse(stream)
+    }
+
+    private static func printQuietMarkdownStreamingResponse(_ stream: AsyncThrowingStream<ConversationResponse, Error>) async throws {
+        var finalResponse: ConversationResponse?
+        var collectedMessage = ""
+
+        for try await response in stream {
+            if response.isSoftStop && response.message.isEmpty {
+                continue
+            }
+
+            if response.isFinal {
+                finalResponse = response
+                break
+            } else if !response.isThinking {
+                collectedMessage += response.message
+            }
+        }
+
+        printQuietResponse(finalResponse?.message ?? collectedMessage, format: .markdown)
+    }
+
+    private static func printRawQuietStreamingResponse(_ stream: AsyncThrowingStream<ConversationResponse, Error>) async throws {
         let answerParser = GrokStreamMarkupParser()
         var printedAnswerDelta = false
         var printedAnyText = false
         var finalResponse: ConversationResponse?
 
         func printEvents(_ events: [StreamDisplayEvent]) {
-            for event in events {
-                guard case .text(let text) = event, !text.isEmpty else {
-                    continue
-                }
-                printedAnswerDelta = true
-                printedAnyText = true
-                CLIOutput.stdout(text, terminator: "")
+            let text = events.compactMap { event -> String? in
+                guard case .text(let text) = event else { return nil }
+                return text
+            }.joined()
+            guard !text.isEmpty else {
+                return
             }
+            let visibleText = GrokStreamMarkupParser.visibleText(from: text, hidesHiddenPreamble: false)
+            guard !visibleText.isEmpty else {
+                return
+            }
+            printedAnswerDelta = true
+            printedAnyText = true
+            CLIOutput.stdout(visibleText, terminator: "")
         }
 
         for try await response in stream {
@@ -533,6 +574,7 @@ extension GrokCLI {
 
             if response.isFinal {
                 finalResponse = response
+                break
             } else if !response.isThinking {
                 printEvents(answerParser.consume(response.message))
             }
@@ -591,7 +633,7 @@ extension GrokCLI {
         sequence += 1
 
         let answerParser = GrokStreamMarkupParser()
-        let thinkingParser = GrokStreamMarkupParser(hidesHiddenPreamble: false)
+        let thinkingParser = GrokStreamMarkupParser()
         var thinkingActive = false
         var emittedFinal = false
 
@@ -605,6 +647,72 @@ extension GrokCLI {
                 case .trace(let line):
                     try printJSONEvent(sequence: sequence, event: "trace", data: AnyCodable(["kind": AnyCodable("tool"), "text": AnyCodable(line)]))
                     sequence += 1
+                case .activity(let activity):
+                    try printJSONEvent(sequence: sequence, event: "activity", data: AnyCodable([
+                        "kind": AnyCodable(activity.kind.rawValue),
+                        "text": AnyCodable(activity.displayText)
+                    ]))
+                    sequence += 1
+                    try printJSONEvent(sequence: sequence, event: "trace", data: AnyCodable([
+                        "kind": AnyCodable(activity.kind.rawValue),
+                        "text": AnyCodable(activity.displayText)
+                    ]))
+                    sequence += 1
+                }
+            }
+        }
+
+        func emitThinkingStartIfNeeded() throws {
+            if !thinkingActive {
+                try printJSONEvent(sequence: sequence, event: "thinking_start", data: AnyCodable([
+                    "phase": AnyCodable("thinking")
+                ]))
+                sequence += 1
+                thinkingActive = true
+            }
+        }
+
+        func emitThinkingEndIfNeeded() throws {
+            if thinkingActive {
+                try printJSONEvent(sequence: sequence, event: "thinking_end", data: AnyCodable([
+                    "phase": AnyCodable("thinking")
+                ]))
+                sequence += 1
+                thinkingActive = false
+            }
+        }
+
+        func emitThinkingEvents(_ events: [StreamDisplayEvent]) throws {
+            for event in events {
+                switch event {
+                case .text(let text):
+                    let lines = text
+                        .split(separator: "\n", omittingEmptySubsequences: false)
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                    for line in lines {
+                        try emitThinkingStartIfNeeded()
+                        try printJSONEvent(sequence: sequence, event: "thinking_delta", data: AnyCodable(["text": AnyCodable(line)]))
+                        sequence += 1
+                        try printJSONEvent(sequence: sequence, event: "trace", data: AnyCodable(["kind": AnyCodable("thinking"), "text": AnyCodable(line)]))
+                        sequence += 1
+                    }
+                case .trace(let line):
+                    try printJSONEvent(sequence: sequence, event: "progress", data: AnyCodable(["kind": AnyCodable("tool"), "text": AnyCodable(line)]))
+                    sequence += 1
+                    try printJSONEvent(sequence: sequence, event: "trace", data: AnyCodable(["kind": AnyCodable("tool"), "text": AnyCodable(line)]))
+                    sequence += 1
+                case .activity(let activity):
+                    try printJSONEvent(sequence: sequence, event: "activity", data: AnyCodable([
+                        "kind": AnyCodable(activity.kind.rawValue),
+                        "text": AnyCodable(activity.displayText)
+                    ]))
+                    sequence += 1
+                    try printJSONEvent(sequence: sequence, event: "trace", data: AnyCodable([
+                        "kind": AnyCodable(activity.kind.rawValue),
+                        "text": AnyCodable(activity.displayText)
+                    ]))
+                    sequence += 1
                 }
             }
         }
@@ -616,13 +724,8 @@ extension GrokCLI {
                 }
 
                 if response.isFinal {
-                    if thinkingActive {
-                        try printJSONEvent(sequence: sequence, event: "thinking_end", data: AnyCodable([
-                            "phase": AnyCodable("thinking")
-                        ]))
-                        sequence += 1
-                        thinkingActive = false
-                    }
+                    try emitThinkingEvents(thinkingParser.finish())
+                    try emitThinkingEndIfNeeded()
                     try emitDisplayEvents(answerParser.finish(), textEvent: "assistant_delta")
                     let data = assistantResponseJSON(response: response, mode: mode, request: request, input: input)
                     try printJSONEvent(sequence: sequence, event: "assistant_final", data: AnyCodable(data))
@@ -633,47 +736,18 @@ extension GrokCLI {
                     ]))
                     sequence += 1
                     emittedFinal = true
+                    break
                 } else if response.isThinking {
-                    if !thinkingActive {
-                        try printJSONEvent(sequence: sequence, event: "thinking_start", data: AnyCodable([
-                            "phase": AnyCodable("thinking")
-                        ]))
-                        sequence += 1
-                        thinkingActive = true
-                    }
-                    let events = thinkingParser.consume(response.message)
-                    for event in events {
-                        switch event {
-                        case .text(let text):
-                            let lines = text
-                                .split(separator: "\n", omittingEmptySubsequences: false)
-                                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                                .filter { !$0.isEmpty }
-                            for line in lines {
-                                try printJSONEvent(sequence: sequence, event: "thinking_delta", data: AnyCodable(["text": AnyCodable(line)]))
-                                sequence += 1
-                                try printJSONEvent(sequence: sequence, event: "trace", data: AnyCodable(["kind": AnyCodable("thinking"), "text": AnyCodable(line)]))
-                                sequence += 1
-                            }
-                        case .trace(let line):
-                            try printJSONEvent(sequence: sequence, event: "progress", data: AnyCodable(["kind": AnyCodable("tool"), "text": AnyCodable(line)]))
-                            sequence += 1
-                            try printJSONEvent(sequence: sequence, event: "trace", data: AnyCodable(["kind": AnyCodable("tool"), "text": AnyCodable(line)]))
-                            sequence += 1
-                        }
-                    }
+                    try emitThinkingEvents(thinkingParser.consume(response.message))
                 } else {
-                    if thinkingActive {
-                        try printJSONEvent(sequence: sequence, event: "thinking_end", data: AnyCodable([
-                            "phase": AnyCodable("thinking")
-                        ]))
-                        sequence += 1
-                        thinkingActive = false
-                    }
+                    try emitThinkingEvents(thinkingParser.finish())
+                    try emitThinkingEndIfNeeded()
                     try emitDisplayEvents(answerParser.consume(response.message), textEvent: "assistant_delta")
                 }
             }
 
+            try emitThinkingEvents(thinkingParser.finish())
+            try emitThinkingEndIfNeeded()
             try emitDisplayEvents(answerParser.finish(), textEvent: "assistant_delta")
             if !emittedFinal {
                 try printJSONEvent(sequence: sequence, event: "done", data: AnyCodable([
@@ -683,12 +757,7 @@ extension GrokCLI {
             }
             return true
         } catch {
-            if thinkingActive {
-                try printJSONEvent(sequence: sequence, event: "thinking_end", data: AnyCodable([
-                    "phase": AnyCodable("thinking")
-                ]))
-                sequence += 1
-            }
+            try emitThinkingEndIfNeeded()
             try printJSONErrorEvent(sequence: sequence, error: error, exitCode: 1, debug: debug)
             sequence += 1
             try printJSONEvent(sequence: sequence, event: "done", data: AnyCodable([
