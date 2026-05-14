@@ -439,6 +439,7 @@ extension GrokCLI {
                 args: audioArgs,
                 usage: "grok transcribe [--audio-format <format>] [--refinement-level <level>] <path|->"
             )
+            try validateTranscribeAudioFormatBeforeProgress(options)
             let jsonMode = outputFormat.isJSON
             let app = GrokCLIApp.shared
             app.setQuietMode(enableQuiet && !jsonMode)
@@ -461,14 +462,60 @@ extension GrokCLI {
                 CLIOutput.stdout(resolved.transcript, terminator: resolved.transcript.hasSuffix("\n") ? "" : "\n")
             }
         } catch {
+            let exitCode = transcribeExitCode(for: error)
             if jsonRequested || outputFormat.isJSON {
-                printJSONError(command: "transcribe", error: error, exitCode: 1, debug: enableDebug)
+                printJSONError(command: "transcribe", error: error, exitCode: exitCode, debug: enableDebug)
             } else {
                 reportTranscribeUsageError(error.localizedDescription, jsonRequested: false, exitOnError: exitOnError, toStderr: enableQuiet)
             }
             if exitOnError {
-                exit(with: 1)
+                exit(with: exitCode)
             }
+        }
+    }
+
+    private static func transcribeExitCode(for error: Error) -> Int32 {
+        let message = error.localizedDescription
+        let usagePrefixes = [
+            "Usage:",
+            "--audio-format requires",
+            "--refinement-level requires",
+            "Unknown audio option:",
+            "Could not infer audio format.",
+            "Please provide audio bytes on stdin",
+            "Audio file is empty:",
+            "Could not read audio file "
+        ]
+
+        return usagePrefixes.contains { message.hasPrefix($0) } ? 2 : 1
+    }
+
+    private static func validateTranscribeAudioFormatBeforeProgress(_ options: AudioInputRequestOptions) throws {
+        if let audioFormat = options.audioFormat?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !audioFormat.isEmpty {
+            return
+        }
+
+        guard options.path != "-" else {
+            throw GrokError.apiError("Could not infer audio format. Pass --audio-format when using stdin or an unknown extension.")
+        }
+
+        let expandedPath = NSString(string: options.path).expandingTildeInPath
+        let fileURL = URL(fileURLWithPath: expandedPath)
+        let fileName = fileURL.lastPathComponent
+        guard GrokClient.inferAudioFormat(fromFileName: fileName) != nil else {
+            throw GrokError.apiError("Could not infer audio format. Pass --audio-format when using stdin or an unknown extension.")
+        }
+
+        let fileAttributes: [FileAttributeKey: Any]
+        do {
+            fileAttributes = try FileManager.default.attributesOfItem(atPath: expandedPath)
+        } catch {
+            throw GrokError.apiError("Could not read audio file \(options.path): \(error.localizedDescription)")
+        }
+
+        if let size = fileAttributes[.size] as? NSNumber, size.intValue == 0 {
+            throw GrokError.apiError("Audio file is empty: \(options.path)")
         }
     }
 
