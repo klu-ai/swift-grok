@@ -1,4 +1,5 @@
 import Foundation
+import GrokClient
 import XCTest
 @testable import GrokCLI
 
@@ -341,6 +342,22 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertTrue(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").isEmpty)
     }
 
+    func testTranscribeCommandRejectsMarkdownOutputFormat() throws {
+        let server = try MockGrokServer()
+        let environment = try TestEnvironment(server: server)
+        let audioURL = environment.scratchURL.appendingPathComponent("clip.webm")
+        try Data("audio bytes".utf8).write(to: audioURL)
+
+        let markdownFlag = try environment.run(["transcribe", "--markdown", audioURL.path])
+        XCTAssertNotEqual(markdownFlag.status, 0)
+        XCTAssertContains(markdownFlag.cleanOutput, "Use raw or json")
+
+        let markdownFormat = try environment.run(["transcribe", "--format", "md", audioURL.path])
+        XCTAssertNotEqual(markdownFormat.status, 0)
+        XCTAssertContains(markdownFormat.cleanOutput, "Use raw or json")
+        XCTAssertTrue(server.requests(matchingPath: "/rest/voice/speech-to-text", method: "POST").isEmpty)
+    }
+
     func testInteractiveAudioCommandsTranscribeAndSend() throws {
         let answer = "interactive audio answer"
         let transcript = "interactive audio transcript"
@@ -362,6 +379,36 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertEqual(chatMessages.filter { $0 == transcript }.count, 4)
         XCTAssertContains(run.stdout, answer)
         XCTAssertContains(run.stdout, transcript)
+    }
+
+    func testInteractiveAudioSendPrintsTranscriptBeforeActivity() throws {
+        let transcript = "send this transcript"
+        let server = try MockGrokServer(
+            streamLines: [
+                #"{"result":{"conversation":{"conversationId":"conv-e2e"},"response":{"responseId":"resp-e2e","token":"Thinking about your request","isThinking":true}}}"#,
+                #"{"result":{"response":{"responseId":"resp-e2e","token":"audio answer"}}}"#,
+                #"{"result":{"response":{"modelResponse":{"message":"audio answer","responseId":"resp-e2e"}}}}"#
+            ],
+            finalMessage: "audio answer",
+            transcriptionText: transcript
+        )
+        let environment = try TestEnvironment(server: server)
+        let audioURL = environment.scratchURL.appendingPathComponent("send-note.webm")
+        try Data("audio bytes".utf8).write(to: audioURL)
+
+        let run = try environment.run(
+            ["chat", "--raw"],
+            input: "/audio send \(audioURL.path)\n/quit\n"
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "[transcript] \(transcript)")
+        XCTAssertFalse(run.cleanOutput.contains("[thinking] Thinking about your request"))
+        XCTAssertContains(run.cleanOutput, "Grok\naudio answer")
+
+        let transcriptRange = try XCTUnwrap(run.cleanOutput.range(of: "[transcript] \(transcript)"))
+        let answerRange = try XCTUnwrap(run.cleanOutput.range(of: "Grok\naudio answer"))
+        XCTAssertLessThan(transcriptRange.lowerBound, answerRange.lowerBound)
     }
 
     func testInteractiveAudioRecordsWhenNoPathIsProvided() throws {
@@ -475,7 +522,7 @@ final class GrokCLIE2ETests: XCTestCase {
 
         let run = try environment.run(
             ["chat"],
-            input: "/list\n1\ncontinue loaded thread\n/quit\n",
+            input: "/resume\n1\ncontinue loaded thread\n/quit\n",
             timeout: 15
         )
 
@@ -483,6 +530,299 @@ final class GrokCLIE2ETests: XCTestCase {
         let followUp = try XCTUnwrap(server.requests(matchingPath: "/rest/app-chat/conversations/conv-e2e/responses", method: "POST").last)
         XCTAssertEqual(followUp.jsonString("message"), "continue loaded thread")
         XCTAssertEqual(followUp.jsonString("parentResponseId"), "resp-e2e")
+    }
+
+    func testInteractiveResumeSwitchesToLoadedConversationMode() throws {
+        let server = try MockGrokServer(loadedAssistantMetadata: ["modeId": "expert"])
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(
+            ["chat", "--model", "fast"],
+            input: "/resume\n1\ncontinue with resumed model\n/quit\n",
+            timeout: 15
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Model: Expert (expert)")
+        let followUp = try XCTUnwrap(server.requests(matchingPath: "/rest/app-chat/conversations/conv-e2e/responses", method: "POST").last)
+        XCTAssertEqual(followUp.jsonString("message"), "continue with resumed model")
+        XCTAssertEqual(followUp.jsonString("modeId"), "expert")
+    }
+
+    func testInteractiveSearchSelectionResumesConversationForFollowUp() throws {
+        let server = try MockGrokServer(loadedAssistantMetadata: ["modeId": "expert"])
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(
+            ["chat", "--model", "fast"],
+            input: "/search important thread\n1\ncontinue search result\n/quit\n",
+            timeout: 15
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Mock Conversation")
+
+        let listRequest = try XCTUnwrap(server.requests(matchingPath: "/rest/app-chat/conversations", method: "GET").last)
+        XCTAssertContains(listRequest.target, "pageSize=60")
+        XCTAssertContains(listRequest.target, "searchQuery=important%20thread")
+
+        let followUp = try XCTUnwrap(server.requests(matchingPath: "/rest/app-chat/conversations/conv-e2e/responses", method: "POST").last)
+        XCTAssertEqual(followUp.jsonString("message"), "continue search result")
+        XCTAssertEqual(followUp.jsonString("parentResponseId"), "resp-e2e")
+        XCTAssertEqual(followUp.jsonString("modeId"), "expert")
+    }
+
+    func testInteractiveSearchWithoutQueryShowsUsageWithoutListingConversations() throws {
+        let server = try MockGrokServer()
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(
+            ["chat"],
+            input: "/search\n/quit\n",
+            timeout: 15
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Usage: /search <query>")
+        XCTAssertEqual(server.requests(matchingPath: "/rest/app-chat/conversations", method: "GET").count, 0)
+    }
+
+    func testInteractiveResumeMapsLoadedConversationModelDisplayName() throws {
+        let server = try MockGrokServer(loadedAssistantMetadata: [
+            "model": ["displayName": "Grok 4.3 (beta)"]
+        ])
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(
+            ["chat", "--model", "fast"],
+            input: "/resume\n1\ncontinue with display model\n/quit\n",
+            timeout: 15
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Model: Grok 4.3 (beta) (grok-420-computer-use-sa)")
+        let followUp = try XCTUnwrap(server.requests(matchingPath: "/rest/app-chat/conversations/conv-e2e/responses", method: "POST").last)
+        XCTAssertEqual(followUp.jsonString("message"), "continue with display model")
+        XCTAssertEqual(followUp.jsonString("modeId"), "grok-420-computer-use-sa")
+    }
+
+    func testInteractiveResumeMapsLiveScalarModelMetadata() throws {
+        let server = try MockGrokServer(loadedAssistantMetadata: [
+            "model": "grok-420-computer-use-sa",
+            "metadata": [
+                "request_metadata": [
+                    "mode": "grok-4-3",
+                    "model": "grok-420-computer-use-sa"
+                ],
+                "llm_info": [
+                    "modelHash": "redacted"
+                ]
+            ]
+        ])
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(
+            ["chat", "--model", "fast"],
+            input: "/resume\n1\ncontinue with live metadata\n/quit\n",
+            timeout: 15
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Model: Grok 4.3 (beta) (grok-420-computer-use-sa)")
+        let followUp = try XCTUnwrap(server.requests(matchingPath: "/rest/app-chat/conversations/conv-e2e/responses", method: "POST").last)
+        XCTAssertEqual(followUp.jsonString("message"), "continue with live metadata")
+        XCTAssertEqual(followUp.jsonString("modeId"), "grok-420-computer-use-sa")
+    }
+
+    func testInteractiveResumeWithoutModelMetadataKeepsCurrentMode() throws {
+        let server = try MockGrokServer()
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(
+            ["chat", "--model", "expert"],
+            input: "/resume\n1\ncontinue without metadata\n/quit\n",
+            timeout: 15
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertFalse(run.cleanOutput.contains("Model: "))
+        let followUp = try XCTUnwrap(server.requests(matchingPath: "/rest/app-chat/conversations/conv-e2e/responses", method: "POST").last)
+        XCTAssertEqual(followUp.jsonString("message"), "continue without metadata")
+        XCTAssertEqual(followUp.jsonString("modeId"), "expert")
+    }
+
+    func testInteractiveGoalAfterResumeContinuesFromLeafAssistantResponse() throws {
+        let server = try MockGrokServer(loadedResponses: [
+            [
+                "responseId": "resp-leaf",
+                "message": "Latest assistant response",
+                "sender": "assistant",
+                "createTime": "2026-05-13T00:00:03Z",
+                "parentResponseId": "resp-user-2",
+                "model": "grok-420-computer-use-sa"
+            ],
+            [
+                "responseId": "resp-user-2",
+                "message": "Second user response",
+                "sender": "human",
+                "createTime": "2026-05-13T00:00:02Z",
+                "parentResponseId": "resp-old"
+            ],
+            [
+                "responseId": "resp-old",
+                "message": "Older assistant response",
+                "sender": "assistant",
+                "createTime": "2026-05-13T00:00:01Z",
+                "parentResponseId": "resp-user-1"
+            ],
+            [
+                "responseId": "resp-user-1",
+                "message": "First user response",
+                "sender": "human",
+                "createTime": "2026-05-13T00:00:00Z"
+            ]
+        ])
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(
+            ["chat", "--model", "fast"],
+            input: "/resume\n1\n/goal --max-turns 1 find more influencers\n/quit\n",
+            timeout: 15
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Goal started")
+        let goalRequest = try XCTUnwrap(server.requests(matchingPath: "/rest/app-chat/conversations/conv-e2e/responses", method: "POST").last)
+        XCTAssertEqual(goalRequest.jsonString("parentResponseId"), "resp-leaf")
+        XCTAssertContains(goalRequest.jsonString("message") ?? "", "<grok_goal_request>")
+        XCTAssertEqual(goalRequest.jsonString("modeId"), "grok-420-computer-use-sa")
+    }
+
+    func testInteractiveListSelectionFormatsLoadedAssistantMarkdown() throws {
+        let server = try MockGrokServer(
+            loadedAssistantMessage: "# Loaded Heading\n**assistant bold**\n<grok:render type=\"chart\">hidden</grok:render>"
+        )
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(
+            ["chat"],
+            input: "/resume\n1\n/quit\n",
+            timeout: 15
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Loaded Heading")
+        XCTAssertContains(run.cleanOutput, "assistant bold")
+        XCTAssertFalse(run.cleanOutput.contains("# Loaded Heading"))
+        XCTAssertFalse(run.cleanOutput.contains("**assistant bold**"))
+        XCTAssertFalse(run.cleanOutput.contains("<grok:render"))
+    }
+
+    func testInteractiveListSelectionPreservesLoadedAssistantRawMarkdown() throws {
+        let loadedAssistantMessage = "# Loaded Heading\n**assistant bold**\n<grok:render type=\"chart\">hidden</grok:render>"
+        let server = try MockGrokServer(loadedAssistantMessage: loadedAssistantMessage)
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(
+            ["chat", "--raw"],
+            input: "/resume\n1\n/quit\n",
+            timeout: 15
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "# Loaded Heading")
+        XCTAssertContains(run.cleanOutput, "**assistant bold**")
+        XCTAssertContains(run.cleanOutput, "<grok:render")
+    }
+
+    func testInteractiveShareCopiesCurrentConversationLink() throws {
+        let shareLink = "https://grok.com/share/share-e2e"
+        let server = try MockGrokServer(shareLinkURL: shareLink)
+        let environment = try TestEnvironment(server: server)
+        let clipboardURL = environment.scratchURL.appendingPathComponent("clipboard.txt")
+
+        let run = try environment.run(
+            ["chat"],
+            input: "hello\n/share\n/quit\n",
+            extraEnvironment: ["GROK_CLIPBOARD_FILE": clipboardURL.path]
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Copied share link \(shareLink)")
+        XCTAssertEqual(try String(contentsOf: clipboardURL, encoding: .utf8), shareLink)
+
+        let shareRequest = try XCTUnwrap(server.requests(matchingPath: "/rest/app-chat/share_links", method: "GET").last)
+        XCTAssertContains(shareRequest.target, "pageSize=100")
+        XCTAssertContains(shareRequest.target, "conversationId=conv-e2e")
+    }
+
+    func testInteractiveShareCreatesLinkWhenLookupIsEmpty() throws {
+        let shareLink = "https://grok.com/share/share-created-e2e"
+        let server = try MockGrokServer(shareLinkURL: shareLink, shareLinkExists: false)
+        let environment = try TestEnvironment(server: server)
+        let clipboardURL = environment.scratchURL.appendingPathComponent("clipboard-created.txt")
+
+        let run = try environment.run(
+            ["chat"],
+            input: "hello\n/share\n/quit\n",
+            extraEnvironment: ["GROK_CLIPBOARD_FILE": clipboardURL.path]
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Copied share link \(shareLink)")
+        XCTAssertEqual(try String(contentsOf: clipboardURL, encoding: .utf8), shareLink)
+
+        let lookupRequest = try XCTUnwrap(server.requests(matchingPath: "/rest/app-chat/share_links", method: "GET").last)
+        XCTAssertContains(lookupRequest.target, "conversationId=conv-e2e")
+        XCTAssertContains(lookupRequest.target, "responseId=resp-e2e")
+
+        let createRequest = try XCTUnwrap(server.requests(matchingPath: "/rest/app-chat/conversations/conv-e2e/share", method: "POST").last)
+        XCTAssertEqual(createRequest.jsonString("responseId"), "resp-e2e")
+        XCTAssertEqual(createRequest.jsonBool("allowIndexing"), true)
+    }
+
+    func testInteractiveDeleteSoftDeletesCurrentConversation() throws {
+        let server = try MockGrokServer()
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(
+            ["chat"],
+            input: "hello\n/delete --yes\n/quit\n"
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Deleted conversation conv-e2e.")
+        XCTAssertEqual(
+            server.requests(matchingPath: "/rest/app-chat/conversations/soft/conv-e2e", method: "DELETE").count,
+            1
+        )
+    }
+
+    func testInteractiveDeletePrintsResumedConversationTitle() throws {
+        let server = try MockGrokServer()
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(
+            ["chat"],
+            input: "/resume\n1\n/delete --yes\n/quit\n",
+            timeout: 15
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Deleted conversation Mock Conversation.")
+        XCTAssertFalse(run.cleanOutput.contains("Deleted conversation conv-e2e."))
+        XCTAssertEqual(
+            server.requests(matchingPath: "/rest/app-chat/conversations/soft/conv-e2e", method: "DELETE").count,
+            1
+        )
+    }
+
+    func testInteractiveDeleteConfirmationRequiresD() {
+        XCTAssertContains(GrokCLI.deleteConfirmationPrompt, "type d to confirm delete")
+        XCTAssertTrue(GrokCLI.isDeleteConfirmation("d"))
+        XCTAssertTrue(GrokCLI.isDeleteConfirmation(" D\n"))
+        XCTAssertFalse(GrokCLI.isDeleteConfirmation("delete"))
+        XCTAssertFalse(GrokCLI.isDeleteConfirmation(nil))
     }
 
     func testMessageJSONModeEmitsSingleResultEnvelopeWithoutHumanBanners() throws {
@@ -592,7 +932,7 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertEqual(doneData["ok"] as? Bool, false)
     }
 
-    func testStreamingJSONThinkingLifecycleEvents() throws {
+    func testStreamingJSONSuppressesGenericThinkingPlaceholder() throws {
         let server = try MockGrokServer(streamLines: [
             #"{"result":{"conversation":{"conversationId":"conv-e2e"},"response":{"responseId":"resp-e2e","token":"Thinking about your request","isThinking":true}}}"#,
             #"{"result":{"response":{"responseId":"resp-e2e","token":"answer"}}}"#,
@@ -604,11 +944,85 @@ final class GrokCLIE2ETests: XCTestCase {
 
         XCTAssertEqual(run.status, 0)
         let eventNames = try jsonLines(from: run).compactMap { $0["event"] as? String }
+        XCTAssertFalse(eventNames.contains("thinking_start"))
+        XCTAssertFalse(eventNames.contains("thinking_delta"))
+        XCTAssertFalse(eventNames.contains("thinking_end"))
+        XCTAssertTrue(eventNames.contains("assistant_final"))
+        XCTAssertEqual(eventNames.last, "done")
+    }
+
+    func testStreamingJSONThinkingLifecycleEventsForTrueThinking() throws {
+        let server = try MockGrokServer(streamLines: [
+            #"{"result":{"conversation":{"conversationId":"conv-e2e"},"response":{"responseId":"resp-e2e","token":"Example calculation","isThinking":true}}}"#,
+            #"{"result":{"response":{"responseId":"resp-e2e","token":"answer"}}}"#,
+            #"{"result":{"response":{"modelResponse":{"message":"answer","responseId":"resp-e2e"}}}}"#
+        ])
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(["message", "--stream", "--json", "hello"])
+
+        XCTAssertEqual(run.status, 0)
+        let events = try jsonLines(from: run)
+        let eventNames = events.compactMap { $0["event"] as? String }
         XCTAssertTrue(eventNames.contains("thinking_start"))
         XCTAssertTrue(eventNames.contains("thinking_delta"))
         XCTAssertTrue(eventNames.contains("thinking_end"))
         XCTAssertTrue(eventNames.contains("assistant_final"))
         XCTAssertEqual(eventNames.last, "done")
+        let thinkingDelta = try XCTUnwrap(events.first { $0["event"] as? String == "thinking_delta" })
+        let data = try XCTUnwrap(thinkingDelta["data"] as? [String: Any])
+        XCTAssertEqual(data["text"] as? String, "Example calculation")
+    }
+
+    func testStreamingJSONSuppressesSplitResidualCitationFragments() throws {
+        let server = try MockGrokServer(streamLines: [
+            #"{"result":{"conversation":{"conversationId":"conv-e2e"},"response":{"responseId":"resp-e2e","token":"Lead _id=\"ccee26\" card_type=\"citation_card\" type=\"render_inline_citation\"><arg"}}}"#,
+            #"{"result":{"response":{"responseId":"resp-e2e","token":"ument name=\"citation_id\">5</argument></grok:render> tail"}}}"#,
+            #"{"result":{"response":{"modelResponse":{"message":"Lead  tail","responseId":"resp-e2e"}}}}"#
+        ])
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(["message", "--stream", "--json", "hello"])
+
+        XCTAssertEqual(run.status, 0)
+        let events = try jsonLines(from: run)
+        let deltas = events
+            .filter { $0["event"] as? String == "assistant_delta" }
+            .compactMap { ($0["data"] as? [String: Any])?["text"] as? String }
+            .joined()
+        XCTAssertEqual(deltas, "Lead  tail")
+        XCTAssertFalse(run.stdout.contains("ccee26"))
+        XCTAssertFalse(run.stdout.contains("citation_card"))
+        XCTAssertFalse(run.stdout.contains("render_inline_citation"))
+        XCTAssertFalse(run.stdout.contains("citation_id"))
+    }
+
+    func testMessageJSONStripsInternalRenderMarkupFromFinalMessage() throws {
+        let answer = """
+        Clean answer <grok:render type="render_inline_citation"><argument name="citation_id">5</argument></grok:render> keeps text.
+        Residual _id="ccee26" card_type="citation_card" type="render_inline_citation"><argument name="citation_id">5</argument></grok:render> stays hidden.
+        """
+        let server = try MockGrokServer(finalMessage: answer)
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(["message", "--json", "hello"])
+
+        XCTAssertEqual(run.status, 0)
+        assertNoHumanJSONBanners(in: run.stdout)
+        let data = try assertResultEnvelope(
+            try jsonObject(from: run),
+            command: "message",
+            category: "assistant_response"
+        )
+        let message = try XCTUnwrap(data["message"] as? String)
+        XCTAssertContains(message, "Clean answer")
+        XCTAssertContains(message, "keeps text.")
+        XCTAssertContains(message, "stays hidden.")
+        XCTAssertFalse(message.contains("<grok:render"))
+        XCTAssertFalse(message.contains("render_inline_citation"))
+        XCTAssertFalse(message.contains("citation_card"))
+        XCTAssertFalse(message.contains("<argument"))
+        XCTAssertEqual(data["rawMessage"] as? String, answer)
     }
 
     func testJSONModeEnvelopesForModelsAndConversationLists() throws {
@@ -698,6 +1112,26 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertTrue(responses.contains { $0["sender"] as? String == "human" && $0["message"] as? String == "Loaded user response" })
         XCTAssertTrue(responses.contains { $0["sender"] as? String == "assistant" && $0["message"] as? String == "Loaded assistant response" })
 
+        let deleteWithoutYes = try environment.run(["list", "delete", "conv-e2e", "--json"])
+        XCTAssertEqual(deleteWithoutYes.status, 2)
+        let deleteError = try jsonObject(from: deleteWithoutYes)
+        XCTAssertEqual(deleteError["ok"] as? Bool, false)
+        XCTAssertEqual((deleteError["error"] as? [String: Any])?["code"] as? String, "usage_error")
+        XCTAssertEqual(server.requests(matchingPath: "/rest/app-chat/conversations/soft/conv-e2e", method: "DELETE").count, 0)
+
+        let delete = try environment.run(["list", "delete", "conv-e2e", "--yes", "--json"])
+        XCTAssertEqual(delete.status, 0)
+        assertNoHumanJSONBanners(in: delete.stdout)
+        let deleteData = try assertResultEnvelope(
+            try jsonObject(from: delete),
+            command: "list",
+            subcommand: "delete",
+            category: "conversation_delete"
+        )
+        XCTAssertEqual(deleteData["conversationId"] as? String, "conv-e2e")
+        XCTAssertEqual(deleteData["deleted"] as? Bool, true)
+        XCTAssertEqual(server.requests(matchingPath: "/rest/app-chat/conversations/soft/conv-e2e", method: "DELETE").count, 1)
+
         let help = try environment.run(["help", "--json"])
         XCTAssertEqual(help.status, 0)
         let helpData = try assertResultEnvelope(
@@ -706,6 +1140,10 @@ final class GrokCLIE2ETests: XCTestCase {
             category: "help"
         )
         XCTAssertTrue((helpData["commands"] as? [String])?.contains("message") ?? false)
+        XCTAssertTrue((helpData["commands"] as? [String])?.contains("modes") ?? false)
+        XCTAssertTrue((helpData["commands"] as? [String])?.contains("workspace") ?? false)
+        XCTAssertTrue((helpData["commands"] as? [String])?.contains("test") ?? false)
+        XCTAssertTrue((helpData["interactiveCommands"] as? [String])?.contains("/workspace") ?? false)
     }
 
     func testTasksListJSONModeEmitsResourceEnvelope() throws {
@@ -725,12 +1163,104 @@ final class GrokCLIE2ETests: XCTestCase {
             category: "resource_list"
         )
         XCTAssertEqual(data["resource"] as? String, "task")
-        XCTAssertNotNil(data["raw"])
+        XCTAssertNil(data["raw"])
 
         let items = try XCTUnwrap(data["items"] as? [[String: Any]])
-        XCTAssertEqual(items.first?["taskId"] as? String, "task-1")
-        XCTAssertEqual(items.first?["name"] as? String, "Mock Task")
-        XCTAssertEqual(items.first?["prompt"] as? String, "Mock task prompt")
+        XCTAssertEqual(items.count, 2)
+        XCTAssertEqual(items.first?["taskId"] as? String, "task-summary-daily")
+        XCTAssertEqual(items.first?["name"] as? String, "Morning Research Brief")
+        XCTAssertEqual(items.first?["prompt"] as? String, "Summarize overnight product and AI research updates.")
+        XCTAssertEqual(items.first?["isEnabled"] as? Bool, true)
+        XCTAssertFalse(run.stdout.contains("rawTaskPayload"))
+        XCTAssertFalse(run.stdout.contains("internalOnly"))
+        XCTAssertFalse(run.stdout.contains("cookie"))
+    }
+
+    func testTasksListHumanOutputShowsUsefulSummaries() throws {
+        let server = try MockGrokServer()
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(["tasks", "list"])
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Tasks")
+        XCTAssertContains(run.cleanOutput, "Morning Research Brief  enabled  2026-05-15 08:00 America/New_York")
+        XCTAssertContains(run.cleanOutput, "Weekly Support Digest  enabled  2026-05-18 09:30 UTC")
+        XCTAssertFalse(run.cleanOutput.contains("task-summary-daily"))
+        XCTAssertFalse(run.cleanOutput.contains("task-summary-weekly"))
+        XCTAssertFalse(run.cleanOutput.contains("ID:"))
+        XCTAssertFalse(run.cleanOutput.contains("Title:"))
+        XCTAssertFalse(run.cleanOutput.contains("Status:"))
+        XCTAssertFalse(run.cleanOutput.contains("Schedule:"))
+    }
+
+    func testTasksInactiveListUsesSanitizedMockResponse() throws {
+        let server = try MockGrokServer()
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(["tasks", "inactive"])
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Archived Roadmap Sweep")
+        XCTAssertContains(run.cleanOutput, "archived")
+        XCTAssertFalse(run.cleanOutput.contains("task-archived-roadmap"))
+        XCTAssertEqual(server.requests(matchingPath: "/rest/tasks/inactive", method: "GET").count, 1)
+    }
+
+    func testTasksInteractiveSelectionShowsLatestResult() throws {
+        let server = try MockGrokServer()
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run([], input: "/tasks\n1\n/quit\n", timeout: 15)
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Tasks")
+        XCTAssertContains(run.cleanOutput, "Morning Research Brief")
+        XCTAssertContains(run.cleanOutput, "Latest run  done  2026-05-15 12:00")
+        XCTAssertContains(run.cleanOutput, "Three notable product research updates landed overnight.")
+        XCTAssertFalse(run.cleanOutput.contains("task-summary-daily"))
+        XCTAssertFalse(run.cleanOutput.contains("conv-task-summary-daily"))
+        XCTAssertFalse(run.cleanOutput.contains("Task Details:"))
+        XCTAssertFalse(run.cleanOutput.contains("Latest result for"))
+        XCTAssertEqual(server.requests(matchingPath: "/rest/tasks", method: "GET").count, 1)
+        XCTAssertTrue(server.requests(method: "GET").contains {
+            $0.path == "/rest/tasks/results/task-summary-daily" && $0.target.contains("limit=1")
+        })
+    }
+
+    func testTasksDetailJSONDoesNotLeakRawPayload() throws {
+        let server = try MockGrokServer()
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(["tasks", "detail", "task-summary-daily", "--format", "json"])
+
+        XCTAssertEqual(run.status, 0)
+        assertNoHumanJSONBanners(in: run.stdout)
+        XCTAssertFalse(run.stdout.contains("rawTaskPayload"))
+        XCTAssertFalse(run.stdout.contains("internalOnly"))
+        XCTAssertFalse(run.stdout.contains("cookie"))
+        XCTAssertContains(run.stdout, "task-summary-daily")
+        XCTAssertContains(run.stdout, "Three notable product research updates landed overnight.")
+        XCTAssertTrue(server.requests(method: "GET").contains {
+            $0.path == "/rest/tasks/results/task-summary-daily" && $0.target.contains("limit=1")
+        })
+    }
+
+    func testTasksResultsHumanOutputShowsLatestResult() throws {
+        let server = try MockGrokServer()
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(["tasks", "results", "task-summary-daily"])
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Latest run  done  2026-05-15 12:00")
+        XCTAssertContains(run.cleanOutput, "Three notable product research updates landed overnight.")
+        XCTAssertFalse(run.cleanOutput.contains("task-summary-daily"))
+        XCTAssertFalse(run.cleanOutput.contains("conv-task-summary-daily"))
+        XCTAssertFalse(run.cleanOutput.contains("Latest result for"))
+        XCTAssertTrue(server.requests(method: "GET").contains {
+            $0.path == "/rest/tasks/results/task-summary-daily" && $0.target.contains("limit=1")
+        })
     }
 
     func testJSONModeErrorsAuthAndUtilityCommands() throws {
@@ -858,6 +1388,7 @@ final class GrokCLIE2ETests: XCTestCase {
     func testStreamingThinkingChunksRenderAboveAnswer() throws {
         let server = try MockGrokServer(streamLines: [
             #"{"result":{"conversation":{"conversationId":"conv-e2e"},"response":{"responseId":"resp-e2e","token":"Thinking about your request","isThinking":true}}}"#,
+            #"{"result":{"response":{"responseId":"resp-e2e","token":"Example calculation","isThinking":true}}}"#,
             #"{"result":{"response":{"responseId":"resp-e2e","token":"<xai:tool_usage_card><xai:tool_usage_card_id>tool-1</xai:tool_usage_card_id><xai:tool_name>web_search</xai:tool_name><xai:tool_args><![CDATA[{\"query\":\"current Moon","isThinking":true}}}"#,
             #"{"result":{"response":{"responseId":"resp-e2e","token":"long silk"}}}"#,
             #"{"result":{"response":{"responseId":"resp-e2e","token":" distance Seattle\",\"num_results\":\"5\"}]]></xai:tool_args></xai:tool_usage_card>","isThinking":true}}}"#,
@@ -871,8 +1402,9 @@ final class GrokCLIE2ETests: XCTestCase {
         let run = try environment.run(["message", "--stream", "hello"])
 
         XCTAssertEqual(run.status, 0)
-        XCTAssertContains(run.cleanOutput, "> Thinking about your request")
-        XCTAssertContains(run.cleanOutput, "> Search: current Moon distance Seattle")
+        XCTAssertFalse(run.cleanOutput.contains("[thinking] Thinking about your request"))
+        XCTAssertContains(run.cleanOutput, "[thinking] Example calculation")
+        XCTAssertContains(run.cleanOutput, "[search] current Moon distance Seattle")
         XCTAssertContains(run.cleanOutput, "long silky black hair")
         XCTAssertContains(run.cleanOutput, "does it matter")
         XCTAssertFalse(run.cleanOutput.contains("<xai:tool_usage_card"))
@@ -880,10 +1412,10 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertFalse(run.cleanOutput.contains("requestlong"))
         XCTAssertFalse(run.cleanOutput.contains("Estimating lunar distance and Saturn V fuel needs"))
 
-        let thoughtRange = try XCTUnwrap(run.cleanOutput.range(of: "> Thinking about your request"))
-        let answerRange = try XCTUnwrap(run.cleanOutput.range(of: "Grok:"))
+        let thoughtRange = try XCTUnwrap(run.cleanOutput.range(of: "[thinking] Example calculation"))
+        let answerRange = try XCTUnwrap(run.cleanOutput.range(of: "\nGrok\n"))
         XCTAssertLessThan(thoughtRange.lowerBound, answerRange.lowerBound)
-        let toolRange = try XCTUnwrap(run.cleanOutput.range(of: "> Search: current Moon distance Seattle"))
+        let toolRange = try XCTUnwrap(run.cleanOutput.range(of: "[search] current Moon distance Seattle"))
         XCTAssertLessThan(toolRange.lowerBound, answerRange.lowerBound)
     }
 
@@ -1130,7 +1662,7 @@ final class GrokCLIE2ETests: XCTestCase {
 
         let tasksList = try environment.run(["tasks"])
         XCTAssertEqual(tasksList.status, 0)
-        XCTAssertContains(tasksList.cleanOutput, "Tasks:")
+        XCTAssertContains(tasksList.cleanOutput, "Tasks")
 
         let tasksHelp = try environment.run(["tasks", "help"])
         XCTAssertEqual(tasksHelp.status, 0)
@@ -1172,7 +1704,11 @@ final class GrokCLIE2ETests: XCTestCase {
 
         let skillsList = try environment.run(["skills"])
         XCTAssertEqual(skillsList.status, 0)
-        XCTAssertContains(skillsList.cleanOutput, "Skills:")
+        XCTAssertContains(skillsList.cleanOutput, "Grok Skills")
+        XCTAssertContains(skillsList.cleanOutput, "Mock Skill | Mock skill description")
+        XCTAssertFalse(skillsList.cleanOutput.contains("Name: Mock Skill"))
+        XCTAssertContains(skillsList.cleanOutput, "User Skills")
+        XCTAssertContains(skillsList.cleanOutput, "User Skill | Mock skill description")
 
         let skillsHelp = try environment.run(["skills", "--help"])
         XCTAssertEqual(skillsHelp.status, 0)
@@ -1185,7 +1721,7 @@ final class GrokCLIE2ETests: XCTestCase {
 
         let skillsUser = try environment.run(["skills", "user"])
         XCTAssertEqual(skillsUser.status, 0)
-        XCTAssertContains(skillsUser.cleanOutput, "My Skills:")
+        XCTAssertContains(skillsUser.cleanOutput, "User Skills")
 
         let agentsList = try environment.run(["agents"])
         XCTAssertEqual(agentsList.status, 0)
@@ -1350,6 +1886,54 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertContains(filesMissingPath.cleanOutput, "Missing file path.")
     }
 
+    func testSkillsListSeparatesBuiltInAndUserSkills() throws {
+        let server = try MockGrokServer()
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(["skills", "list"])
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Grok Skills")
+        XCTAssertContains(run.cleanOutput, "Mock Skill | Mock skill description")
+        XCTAssertContains(run.cleanOutput, "User Skills")
+        XCTAssertContains(run.cleanOutput, "User Skill | Mock skill description")
+        XCTAssertFalse(run.cleanOutput.contains("Name:"))
+        XCTAssertFalse(run.cleanOutput.contains("Description:"))
+        XCTAssertEqual(server.requests(matchingPath: "/rest/skills", method: "POST").count, 1)
+        XCTAssertEqual(server.requests(matchingPath: "/rest/user-skills", method: "GET").count, 1)
+    }
+
+    func testSkillsListOmitsUserSkillsSectionWhenEmpty() throws {
+        let server = try MockGrokServer(userSkills: [])
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(["skills"])
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Grok Skills")
+        XCTAssertContains(run.cleanOutput, "Mock Skill | Mock skill description")
+        XCTAssertFalse(run.cleanOutput.contains("User Skills"))
+    }
+
+    func testSkillsListJSONIncludesSeparateUserSkillsField() throws {
+        let server = try MockGrokServer()
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(["skills", "--json"])
+
+        XCTAssertEqual(run.status, 0)
+        let data = try assertResultEnvelope(
+            try jsonObject(from: run),
+            command: "skills",
+            subcommand: "list",
+            category: "resource_list"
+        )
+        let items = try XCTUnwrap(data["items"] as? [[String: Any]])
+        let userSkills = try XCTUnwrap(data["userSkills"] as? [[String: Any]])
+        XCTAssertEqual(items.first?["name"] as? String, "Mock Skill")
+        XCTAssertEqual(userSkills.first?["name"] as? String, "User Skill")
+    }
+
     func testSubcommandHelpMatrixUsesRegularOutput() throws {
         let server = try MockGrokServer()
         let environment = try TestEnvironment(server: server)
@@ -1360,6 +1944,10 @@ final class GrokCLIE2ETests: XCTestCase {
             (["agents", "edit", "--help"], "Usage: grok agents edit"),
             (["agents", "clear", "--help"], "Usage: grok agents clear"),
             (["tasks", "list", "--help"], "Usage: grok tasks list"),
+            (["tasks", "inactive", "--help"], "Usage: grok tasks inactive"),
+            (["tasks", "show", "--help"], "Usage: grok tasks show"),
+            (["tasks", "detail", "--help"], "Usage: grok tasks show"),
+            (["tasks", "results", "--help"], "Usage: grok tasks results"),
             (["tasks", "archive", "--help"], "Usage: grok tasks archive"),
             (["skills", "list", "--help"], "Usage: grok skills list"),
             (["skills", "mine", "--help"], "Usage: grok skills mine"),
@@ -1400,13 +1988,13 @@ final class GrokCLIE2ETests: XCTestCase {
         /model list
         /model expert
         /mode raw-interactive-mode
-        /list
+        /resume
         1
         /tasks list
         /skills user
         /agents list
         /workspaces list
-        /workspace select
+        /workspace
         0
         /files list
         /attach
@@ -1414,8 +2002,6 @@ final class GrokCLIE2ETests: XCTestCase {
         /attach clear
         /attach upload \(uploadFile.path)
         /attach manual-file-id
-        /reset-conversation
-        /special
         hello from interactive
         help
         quit
@@ -1428,7 +2014,7 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertContains(run.cleanOutput, "Started a new conversation thread.")
         XCTAssertContains(run.cleanOutput, "/reason is deprecated and ignored")
         XCTAssertFalse(run.cleanOutput.contains("Search: Auto"))
-        XCTAssertFalse(run.cleanOutput.contains("/search"))
+        XCTAssertContains(run.cleanOutput, "/search <query>")
         XCTAssertFalse(run.cleanOutput.contains("/deepsearch"))
         XCTAssertFalse(run.cleanOutput.contains("/realtime"))
         XCTAssertFalse(run.cleanOutput.contains("/personality"))
@@ -1442,7 +2028,7 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertContains(run.cleanOutput, "Model set to: Expert (expert)")
         XCTAssertContains(run.cleanOutput, "Model set to: raw-interactive-mode (raw-interactive-mode)")
         XCTAssertContains(run.cleanOutput, "Mock Conversation")
-        XCTAssertContains(run.cleanOutput, "My Skills:")
+        XCTAssertContains(run.cleanOutput, "User Skills")
         XCTAssertContains(run.cleanOutput, "Agents:")
         XCTAssertContains(run.cleanOutput, "Workspaces:")
         XCTAssertContains(run.cleanOutput, "Workspace cleared.")
@@ -1451,8 +2037,7 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertContains(run.cleanOutput, "Cleared attached files.")
         XCTAssertContains(run.cleanOutput, "Uploaded and attached: attached.txt")
         XCTAssertContains(run.cleanOutput, "Attached file ID: manual-file-id")
-        XCTAssertContains(run.cleanOutput, "Conversation reset. Starting a new conversation.")
-        XCTAssertContains(run.cleanOutput, "Special mode activated.")
+        XCTAssertFalse(run.cleanOutput.contains("Special mode activated."))
         XCTAssertContains(run.cleanOutput, "Goodbye!")
 
         let chatRequests = server.requests(method: "POST").filter { $0.path.contains("/rest/app-chat/conversations") }
@@ -1461,6 +2046,116 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertTrue(chatRequests.contains {
             ($0.json["fileAttachments"] as? [Any])?.contains { ($0 as? String) == "manual-file-id" } == true
         })
+    }
+
+    func testInteractivePrivateOnStartsNewPrivateThreadAfterExistingConversation() throws {
+        let server = try MockGrokServer()
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(
+            [],
+            input: "saved thread message\n/private on\nprivate thread message\n/quit\n",
+            timeout: 15
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Started a new private conversation thread.")
+        XCTAssertContains(run.cleanOutput, "Private mode: ENABLED")
+
+        let chatRequests = server.requests(method: "POST")
+            .filter { $0.path.contains("/rest/app-chat/conversations") }
+        XCTAssertEqual(chatRequests.count, 2)
+        XCTAssertEqual(chatRequests[0].path, "/rest/app-chat/conversations/new")
+        XCTAssertEqual(chatRequests[0].jsonString("message"), "saved thread message")
+        XCTAssertEqual(chatRequests[0].jsonBool("temporary"), false)
+        XCTAssertEqual(chatRequests[1].path, "/rest/app-chat/conversations/new")
+        XCTAssertEqual(chatRequests[1].jsonString("message"), "private thread message")
+        XCTAssertEqual(chatRequests[1].jsonBool("temporary"), true)
+        XCTAssertFalse(chatRequests.contains { $0.path.hasSuffix("/responses") })
+    }
+
+    func testInteractiveGoalCompletionMarkerStopsLoop() throws {
+        let server = try MockGrokServer(
+            streamTokens: [],
+            finalMessage: "Audit complete\n<grok_goal status=\"complete\">"
+        )
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run([], input: "/goal write release note\nquit\n", timeout: 10)
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Goal started")
+        XCTAssertContains(run.cleanOutput, "Goal complete")
+        let chatRequests = server.requests(method: "POST").filter { $0.path.contains("/rest/app-chat/conversations") }
+        XCTAssertEqual(chatRequests.count, 1)
+        XCTAssertContains(chatRequests[0].jsonString("message") ?? "", "<grok_goal_request>")
+        XCTAssertContains(chatRequests[0].jsonString("message") ?? "", "write release note")
+        XCTAssertContains(chatRequests[0].jsonString("message") ?? "", #"<grok_goal status="complete">"#)
+    }
+
+    func testInteractiveGoalContinuesUntilMaxTurns() throws {
+        let server = try MockGrokServer(streamTokens: [], finalMessage: "Still working")
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run([], input: "/goal --max-turns 2 ship docs\nquit\n", timeout: 10)
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Goal stopped after 2 turns.")
+        let chatRequests = server.requests(method: "POST").filter { $0.path.contains("/rest/app-chat/conversations") }
+        XCTAssertEqual(chatRequests.count, 2)
+        XCTAssertEqual(chatRequests[0].path, "/rest/app-chat/conversations/new")
+        XCTAssertTrue(chatRequests[1].path.hasSuffix("/responses"))
+        XCTAssertContains(chatRequests[1].jsonString("message") ?? "", "<grok_goal_continuation>")
+        XCTAssertContains(chatRequests[1].jsonString("message") ?? "", "Goal loop turn 2 of 2")
+    }
+
+    func testInteractiveGoalPauseResumeAndClear() throws {
+        let server = try MockGrokServer(
+            streamTokens: [],
+            finalMessage: "Blocked\n<grok_goal status=\"pause\">"
+        )
+        let environment = try TestEnvironment(server: server)
+
+        let script = """
+        /goal blocked task
+        /goal pause
+        /goal resume
+        /goal clear
+        /goal
+        quit
+        """
+
+        let run = try environment.run([], input: script, timeout: 10)
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Goal paused")
+        XCTAssertContains(run.cleanOutput, "Goal resumed")
+        XCTAssertContains(run.cleanOutput, "Goal cleared")
+        XCTAssertContains(run.cleanOutput, "No active goal.")
+        let chatRequests = server.requests(method: "POST").filter { $0.path.contains("/rest/app-chat/conversations") }
+        XCTAssertEqual(chatRequests.count, 2)
+        XCTAssertContains(chatRequests[1].jsonString("message") ?? "", "<grok_goal_continuation>")
+    }
+
+    func testInteractiveGoalNewClearsGoal() throws {
+        let server = try MockGrokServer(streamTokens: [], finalMessage: "Still working")
+        let environment = try TestEnvironment(server: server)
+
+        let script = """
+        /goal --max-turns 1 lingering task
+        /new
+        /goal
+        quit
+        """
+
+        let run = try environment.run([], input: script, timeout: 10)
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Goal stopped after 1 turns.")
+        XCTAssertContains(run.cleanOutput, "Started a new conversation thread.")
+        XCTAssertContains(run.cleanOutput, "No active goal.")
+        let chatRequests = server.requests(method: "POST").filter { $0.path.contains("/rest/app-chat/conversations") }
+        XCTAssertEqual(chatRequests.count, 1)
     }
 
     func testInteractiveCommandRouterHandlesBareAliasesQuotingAndBoundaries() throws {
@@ -1500,7 +2195,7 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertContains(run.cleanOutput, "Started a new conversation thread.")
         XCTAssertContains(run.cleanOutput, "/reason is deprecated and ignored")
         XCTAssertFalse(run.cleanOutput.contains("Search: Auto"))
-        XCTAssertFalse(run.cleanOutput.contains("/search"))
+        XCTAssertContains(run.cleanOutput, "/search <query>")
         XCTAssertFalse(run.cleanOutput.contains("/deepsearch"))
         XCTAssertFalse(run.cleanOutput.contains("/realtime"))
         XCTAssertFalse(run.cleanOutput.contains("/personality"))
@@ -1512,7 +2207,7 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertContains(run.cleanOutput, "Streaming: ENABLED")
         XCTAssertContains(run.cleanOutput, "Available web modes:")
         XCTAssertContains(run.cleanOutput, "Model set to: Expert (expert)")
-        XCTAssertContains(run.cleanOutput, "Tasks:")
+        XCTAssertContains(run.cleanOutput, "Tasks")
         XCTAssertContains(run.cleanOutput, "Created task")
         XCTAssertContains(run.cleanOutput, "Workspaces:")
         XCTAssertContains(run.cleanOutput, "Workspace cleared.")
@@ -1520,8 +2215,8 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertContains(run.cleanOutput, "Files:")
         XCTAssertContains(run.cleanOutput, "Uploaded file")
         XCTAssertContains(run.cleanOutput, "Uploaded and attached: file with spaces.txt")
-        XCTAssertContains(run.cleanOutput, "Unknown command: /taskslater")
-        XCTAssertContains(run.cleanOutput, "Run /help for commands.")
+        XCTAssertContains(run.cleanOutput, "Unknown command /taskslater")
+        XCTAssertContains(run.cleanOutput, "Run /help for commands")
         XCTAssertContains(run.cleanOutput, "Auth commands:")
         XCTAssertContains(run.cleanOutput, "Goodbye!")
 
@@ -1558,8 +2253,35 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertContains(run.cleanOutput, "Skills:")
         XCTAssertContains(run.cleanOutput, "Workspaces:")
         XCTAssertContains(run.cleanOutput, "Files:")
-        XCTAssertContains(run.cleanOutput, "Unknown command: /wat")
+        XCTAssertContains(run.cleanOutput, "Unknown command /wat")
         XCTAssertFalse(run.cleanOutput.contains("Error:"))
+    }
+
+    func testInteractiveSkillCreateStartsGrok43ConversationAndTracksIt() throws {
+        let server = try MockGrokServer()
+        let environment = try TestEnvironment(server: server)
+        let prompt = "skill to take over the world and earn $1M in ARR in the next 30 days with or without world domination"
+
+        let run = try environment.run(
+            [],
+            input: "hello before skill\n/skill create \(prompt)\nwhat did you create?\n/quit\n",
+            timeout: 15
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Mock streamed answer")
+        XCTAssertContains(run.cleanOutput, "Goodbye!")
+
+        let createRequests = server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST")
+        XCTAssertEqual(createRequests.count, 2)
+        XCTAssertEqual(createRequests.first?.jsonString("message"), "hello before skill")
+        let skillRequest = try XCTUnwrap(createRequests.last)
+        XCTAssertEqual(skillRequest.jsonString("message"), "skill-creator skill \(prompt)")
+        XCTAssertEqual(skillRequest.jsonString("modeId"), "grok-420-computer-use-sa")
+
+        let followUp = try XCTUnwrap(server.requests(matchingPath: "/rest/app-chat/conversations/conv-e2e/responses", method: "POST").last)
+        XCTAssertEqual(followUp.jsonString("message"), "what did you create?")
+        XCTAssertEqual(followUp.jsonString("modeId"), "grok-420-computer-use-sa")
     }
 
     func testInteractiveHelpDoesNotIncludeDedicatedAgentCommandSection() {
@@ -1573,6 +2295,345 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertContains(output, "/agents")
         XCTAssertFalse(output.contains("Agent Commands:"))
         XCTAssertFalse(output.contains("grok agents set 0 --instructions <text>"))
+    }
+
+    func testHUDRendererShowsProjectFirstStatusAndWarnings() {
+        var state = CLIHUDState(
+            modelName: "Expert",
+            workspaceName: "Research Notes",
+            privateMode: false,
+            stream: true,
+            outputFormat: .markdown,
+            attachedFileCount: 2,
+            rateLimitWarning: nil
+        )
+
+        let status = strippingANSI(CLIHUDRenderer.lines(state: state, width: 120).joined(separator: "\n"))
+        XCTAssertContains(status, "Research Notes > Expert | MD | 2 files")
+        XCTAssertFalse(status.contains("model:"))
+        XCTAssertFalse(status.contains("workspace:"))
+        XCTAssertFalse(status.contains("/ commands"))
+
+        state.privateMode = true
+        state.stream = false
+        state.rateLimitWarning = "2 left | reset 14m"
+        let warning = strippingANSI(CLIHUDRenderer.lines(state: state, width: 120).joined(separator: "\n"))
+        XCTAssertContains(warning, "Research Notes > Private | Expert | MD | Stream off | 2 files")
+        XCTAssertContains(warning, "Limit > 2 left | reset 14m")
+
+        let narrow = strippingANSI(CLIHUDRenderer.lines(state: state, width: 32).joined(separator: "\n"))
+        XCTAssertTrue(narrow.split(separator: "\n").allSatisfy { $0.count <= 32 })
+
+        state = CLIHUDState(
+            modelName: "Grok 4.3 (beta)",
+            workspaceName: nil,
+            privateMode: false,
+            stream: true,
+            outputFormat: .markdown,
+            attachedFileCount: 0,
+            rateLimitWarning: nil
+        )
+        let defaultStatus = strippingANSI(CLIHUDRenderer.lines(state: state, width: 120).joined(separator: "\n"))
+        XCTAssertContains(defaultStatus, "Grok > 4.3 (beta) | MD")
+    }
+
+    func testCommandRegistryIncludesHelpCommandsAndTypoHints() {
+        let commands = GrokCLI.InteractiveCommandRegistry.visibleCommands.map(\.command).joined(separator: "\n")
+        XCTAssertContains(commands, "/resume")
+        XCTAssertContains(commands, "/search")
+        XCTAssertFalse(commands.contains("/list"))
+        XCTAssertContains(commands, "/model")
+        XCTAssertContains(commands, "/workspace")
+        XCTAssertFalse(commands.contains("/workspaces"))
+        XCTAssertContains(commands, "/audio")
+        XCTAssertContains(commands, "/share")
+        XCTAssertContains(commands, "/limits")
+        XCTAssertContains(commands, "/delete")
+        XCTAssertContains(commands, "/goal")
+        XCTAssertContains(commands, "/skill create")
+        XCTAssertFalse(commands.contains("/reset-conversation"))
+        XCTAssertFalse(commands.contains("/special"))
+
+        let suggestion = GrokCLI.InteractiveCommandRegistry.nearestCommand(to: "wrkspace")
+        XCTAssertEqual(suggestion?.command, "/workspace")
+        let pluralSuggestion = GrokCLI.InteractiveCommandRegistry.nearestCommand(to: "workspaces")
+        XCTAssertEqual(pluralSuggestion?.command, "/workspace")
+        let listSuggestion = GrokCLI.InteractiveCommandRegistry.nearestCommand(to: "list")
+        XCTAssertEqual(listSuggestion?.command, "/resume")
+    }
+
+    func testSlashCompletionShowsSingularWorkspaceCommandOnly() {
+        let specs = GrokCLI.interactiveCommandSpecs
+        let commands = specs.map(\.command)
+
+        XCTAssertTrue(commands.contains("/workspace"))
+        XCTAssertFalse(commands.contains("/workspaces"))
+        XCTAssertTrue(commands.contains("/resume"))
+        XCTAssertTrue(commands.contains("/search"))
+        XCTAssertFalse(commands.contains("/list"))
+        XCTAssertTrue(commands.contains("/limits"))
+        XCTAssertTrue(commands.contains("/goal"))
+        XCTAssertTrue(commands.contains("/skill create"))
+        XCTAssertFalse(commands.contains("/special"))
+        XCTAssertFalse(commands.contains("/reset-conversation"))
+    }
+
+    func testSpecialCompletionIsDisabled() {
+        let reader = InputReader()
+
+        XCTAssertFalse(reader.completionSuggestionDisplays(for: "/").contains("/special"))
+        XCTAssertFalse(reader.completionSuggestionDisplays(for: "/spe").contains("/special"))
+    }
+
+    func testInputLineBufferCollapsesLargePasteAndExpandsOnSubmit() {
+        let pastedText = String(repeating: "a", count: 160)
+        var buffer = InputLineBuffer("summarize ")
+
+        let cursor = buffer.insertPastedContent(pastedText, at: buffer.displayCount)
+
+        XCTAssertEqual(buffer.display, "summarize [Pasted content 160 chars]")
+        XCTAssertEqual(TerminalLayout.stripANSI(buffer.renderedDisplay), buffer.display)
+        XCTAssertEqual(buffer.actual, "summarize \(pastedText)")
+        XCTAssertEqual(cursor, buffer.displayCount)
+    }
+
+    func testInputLineBufferCollapsesMultilinePasteAndDeletesAtomically() {
+        let pastedText = "line one\nline two\nline three"
+        var buffer = InputLineBuffer("review ")
+        let cursorAfterPaste = buffer.insertPastedContent(pastedText, at: buffer.displayCount)
+
+        XCTAssertEqual(buffer.display, "review [Pasted content 28 chars]")
+        XCTAssertEqual(buffer.actual, "review \(pastedText)")
+
+        let cursorAfterDelete = buffer.backspace(at: cursorAfterPaste)
+
+        XCTAssertEqual(cursorAfterDelete, "review ".count)
+        XCTAssertEqual(buffer.display, "review ")
+        XCTAssertEqual(buffer.actual, "review ")
+    }
+
+    func testInputLineBufferKeepsSmallSingleLinePasteInline() {
+        var buffer = InputLineBuffer("say ")
+
+        _ = buffer.insertPastedContent("hello", at: buffer.displayCount)
+
+        XCTAssertEqual(buffer.display, "say hello")
+        XCTAssertEqual(buffer.actual, "say hello")
+    }
+
+    func testInputReaderWrappedPromptMetricsAccountForLongInput() {
+        XCTAssertEqual(InputReader.wrappedLineCount(visibleLength: 10, width: 80), 1)
+        XCTAssertEqual(InputReader.wrappedLineCount(visibleLength: 81, width: 80), 2)
+
+        let middle = InputReader.wrappedCursorPosition(visibleOffset: 95, visibleLength: 160, width: 80)
+        XCTAssertEqual(middle.row, 1)
+        XCTAssertEqual(middle.column, 15)
+
+        let exactEnd = InputReader.wrappedCursorPosition(visibleOffset: 160, visibleLength: 160, width: 80)
+        XCTAssertEqual(exactEnd.row, 1)
+        XCTAssertEqual(exactEnd.column, 79)
+    }
+
+    func testInteractivePickerDoesNotHardTruncateTitlesAtTwentyTwoCharacters() {
+        let title = "Lost Gospel: Jesus Babe Magnet"
+        let item = PickerItem(id: "conv-1", title: title, subtitle: "recent", preview: nil, value: title)
+
+        let lines = strippingANSI(InteractivePicker.lines(
+            title: "Select conversation",
+            query: "",
+            items: [item],
+            selectedIndex: 0,
+            width: 80
+        ).joined(separator: "\n"))
+
+        XCTAssertContains(lines, title)
+        XCTAssertFalse(lines.contains("Lost Gospel: Jesus Bab "))
+    }
+
+    func testInteractivePickerLabelsDateMetadataSeparatelyFromPreview() {
+        let item = PickerItem(
+            id: "conv-1",
+            title: "Mock Conversation",
+            subtitle: "modified 2026-05-13T00:00:00Z",
+            metadataLabel: "modified",
+            metadata: "2026-05-13T00:00:00Z",
+            preview: "Actual last message\nSecond preview line",
+            value: "conv-1"
+        )
+
+        let lines = strippingANSI(InteractivePicker.lines(
+            title: "Select conversation",
+            query: "",
+            items: [item],
+            selectedIndex: 0,
+            width: 100
+        ).joined(separator: "\n"))
+
+        XCTAssertContains(lines, "\nmodified\n2026-05-13T00:00:00Z\n")
+        XCTAssertContains(lines, "\npreview\nActual last message\nSecond preview line\n")
+        XCTAssertFalse(lines.contains("\npreview\n2026-05-13T00:00:00Z"))
+    }
+
+    func testInteractivePickerCountsWrappedAndMultilinePreviewRowsForClearing() {
+        let rows = InteractivePicker.terminalRowCount(
+            for: [
+                "Select conversation",
+                "preview",
+                "first preview line\nsecond preview line",
+                String(repeating: "x", count: 25)
+            ],
+            width: 10
+        )
+
+        XCTAssertEqual(rows, 10)
+    }
+
+    func testInteractivePickerPrefetchesSelectedVisibleAndDirectionalLookaheadFirst() {
+        let items = (0..<20).map { index in
+            PickerItem(id: "conv-\(index)", title: "Conversation \(index)", value: index)
+        }
+
+        let down = InteractivePicker.previewPrefetchItems(
+            items: items,
+            selectedIndex: 8,
+            previousSelectedIndex: 7,
+            visibleLimit: 8,
+            directionalLookahead: 3,
+            oppositeLookahead: 1
+        ).map(\.id)
+
+        XCTAssertEqual(down.prefix(5), ["conv-8", "conv-9", "conv-10", "conv-11", "conv-1"])
+        XCTAssertTrue(down.firstIndex(of: "conv-9")! < down.firstIndex(of: "conv-7")!)
+
+        let up = InteractivePicker.previewPrefetchItems(
+            items: items,
+            selectedIndex: 8,
+            previousSelectedIndex: 9,
+            visibleLimit: 8,
+            directionalLookahead: 3,
+            oppositeLookahead: 1
+        ).map(\.id)
+
+        XCTAssertTrue(up.firstIndex(of: "conv-7")! < up.firstIndex(of: "conv-9")!)
+    }
+
+    func testConversationDecodesListPreviewFields() throws {
+        let data = Data("""
+        {
+          "conversationId": "conv-1",
+          "title": "Thread",
+          "modifyTime": "2026-05-13T00:00:00Z",
+          "lastMessage": "Last user or assistant message"
+        }
+        """.utf8)
+
+        let conversation = try JSONDecoder().decode(Conversation.self, from: data)
+
+        XCTAssertEqual(conversation.preview, "Last user or assistant message")
+    }
+
+    func testInteractivePickerScrollWindowFollowsSelectionPastInitialItems() {
+        XCTAssertEqual(InteractivePicker.visibleWindowStart(itemCount: 50, selectedIndex: 0, visibleLimit: 8), 0)
+        XCTAssertEqual(InteractivePicker.visibleWindowStart(itemCount: 50, selectedIndex: 7, visibleLimit: 8), 0)
+        XCTAssertEqual(InteractivePicker.visibleWindowStart(itemCount: 50, selectedIndex: 8, visibleLimit: 8), 1)
+        XCTAssertEqual(InteractivePicker.visibleWindowStart(itemCount: 50, selectedIndex: 49, visibleLimit: 8), 42)
+    }
+
+    func testInteractivePickerCancelDoesNotFallBackToNumberedSelection() {
+        var fallbackWasCalled = false
+        let selection: String? = InteractivePicker.resolveSelection(arrowSelection: .cancelled) {
+            fallbackWasCalled = true
+            return "fallback"
+        }
+
+        XCTAssertNil(selection)
+        XCTAssertFalse(fallbackWasCalled)
+    }
+
+    func testFuzzyMatcherScoresSubsequenceMatches() {
+        XCTAssertNotNil(FuzzyMatcher.score(query: "exp", text: "Expert expert"))
+        XCTAssertNotNil(FuzzyMatcher.score(query: "wrk", text: "workspace Research Notes"))
+        XCTAssertNil(FuzzyMatcher.score(query: "zzz", text: "workspace Research Notes"))
+    }
+
+    func testStreamParserEmitsStructuredToolActivity() {
+        let parser = GrokStreamMarkupParser()
+        let block = """
+        <xai:tool_usage_card><xai:tool_name>web_search</xai:tool_name><xai:tool_args><![CDATA[{"query":"swift terminal UI"}]]></xai:tool_args></xai:tool_usage_card>
+        """
+        let events = parser.consume(block)
+
+        XCTAssertTrue(events.contains {
+            if case .activity(let activity) = $0 {
+                return activity.kind == .search && activity.detail == "swift terminal UI"
+            }
+            return false
+        })
+    }
+
+    func testStreamParserSuppressesGenericThinkingPlaceholder() {
+        let parser = GrokStreamMarkupParser()
+
+        let events = parser.consume("Thinking about your request\nExample calculation")
+
+        XCTAssertFalse(events.contains {
+            if case .text(let text) = $0 {
+                return text.contains("Thinking about your request")
+            }
+            return false
+        })
+        XCTAssertTrue(events.contains {
+            if case .text(let text) = $0 {
+                return text.contains("Example calculation")
+            }
+            return false
+        })
+    }
+
+    func testStreamParserPreservesTrueThinkingText() {
+        let parser = GrokStreamMarkupParser()
+
+        let events = parser.consume("Example calculation")
+
+        XCTAssertTrue(events.contains {
+            if case .text(let text) = $0 {
+                return text == "Example calculation"
+            }
+            return false
+        })
+    }
+
+    func testStreamParserBuffersSplitInternalTagsAndEscapedRenderDirectives() {
+        let parser = GrokStreamMarkupParser()
+
+        let firstEvents = parser.consume("Keep <gro")
+        let secondEvents = parser.consume(#"k:render type=\"render_inline_citation\"><argument name=\"citation_id\">7</argument></grok:render> done"#)
+        let text = (firstEvents + secondEvents + parser.finish()).compactMap { event -> String? in
+            guard case .text(let text) = event else { return nil }
+            return text
+        }.joined()
+
+        XCTAssertEqual(text, "Keep  done")
+        XCTAssertFalse(text.contains("<grok:render"))
+        XCTAssertFalse(text.contains("render_inline_citation"))
+        XCTAssertFalse(text.contains("citation_id"))
+    }
+
+    func testStreamParserSuppressesSplitResidualCitationFragments() {
+        let parser = GrokStreamMarkupParser()
+
+        let firstEvents = parser.consume(#"Lead _id="ccee26" card_type="citation_card" type="render_inline_citation"><arg"#)
+        let secondEvents = parser.consume(#"ument name="citation_id">5</argument></grok:render> tail"#)
+        let text = (firstEvents + secondEvents + parser.finish()).compactMap { event -> String? in
+            guard case .text(let text) = event else { return nil }
+            return text
+        }.joined()
+
+        XCTAssertEqual(text, "Lead  tail")
+        XCTAssertFalse(text.contains("ccee26"))
+        XCTAssertFalse(text.contains("citation_card"))
+        XCTAssertFalse(text.contains("render_inline_citation"))
+        XCTAssertFalse(text.contains("<argument"))
     }
 
     func testMarkdownStreamingBuffersPartialLineUntilComplete() {
@@ -1599,6 +2660,226 @@ final class GrokCLIE2ETests: XCTestCase {
         }
 
         XCTAssertTrue(strippingANSI(output).contains("final fragment"))
+    }
+
+    func testMarkdownFormatterHandlesCodeBlockPipesBeforeTables() {
+        let formatter = OutputFormatter()
+        let markdown = """
+        ```markdown
+        | Not | table |
+        | --- | --- |
+        ```
+
+        | Name | Count |
+        | --- | ---: |
+        | Apples | 12 |
+        """
+
+        let output = strippingANSI(captureStdout {
+            formatter.printResponse(markdown)
+        })
+
+        XCTAssertContains(output, "| Not | table |")
+        XCTAssertContains(output, "| --- | --- |")
+        XCTAssertContains(output, "| Name   | Count |")
+        XCTAssertContains(output, "| Apples |    12 |")
+    }
+
+    func testHumanFormatterUsesCleanAnswerAndSourceLabels() {
+        let formatter = OutputFormatter(useMarkdown: false)
+
+        let output = strippingANSI(captureStdout {
+            formatter.printResponse(
+                "answer",
+                webSearchResults: [
+                    WebSearchResult(url: "https://example.com/1", title: "One", preview: "One"),
+                    WebSearchResult(url: "https://example.com/2", title: "Two", preview: "Two")
+                ],
+                xposts: [
+                    XPost(username: "grok", name: "Grok", text: "post", postId: "post-1")
+                ]
+            )
+        })
+
+        XCTAssertContains(output, "\nGrok\n")
+        XCTAssertContains(output, "\nSources\n")
+        XCTAssertContains(output, "2 web results")
+        XCTAssertContains(output, "1 X result")
+        XCTAssertFalse(output.contains("Grok:"))
+        XCTAssertFalse(output.contains("Sources:"))
+        XCTAssertFalse(output.contains("Web search results:"))
+        XCTAssertFalse(output.contains("X posts:"))
+    }
+
+    func testHumanFormatterUsesCleanStreamingAnswerLabel() {
+        let formatter = OutputFormatter(useMarkdown: false)
+
+        let output = strippingANSI(captureStdout {
+            formatter.printChunk("stream answer", isFirst: true)
+            formatter.printSources(webSearchResults: nil, xposts: nil)
+        })
+
+        XCTAssertContains(output, "\nGrok\nstream answer")
+        XCTAssertFalse(output.contains("Grok:"))
+    }
+
+    func testStreamingFormatterReturnsAfterFinalBeforeSourceCloses() async throws {
+        var streamContinuation: AsyncThrowingStream<ConversationResponse, Error>.Continuation?
+        let stream = AsyncThrowingStream<ConversationResponse, Error> { continuation in
+            streamContinuation = continuation
+        }
+        let continuation = try XCTUnwrap(streamContinuation)
+        let formatter = OutputFormatter(useMarkdown: false)
+
+        let renderTask = Task {
+            try await formatter.printStreamingResponse(stream)
+        }
+
+        continuation.yield(ConversationResponse(
+            message: "visible answer",
+            conversationId: "conv-e2e",
+            responseId: "resp-e2e"
+        ))
+        continuation.yield(ConversationResponse(
+            message: "visible answer",
+            conversationId: "conv-e2e",
+            responseId: "resp-e2e",
+            isFinal: true
+        ))
+
+        let completedBeforeEOF = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                do {
+                    try await renderTask.value
+                    return true
+                } catch {
+                    return false
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                return false
+            }
+
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
+        }
+
+        continuation.finish()
+        try await renderTask.value
+
+        XCTAssertTrue(completedBeforeEOF, "Streaming formatter should return as soon as the final response arrives.")
+    }
+
+    func testQuietStreamingReturnsAfterFinalBeforeSourceCloses() async throws {
+        var streamContinuation: AsyncThrowingStream<ConversationResponse, Error>.Continuation?
+        let stream = AsyncThrowingStream<ConversationResponse, Error> { continuation in
+            streamContinuation = continuation
+        }
+        let continuation = try XCTUnwrap(streamContinuation)
+
+        let renderTask = Task {
+            try await GrokCLI.printQuietStreamingResponse(stream)
+        }
+
+        continuation.yield(ConversationResponse(
+            message: "quiet answer",
+            conversationId: "conv-e2e",
+            responseId: "resp-e2e"
+        ))
+        continuation.yield(ConversationResponse(
+            message: "quiet answer",
+            conversationId: "conv-e2e",
+            responseId: "resp-e2e",
+            isFinal: true
+        ))
+
+        let completedBeforeEOF = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                do {
+                    try await renderTask.value
+                    return true
+                } catch {
+                    return false
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                return false
+            }
+
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
+        }
+
+        continuation.finish()
+        try await renderTask.value
+
+        XCTAssertTrue(completedBeforeEOF, "Quiet streaming should return as soon as the final response arrives.")
+    }
+
+    func testJSONStreamingReturnsAfterFinalBeforeSourceCloses() async throws {
+        var streamContinuation: AsyncThrowingStream<ConversationResponse, Error>.Continuation?
+        let stream = AsyncThrowingStream<ConversationResponse, Error> { continuation in
+            streamContinuation = continuation
+        }
+        let continuation = try XCTUnwrap(streamContinuation)
+        let mode = GrokMode(id: "grok-4-fast", displayName: "Grok 4 Fast")
+        let request = GrokCLI.messageRequestJSON(
+            reasoning: true,
+            deepSearch: false,
+            noSearch: false,
+            privateMode: false,
+            stream: true,
+            workspaceIds: [],
+            fileAttachmentIds: []
+        )
+
+        let renderTask = Task {
+            try await GrokCLI.printMessageJSONStream(
+                stream,
+                message: "hello",
+                mode: mode,
+                request: request
+            )
+        }
+
+        continuation.yield(ConversationResponse(
+            message: "json answer",
+            conversationId: "conv-e2e",
+            responseId: "resp-e2e"
+        ))
+        continuation.yield(ConversationResponse(
+            message: "json answer",
+            conversationId: "conv-e2e",
+            responseId: "resp-e2e",
+            isFinal: true
+        ))
+
+        let completedBeforeEOF = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                do {
+                    return try await renderTask.value
+                } catch {
+                    return false
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                return false
+            }
+
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
+        }
+
+        continuation.finish()
+        _ = try await renderTask.value
+
+        XCTAssertTrue(completedBeforeEOF, "JSON streaming should return as soon as the final response arrives.")
     }
 
     func testMarkdownFormatterSupportsTerminalMarkdownSubset() {
@@ -1646,12 +2927,119 @@ final class GrokCLIE2ETests: XCTestCase {
         let formatter = OutputFormatter(format: .raw)
 
         let output = strippingANSI(captureStdout {
-            formatter.printResponse("# Heading\n**bold** and `code`")
+            formatter.printResponse("# Heading\n**bold** and `code`\n- [example](https://example.com)")
         })
 
         XCTAssertContains(output, "# Heading")
         XCTAssertContains(output, "**bold**")
         XCTAssertContains(output, "`code`")
+        XCTAssertContains(output, "- [example](https://example.com)")
+    }
+
+    func testMessageRawQuietStripsGrokRenderMarkupAndPreservesMarkdownSource() throws {
+        let answer = """
+        # Source Heading
+        Keep **bold** and [source](https://example.com) syntax.
+        Hide <grok:render type="render_inline_citation"><argument name="citation_id">5</argument></grok:render> citations.
+        Hide escaped <grok:render type=\\\"render_inline_citation\\\"><argument name=\\\"citation_id\\\">5</argument></grok:render> fragments.
+        Hide residual _id="ccee26" card_type="citation_card" type="render_inline_citation"><argument name="citation_id">5</argument></grok:render> fragments.
+        Hide escaped residual _id=\\\"ccee26\\\" card_type=\\\"citation_card\\\" type=\\\"render_inline_citation\\\"><argument name=\\\"citation_id\\\">5</argument></grok:render> fragments.
+        """
+        let server = try MockGrokServer(finalMessage: answer)
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(["message", "--raw", "--quiet", "hello"])
+
+        XCTAssertEqual(run.status, 0)
+        assertNoQuietUI(in: run.stdout)
+        XCTAssertContains(run.stdout, "# Source Heading")
+        XCTAssertContains(run.stdout, "**bold**")
+        XCTAssertContains(run.stdout, "[source](https://example.com)")
+        XCTAssertFalse(run.stdout.contains("<grok:render"))
+        XCTAssertFalse(run.stdout.contains("render_inline_citation"))
+        XCTAssertFalse(run.stdout.contains("citation_card"))
+        XCTAssertFalse(run.stdout.contains("ccee26"))
+        XCTAssertFalse(run.stdout.contains("<argument"))
+        XCTAssertFalse(run.stdout.contains(#"\"citation_id\""#))
+    }
+
+    func testMessageStreamingRawQuietStripsSplitResidualCitationMarkup() throws {
+        let server = try MockGrokServer(
+            streamLines: [
+                ##"{"result":{"conversation":{"conversationId":"conv-e2e"},"response":{"responseId":"resp-e2e","token":"# Source Heading\nKeep **bold** text.\nResidual _id=\"ccee26\" card_type=\"citation_card\" type=\"render_inline_citation\">"}}}"##,
+                ##"{"result":{"response":{"responseId":"resp-e2e","token":"<argument name=\"citation_id\">5</argument></grok:render> after.\n"}}}"##,
+                ##"{"result":{"response":{"modelResponse":{"message":"# Source Heading\nKeep **bold** text.\nResidual _id=\"ccee26\" card_type=\"citation_card\" type=\"render_inline_citation\"><argument name=\"citation_id\">5</argument></grok:render> after.\n","responseId":"resp-e2e"}}}}"##
+            ]
+        )
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(["message", "--stream", "--raw", "--quiet", "hello"])
+
+        XCTAssertEqual(run.status, 0)
+        assertNoQuietUI(in: run.stdout)
+        XCTAssertContains(run.stdout, "# Source Heading")
+        XCTAssertContains(run.stdout, "**bold**")
+        XCTAssertContains(run.stdout, "Residual")
+        XCTAssertContains(run.stdout, "after.")
+        XCTAssertFalse(run.stdout.contains("render_inline_citation"))
+        XCTAssertFalse(run.stdout.contains("citation_card"))
+        XCTAssertFalse(run.stdout.contains("ccee26"))
+        XCTAssertFalse(run.stdout.contains("<argument"))
+        XCTAssertFalse(run.stdout.contains("</grok:render>"))
+    }
+
+    func testMessageQuietDefaultsToMarkdownRenderingWhileRawQuietPreservesMarkdownSource() throws {
+        let answer = """
+        # Quiet Heading
+        Keep **bold** syntax.
+        Hide <grok:render type="render_inline_citation"><argument name="citation_id">5</argument></grok:render> citations.
+        """
+        let server = try MockGrokServer(finalMessage: answer)
+        let environment = try TestEnvironment(server: server)
+
+        let markdown = try environment.run(["message", "--quiet", "hello"])
+        XCTAssertEqual(markdown.status, 0)
+        XCTAssertContains(markdown.cleanOutput, "Quiet Heading")
+        XCTAssertContains(markdown.cleanOutput, "Keep bold syntax.")
+        XCTAssertFalse(markdown.cleanOutput.contains("# Quiet Heading"))
+        XCTAssertFalse(markdown.cleanOutput.contains("**bold**"))
+        XCTAssertFalse(markdown.cleanOutput.contains("Grok"))
+        XCTAssertFalse(markdown.cleanOutput.contains("Calling Grok API"))
+        XCTAssertFalse(markdown.cleanOutput.contains("Sending:"))
+        XCTAssertFalse(markdown.cleanOutput.contains("<grok:render"))
+        XCTAssertFalse(markdown.cleanOutput.contains("render_inline_citation"))
+
+        let raw = try environment.run(["message", "--raw", "--quiet", "hello"])
+        XCTAssertEqual(raw.status, 0)
+        assertNoQuietUI(in: raw.stdout)
+        XCTAssertContains(raw.stdout, "# Quiet Heading")
+        XCTAssertContains(raw.stdout, "**bold**")
+        XCTAssertFalse(raw.stdout.contains("<grok:render"))
+        XCTAssertFalse(raw.stdout.contains("render_inline_citation"))
+    }
+
+    func testMessageMarkdownFinalOutputStripsGrokRenderMarkup() throws {
+        let answer = """
+        # Cited Heading
+        Final answer <grok:render type="render_inline_citation"><argument name="citation_id">5</argument></grok:render> still reads cleanly.
+        Escaped fragment <grok:render type=\\\"render_inline_citation\\\"><argument name=\\\"citation_id\\\">5</argument></grok:render> is hidden too.
+        """
+        let server = try MockGrokServer(finalMessage: answer)
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(["message", "hello"])
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Cited Heading")
+        XCTAssertContains(run.cleanOutput, "Final answer")
+        XCTAssertContains(run.cleanOutput, "still reads cleanly.")
+        XCTAssertContains(run.cleanOutput, "Escaped fragment")
+        XCTAssertContains(run.cleanOutput, "is hidden too.")
+        XCTAssertFalse(run.cleanOutput.contains("# Cited Heading"))
+        XCTAssertFalse(run.cleanOutput.contains("<grok:render"))
+        XCTAssertFalse(run.cleanOutput.contains("render_inline_citation"))
+        XCTAssertFalse(run.cleanOutput.contains("<argument"))
+        XCTAssertFalse(run.cleanOutput.contains(#"\"citation_id\""#))
     }
 
     func testMessageCommandDefaultsToMarkdownAndSupportsRawOutput() throws {
@@ -1701,8 +3089,8 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertEqual(run.status, 0)
         XCTAssertContains(run.cleanOutput, "Output format: Raw")
         XCTAssertContains(run.cleanOutput, "Output format: Markdown")
-        XCTAssertContains(run.cleanOutput, "Settings > Model: Fast | Raw")
-        XCTAssertContains(run.cleanOutput, "Settings > Model: Fast | MD")
+        XCTAssertContains(run.cleanOutput, "Grok > Fast | Raw")
+        XCTAssertContains(run.cleanOutput, "Grok > Fast | MD")
         XCTAssertFalse(run.cleanOutput.contains("Chat mode |"))
         XCTAssertFalse(run.cleanOutput.contains("Saved |"))
         XCTAssertFalse(run.cleanOutput.contains("Stream |"))
@@ -1720,11 +3108,68 @@ final class GrokCLIE2ETests: XCTestCase {
         let run = try environment.run([], input: "/format raw\n/quit\n")
 
         XCTAssertEqual(run.status, 0)
-        XCTAssertContains(run.cleanOutput, "Settings > Model: Fast | MD | Rate: 9 left, resets in 5m")
-        XCTAssertContains(run.cleanOutput, "Settings > Model: Fast | Raw | Rate: 9 left, resets in 5m")
+        XCTAssertContains(run.cleanOutput, "Grok > Fast | MD")
+        XCTAssertContains(run.cleanOutput, "Grok > Fast | Raw")
+        XCTAssertContains(run.cleanOutput, "Limit > 9 left | reset 5m")
 
         let request = try XCTUnwrap(server.requests(matchingPath: "/rest/rate-limits", method: "POST").last)
         XCTAssertEqual(request.jsonString("modelName"), "fast")
+    }
+
+    func testInteractiveLimitsCommandPrintsCurrentLimitsWithoutWarningThreshold() throws {
+        let server = try MockGrokServer(rateLimitResponse: [
+            "remainingResponses": 42,
+            "resetAfterSeconds": 900
+        ])
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run([], input: "/limits\n/quit\n")
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Rate limits for Fast (fast)")
+        XCTAssertContains(run.cleanOutput, "Remaining responses: 42 responses")
+        XCTAssertContains(run.cleanOutput, "Resets in 15m")
+        XCTAssertFalse(run.cleanOutput.contains("Available API data:"))
+        XCTAssertFalse(run.cleanOutput.contains("Limit > 42 left"))
+
+        let request = try XCTUnwrap(server.requests(matchingPath: "/rest/rate-limits", method: "POST").last)
+        XCTAssertEqual(request.jsonString("modelName"), "fast")
+    }
+
+    func testInteractiveLimitsInfersResetFromRecentMessagesWhenOnlyWindowIsProvided() throws {
+        let recentTimestamp = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-1_800))
+        let server = try MockGrokServer(
+            rateLimitResponse: [
+                "remainingResponses": 4,
+                "windowSeconds": 3_600
+            ],
+            conversations: [[
+                "conversationId": "conv-e2e",
+                "title": "Recent Conversation",
+                "starred": false,
+                "createTime": recentTimestamp,
+                "modifyTime": recentTimestamp,
+                "systemPromptName": "",
+                "temporary": false,
+                "mediaTypes": []
+            ]],
+            loadedResponses: [
+                ["responseId": "resp-user", "message": "Recent user response", "sender": "human", "createTime": recentTimestamp],
+                ["responseId": "resp-e2e", "message": "Recent assistant response", "sender": "assistant", "createTime": recentTimestamp, "parentResponseId": "resp-user"]
+            ]
+        )
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run([], input: "/limits\n/quit\n")
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Remaining responses: 4 responses")
+        XCTAssertContains(run.cleanOutput, "Resets in about 30m")
+        XCTAssertContains(run.cleanOutput, "Window: rolling 1h")
+        XCTAssertFalse(run.cleanOutput.contains("Reset: unavailable"))
+        XCTAssertFalse(run.cleanOutput.contains("Available API data:"))
+        XCTAssertEqual(server.requests(matchingPath: "/rest/app-chat/conversations", method: "GET").count, 1)
+        XCTAssertEqual(server.requests(matchingPath: "/rest/app-chat/conversations/conv-e2e/load-responses", method: "POST").count, 1)
     }
 
     func testInteractiveMultiTurnLowRateLimitWarningShowsResetDuration() throws {
@@ -2086,35 +3531,78 @@ private final class MockGrokServer {
     private var accessDeniedNewConversationCount: Int
     private var rateLimitedNewConversationCount: Int
     private let rateLimitResponse: [String: Any]
+    private let conversations: [[String: Any]]
     private let streamTokens: [String]
     private let streamLines: [String]?
     private let finalMessage: String
+    private let loadedAssistantMessage: String
+    private let loadedAssistantMetadata: [String: Any]?
+    private let loadedResponses: [[String: Any]]?
     private let transcriptionText: String
+    private let shareLinkURL: String
+    private let shareLinkExists: Bool
     private let subscriptionResponse: [String: Any]
     private let heavyRequiresUpgrade: Bool
+    private let builtInSkills: [[String: Any]]
+    private let userSkills: [[String: Any]]
 
     init(
         unauthorizedNewConversationCount: Int = 0,
         accessDeniedNewConversationCount: Int = 0,
         rateLimitedNewConversationCount: Int = 0,
         rateLimitResponse: [String: Any] = ["remainingResponses": 25, "resetAfterSeconds": 3_600],
+        conversations: [[String: Any]] = [[
+            "conversationId": "conv-e2e",
+            "title": "Mock Conversation",
+            "starred": false,
+            "createTime": "2026-05-13T00:00:00Z",
+            "modifyTime": "2026-05-13T00:00:00Z",
+            "systemPromptName": "",
+            "temporary": false,
+            "mediaTypes": []
+        ]],
         streamTokens: [String] = ["Mock streamed ", "answer"],
         streamLines: [String]? = nil,
         finalMessage: String = "Mock final response",
+        loadedAssistantMessage: String = "Loaded assistant response",
+        loadedAssistantMetadata: [String: Any]? = nil,
+        loadedResponses: [[String: Any]]? = nil,
         transcriptionText: String = "mock audio transcript",
+        shareLinkURL: String = "https://grok.com/share/mock-share-link",
+        shareLinkExists: Bool = true,
         subscriptionResponse: [String: Any] = ["subscriptions": []],
-        heavyRequiresUpgrade: Bool = true
+        heavyRequiresUpgrade: Bool = true,
+        builtInSkills: [[String: Any]] = [[
+            "skillId": "skill-1",
+            "name": "Mock Skill",
+            "description": "Mock skill description",
+            "status": "enabled"
+        ]],
+        userSkills: [[String: Any]] = [[
+            "skillId": "user-skill-1",
+            "name": "User Skill",
+            "description": "Mock skill description",
+            "status": "enabled"
+        ]]
     ) throws {
         self.unauthorizedNewConversationCount = unauthorizedNewConversationCount
         self.accessDeniedNewConversationCount = accessDeniedNewConversationCount
         self.rateLimitedNewConversationCount = rateLimitedNewConversationCount
         self.rateLimitResponse = rateLimitResponse
+        self.conversations = conversations
         self.streamTokens = streamTokens
         self.streamLines = streamLines
         self.finalMessage = finalMessage
+        self.loadedAssistantMessage = loadedAssistantMessage
+        self.loadedAssistantMetadata = loadedAssistantMetadata
+        self.loadedResponses = loadedResponses
         self.transcriptionText = transcriptionText
+        self.shareLinkURL = shareLinkURL
+        self.shareLinkExists = shareLinkExists
         self.subscriptionResponse = subscriptionResponse
         self.heavyRequiresUpgrade = heavyRequiresUpgrade
+        self.builtInSkills = builtInSkills
+        self.userSkills = userSkills
         self.listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: 0)!)
 
         let ready = DispatchSemaphore(value: 0)
@@ -2267,19 +3755,24 @@ private final class MockGrokServer {
             return streamResponse(conversationId: request.pathComponent(after: "conversations") ?? "conv-e2e", responseId: "resp-continued")
         case ("GET", "/rest/app-chat/conversations"):
             return jsonResponse([
-                "conversations": [[
-                    "conversationId": "conv-e2e",
-                    "title": "Mock Conversation",
-                    "starred": false,
-                    "createTime": "2026-05-13T00:00:00Z",
-                    "modifyTime": "2026-05-13T00:00:00Z",
-                    "systemPromptName": "",
-                    "temporary": false,
-                    "mediaTypes": []
-                ]],
+                "conversations": conversations,
                 "nextPageToken": "",
                 "textSearchMatches": []
             ])
+        case ("GET", "/rest/app-chat/share_links"):
+            if shareLinkExists {
+                return jsonResponse([
+                    "shareLinks": [[
+                        "shareUrl": shareLinkURL,
+                        "conversationId": "conv-e2e"
+                    ]]
+                ])
+            }
+            return jsonResponse(["shareLinks": []])
+        case ("POST", let path) where path.hasPrefix("/rest/app-chat/conversations/") && path.hasSuffix("/share"):
+            return jsonResponse(["shareLinkId": shareLinkIdentifier()])
+        case ("DELETE", let path) where path.hasPrefix("/rest/app-chat/conversations/soft/"):
+            return jsonResponse(["ok": true])
         case ("GET", let path) where path.hasSuffix("/response-node"):
             return jsonResponse([
                 "responseNodes": [
@@ -2288,10 +3781,25 @@ private final class MockGrokServer {
                 ]
             ])
         case ("POST", let path) where path.hasSuffix("/load-responses"):
+            if let loadedResponses {
+                return jsonResponse(["responses": loadedResponses])
+            }
+            var assistantResponse: [String: Any] = [
+                "responseId": "resp-e2e",
+                "message": loadedAssistantMessage,
+                "sender": "assistant",
+                "createTime": "2026-05-13T00:00:01Z",
+                "parentResponseId": "resp-user"
+            ]
+            if let loadedAssistantMetadata {
+                for (key, value) in loadedAssistantMetadata {
+                    assistantResponse[key] = value
+                }
+            }
             return jsonResponse([
                 "responses": [
                     ["responseId": "resp-user", "message": "Loaded user response", "sender": "human", "createTime": "2026-05-13T00:00:00Z"],
-                    ["responseId": "resp-e2e", "message": "Loaded assistant response", "sender": "assistant", "createTime": "2026-05-13T00:00:01Z", "parentResponseId": "resp-user"]
+                    assistantResponse
                 ]
             ])
         case ("GET", let path) where path.hasPrefix("/rest/app-chat/conversations_v2/"):
@@ -2304,15 +3812,20 @@ private final class MockGrokServer {
                 ]
             ])
         case ("GET", "/rest/tasks"):
-            return jsonResponse(["tasks": [taskJSON()]])
+            return jsonResponse(["tasks": activeTaskJSON()])
+        case ("GET", "/rest/tasks/inactive"):
+            return jsonResponse(["tasks": inactiveTaskJSON()])
+        case ("GET", let path) where path.hasPrefix("/rest/tasks/results/"):
+            let taskId = request.pathComponent(after: "results") ?? "task-summary-daily"
+            return jsonResponse(["results": [taskResultJSON(taskId: taskId)]])
         case ("POST", "/rest/tasks"):
             return jsonResponse(["task": taskJSON(prompt: request.jsonString("prompt") ?? "created prompt")])
         case ("PUT", "/rest/tasks/archive"):
             return jsonResponse(["task": taskJSON(isEnabled: false)])
         case ("POST", "/rest/skills"):
-            return jsonResponse(["skills": [skillJSON()]])
+            return jsonResponse(["skills": builtInSkills])
         case ("GET", "/rest/user-skills"):
-            return jsonResponse(["userSkills": [skillJSON(id: "user-skill-1", name: "User Skill")]])
+            return jsonResponse(["userSkills": userSkills])
         case ("GET", "/rest/user-settings"):
             return jsonResponse(["agentCustomizations": ["values": agentValues()]])
         case ("POST", "/rest/user-settings"):
@@ -2380,13 +3893,93 @@ private final class MockGrokServer {
         return HTTPResponse(status: status, body: data, contentType: "application/json")
     }
 
-    private func taskJSON(prompt: String = "Mock task prompt", isEnabled: Bool = true) -> [String: Any] {
+    private func shareLinkIdentifier() -> String {
+        if let url = URL(string: shareLinkURL), !url.lastPathComponent.isEmpty {
+            return url.lastPathComponent
+        }
+        return shareLinkURL
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: "/")
+            .last
+            .map(String.init) ?? "mock-share-link"
+    }
+
+    private func activeTaskJSON() -> [[String: Any]] {
         [
-            "taskId": "task-1",
-            "name": "Mock Task",
+            taskJSON(
+                taskId: "task-summary-daily",
+                name: "Morning Research Brief",
+                prompt: "Summarize overnight product and AI research updates.",
+                isEnabled: true,
+                dayOfYear: "2026-05-15",
+                timeOfDay: "08:00",
+                timezone: "America/New_York"
+            ),
+            taskJSON(
+                taskId: "task-summary-weekly",
+                name: "Weekly Support Digest",
+                prompt: "Create a weekly digest of support escalations.",
+                isEnabled: true,
+                dayOfYear: "2026-05-18",
+                timeOfDay: "09:30",
+                timezone: "UTC"
+            )
+        ]
+    }
+
+    private func inactiveTaskJSON() -> [[String: Any]] {
+        [
+            taskJSON(
+                taskId: "task-archived-roadmap",
+                name: "Archived Roadmap Sweep",
+                prompt: "Find stale roadmap notes for review.",
+                isEnabled: false,
+                dayOfYear: "2026-04-30",
+                timeOfDay: "16:00",
+                timezone: "UTC"
+            )
+        ]
+    }
+
+    private func taskJSON(
+        taskId: String = "task-summary-daily",
+        name: String = "Morning Research Brief",
+        prompt: String = "Summarize overnight product and AI research updates.",
+        isEnabled: Bool = true,
+        dayOfYear: String = "2026-05-15",
+        timeOfDay: String = "08:00",
+        timezone: String = "America/New_York",
+        includeLatestResult: Bool = true
+    ) -> [String: Any] {
+        var task: [String: Any] = [
+            "taskId": taskId,
+            "name": name,
             "prompt": prompt,
             "isEnabled": isEnabled,
-            "schedule": ["date": "2026-05-14", "time": "09:30", "timezone": "UTC"]
+            "status": isEnabled ? "enabled" : "archived",
+            "schedule": [
+                "dayOfYear": dayOfYear,
+                "timeOfDay": timeOfDay,
+                "timezone": timezone
+            ]
+        ]
+        if includeLatestResult {
+            task["latestResult"] = taskResultJSON(taskId: taskId)
+            task["rawTaskPayload"] = "internalOnly redacted mock field with cookie marker"
+        }
+        return task
+    }
+
+    private func taskResultJSON(taskId: String) -> [String: Any] {
+        [
+            "taskResultId": "result-\(taskId)",
+            "taskId": taskId,
+            "conversationId": "conv-\(taskId)",
+            "responseId": "resp-\(taskId)",
+            "status": "done",
+            "summary": "Three notable product research updates landed overnight.",
+            "message": "Three notable product research updates landed overnight.",
+            "createTime": "2026-05-15T12:00:00Z"
         ]
     }
 
