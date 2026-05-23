@@ -314,14 +314,24 @@ extension GrokCLI {
                 printAvailableModels(currentMode: GrokCLIApp.shared.getCurrentMode(), modes: GrokMode.knownModes)
             } else if isJSONRequested(remainingArgs) {
                 let modes = await GrokCLIApp.shared.loadModes()
+                let xaiOAuthModelIDs = await GrokCLIApp.shared.loadXAIOAuthModelIDsIfAvailable()
                 try printJSONResult(
                     command: command == "modes" ? "modes" : "models",
                     category: "model_list",
-                    data: AnyCodable(selectedModelJSON(currentMode: GrokCLIApp.shared.getCurrentMode(), modes: modes))
+                    data: AnyCodable(selectedModelJSON(
+                        currentMode: GrokCLIApp.shared.getCurrentMode(),
+                        modes: modes,
+                        xaiOAuthModelIDs: xaiOAuthModelIDs
+                    ))
                 )
             } else {
                 let modes = await GrokCLIApp.shared.loadModes()
-                printAvailableModels(currentMode: GrokCLIApp.shared.getCurrentMode(), modes: modes)
+                let xaiOAuthModelIDs = await GrokCLIApp.shared.loadXAIOAuthModelIDsIfAvailable()
+                printAvailableModels(
+                    currentMode: GrokCLIApp.shared.getCurrentMode(),
+                    modes: modes,
+                    xaiOAuthModelIDs: xaiOAuthModelIDs
+                )
             }
         case "agents":
             try await handleAgentsCommand(args: remainingArgs, exitOnError: true)

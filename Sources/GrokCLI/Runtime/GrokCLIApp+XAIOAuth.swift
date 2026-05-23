@@ -6,6 +6,7 @@ extension GrokCLIApp {
         let oauthClient = try XAIOAuthClient()
         let credential = try await oauthClient.authenticateWithDeviceCode(onDeviceCode: onDeviceCode)
         let path = try configManager.saveOAuthCredential(credential)
+        cachedXAIOAuthModelIDs = nil
         return (credential, path)
     }
 
@@ -26,6 +27,7 @@ extension GrokCLIApp {
         }
 
         let models = try await oauthClient.listModels(using: credential)
+        cachedXAIOAuthModelIDs = models
         let response: (id: String, text: String?)?
         if sendTestResponse {
             response = try await oauthClient.createTinyResponse(using: credential)
@@ -40,5 +42,34 @@ extension GrokCLIApp {
             testResponseID: response?.id,
             testResponseText: response?.text
         )
+    }
+
+    func loadXAIOAuthModelIDsIfAvailable() async -> [String] {
+        if let cachedXAIOAuthModelIDs {
+            return cachedXAIOAuthModelIDs
+        }
+
+        do {
+            guard var credential = try configManager.loadOAuthCredential() else {
+                cachedXAIOAuthModelIDs = []
+                return []
+            }
+
+            let oauthClient = try XAIOAuthClient()
+            if credential.expiresSoon {
+                credential = try await oauthClient.refresh(credential)
+                _ = try configManager.saveOAuthCredential(credential)
+            }
+
+            let modelIDs = try await oauthClient.listModels(using: credential)
+            cachedXAIOAuthModelIDs = modelIDs
+            return modelIDs
+        } catch {
+            if getDebugMode() {
+                print("Debug: Could not load xAI OAuth API models: \(error.localizedDescription)")
+            }
+            cachedXAIOAuthModelIDs = []
+            return []
+        }
     }
 }

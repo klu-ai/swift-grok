@@ -17,6 +17,7 @@ class GrokCLIApp {
     private var currentPersonality: GrokClient.PersonalityType = .none
     private var currentMode: GrokMode = .defaultMode
     private var cachedModes: [GrokMode]?
+    var cachedXAIOAuthModelIDs: [String]?
     private var cachedSubscriptionDisplayName: String?
     private var lastRateLimit: GrokRateLimit?
     private var lastRateLimitModeId: String?

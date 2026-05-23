@@ -874,15 +874,24 @@ extension GrokCLI {
             case .some("model"), .some("models"), .some("mode"), .some("modes"):
                 let modelCommand = interactiveModelCommand(from: input)
                 let modes = await app.loadModes()
+                let xaiOAuthModelIDs = await app.loadXAIOAuthModelIDsIfAvailable()
                 switch modelCommand {
                 case .some(.select):
-                    guard let selectedMode = promptForModelSelection(currentMode: state.mode, modes: modes) else {
+                    guard let selectedMode = promptForModelSelection(
+                        currentMode: state.mode,
+                        modes: modes,
+                        xaiOAuthModelIDs: xaiOAuthModelIDs
+                    ) else {
                         continue
                     }
                     state.mode = selectedMode
                 case .some(.set(let requestedMode)):
                     if requestedMode.lowercased() == "list" {
-                        printAvailableModels(currentMode: state.mode, modes: modes)
+                        printAvailableModels(
+                            currentMode: state.mode,
+                            modes: modes,
+                            xaiOAuthModelIDs: xaiOAuthModelIDs
+                        )
                         continue
                     }
                     guard let selectedMode = selectableResolvedMode(requestedMode, modes: modes) else {
@@ -1104,6 +1113,14 @@ extension GrokCLI {
             case .some("auth"):
                 do {
                     try await GrokCLI.handleAuthCommand(args: interactiveArgs)
+                } catch {
+                    await app.handleError(error, debug: enableDebug)
+                }
+                continue
+
+            case .some("oauth"):
+                do {
+                    try await GrokCLI.handleAuthCommand(args: ["oauth"] + interactiveArgs)
                 } catch {
                     await app.handleError(error, debug: enableDebug)
                 }

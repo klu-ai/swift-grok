@@ -15,7 +15,11 @@ extension GrokCLI {
         case set(String)
     }
 
-    static func printAvailableModels(currentMode: GrokMode? = nil, modes: [GrokMode] = GrokMode.knownModes) {
+    static func printAvailableModels(
+        currentMode: GrokMode? = nil,
+        modes: [GrokMode] = GrokMode.knownModes,
+        xaiOAuthModelIDs: [String] = []
+    ) {
         if let currentMode {
             print("Current model: \(currentMode.displayName) (\(currentMode.id))".cyan)
         }
@@ -24,14 +28,27 @@ extension GrokCLI {
             let marker = mode.id == currentMode?.id ? "✓ " : "  "
             print(modelListLine(mode: mode, index: index, marker: marker))
         }
+
+        let oauthModelIDs = uniqueModelIDs(xaiOAuthModelIDs)
+        if !oauthModelIDs.isEmpty {
+            print("")
+            print("Available xAI API models (OAuth):".cyan)
+            for (index, modelID) in oauthModelIDs.enumerated() {
+                print("  \(index + 1). \(modelID)".yellow)
+            }
+        }
         print("You can also pass a raw web modeId with --model.".blue)
     }
 
-    static func printAvailableModelsJSON(currentMode: GrokMode, modes: [GrokMode] = GrokMode.knownModes) throws {
+    static func printAvailableModelsJSON(
+        currentMode: GrokMode,
+        modes: [GrokMode] = GrokMode.knownModes,
+        xaiOAuthModelIDs: [String] = []
+    ) throws {
         try printJSONResult(
             command: "models",
             category: "model_list",
-            data: AnyCodable(selectedModelJSON(currentMode: currentMode, modes: modes))
+            data: AnyCodable(selectedModelJSON(currentMode: currentMode, modes: modes, xaiOAuthModelIDs: xaiOAuthModelIDs))
         )
     }
 
@@ -79,8 +96,21 @@ extension GrokCLI {
         return requestedMode.isEmpty ? .select : .set(requestedMode)
     }
 
-    static func promptForModelSelection(currentMode: GrokMode, modes: [GrokMode] = GrokMode.knownModes) -> GrokMode? {
-        let items = modes.map { mode in
+    static func promptForModelSelection(
+        currentMode: GrokMode,
+        modes: [GrokMode] = GrokMode.knownModes,
+        xaiOAuthModelIDs: [String] = []
+    ) -> GrokMode? {
+        let items = modelPickerItems(modes: modes, xaiOAuthModelIDs: xaiOAuthModelIDs)
+        return InteractivePicker.select(
+            title: "Select model",
+            items: items,
+            currentId: currentMode.id
+        )
+    }
+
+    private static func modelPickerItems(modes: [GrokMode], xaiOAuthModelIDs: [String]) -> [PickerItem<GrokMode>] {
+        var items = modes.map { mode in
             PickerItem(
                 id: mode.id,
                 title: mode.displayName,
@@ -91,11 +121,42 @@ extension GrokCLI {
                 searchText: "\(mode.displayName) \(mode.id) \(mode.summary)"
             )
         }
-        return InteractivePicker.select(
-            title: "Select model",
-            items: items,
-            currentId: currentMode.id
-        )
+
+        for modelID in uniqueModelIDs(xaiOAuthModelIDs) {
+            let mode = GrokMode(
+                id: modelID,
+                displayName: modelID,
+                summary: "xAI API model",
+                isAvailable: false,
+                unavailableReason: "OAuth API model; web chat uses web modes"
+            )
+            items.append(PickerItem(
+                id: "xai-oauth:\(modelID)",
+                title: modelID,
+                subtitle: "xAI API",
+                metadataLabel: "source",
+                metadata: "xAI OAuth API",
+                preview: mode.unavailableDescription,
+                value: mode,
+                isEnabled: false,
+                searchText: "\(modelID) xAI API OAuth model"
+            ))
+        }
+
+        return items
+    }
+
+    private static func uniqueModelIDs(_ modelIDs: [String]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for modelID in modelIDs {
+            let trimmed = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seen.insert(trimmed).inserted else {
+                continue
+            }
+            result.append(trimmed)
+        }
+        return result
     }
 
     private enum ModelSelectionPromptResult {

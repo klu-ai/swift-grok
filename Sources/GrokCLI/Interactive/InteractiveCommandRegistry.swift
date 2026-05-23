@@ -80,6 +80,7 @@ extension GrokCLI {
             InteractiveCommandSpec(command: "/agents show <id>", aliases: ["/agents view <id>"], description: "Show full agent instructions", category: .library, requiresArgument: true),
             InteractiveCommandSpec(command: "/agents edit <id>", description: "Edit agent instructions", category: .library, requiresArgument: true),
             InteractiveCommandSpec(command: "/auth", usage: "/auth [generate|import|oauth|help]", description: "Manage credentials", category: .auth),
+            InteractiveCommandSpec(command: "/oauth", usage: "/oauth [login|status|verify]", description: "Manage xAI OAuth credentials", category: .auth),
             InteractiveCommandSpec(command: "/delete", usage: "/delete [--yes]", description: "Delete current conversation", category: .session),
             InteractiveCommandSpec(command: "/clear", aliases: ["/cls"], description: "Clear the screen", category: .utility)
 //            InteractiveCommandSpec(command: "/special", description: "Start a private special-mode conversation", category: .session, showsInHelp: false, showsInEmptySlashMenu: false)

@@ -8,10 +8,12 @@ final class InteractiveCompletionTests: XCTestCase {
         let bareSuggestions = reader.completionSuggestionDisplays(for: "/")
         XCTAssertEqual(bareSuggestions.first, "/model")
         XCTAssertTrue(bareSuggestions.contains("/limits"))
+        XCTAssertTrue(bareSuggestions.contains("/oauth"))
         XCTAssertTrue(bareSuggestions.contains("/search"))
         XCTAssertFalse(bareSuggestions.contains("/stream"))
         XCTAssertFalse(bareSuggestions.contains("/special"))
 
+        XCTAssertTrue(reader.completionSuggestionDisplays(for: "/oa").contains("/oauth"))
         XCTAssertTrue(reader.completionSuggestionDisplays(for: "/sea").contains("/search"))
         XCTAssertTrue(reader.completionSuggestionDisplays(for: "/str").contains("/stream"))
         XCTAssertFalse(reader.completionSuggestionDisplays(for: "/spe").contains("/special"))
@@ -44,5 +46,11 @@ final class InteractiveCompletionTests: XCTestCase {
         XCTAssertEqual(command?.name, "limits")
         XCTAssertFalse(command?.hasSlash ?? true)
         XCTAssertNil(GrokCLI.interactiveCommand(from: "limits now"))
+    }
+
+    func testOAuthSlashCommandIsRecognizedOnlyWithSlash() {
+        XCTAssertEqual(GrokCLI.interactiveCommand(from: "/oauth")?.name, "oauth")
+        XCTAssertEqual(GrokCLI.interactiveCommand(from: "/oauth status")?.remainder, "status")
+        XCTAssertNil(GrokCLI.interactiveCommand(from: "oauth"))
     }
 }

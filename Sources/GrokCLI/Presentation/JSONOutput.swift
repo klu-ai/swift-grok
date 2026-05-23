@@ -308,14 +308,39 @@ extension GrokCLI {
         return json
     }
 
-    static func selectedModelJSON(currentMode: GrokMode, modes: [GrokMode] = GrokMode.knownModes) -> [String: AnyCodable] {
-        [
+    static func selectedModelJSON(
+        currentMode: GrokMode,
+        modes: [GrokMode] = GrokMode.knownModes,
+        xaiOAuthModelIDs: [String] = []
+    ) -> [String: AnyCodable] {
+        var seenOAuthModelIDs = Set<String>()
+        let uniqueOAuthModelIDs = xaiOAuthModelIDs.compactMap { modelID -> String? in
+            let trimmed = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seenOAuthModelIDs.insert(trimmed).inserted else {
+                return nil
+            }
+            return trimmed
+        }
+        return [
             "currentModel": AnyCodable(modeJSON(currentMode)),
             "models": AnyCodable(modes.map { mode in
                 var item = modeJSON(mode)
                 item["selected"] = AnyCodable(mode.id == currentMode.id)
                 return item
-            })
+            }),
+            "xaiOAuthModels": AnyCodable(uniqueOAuthModelIDs.map { modelID in
+                [
+                    "id": AnyCodable(modelID),
+                    "source": AnyCodable("xai_oauth_api"),
+                    "selected": AnyCodable(false),
+                    "disabled": AnyCodable(true),
+                    "unavailableReason": AnyCodable("OAuth API model; web chat uses web modes")
+                ]
+            }),
+            "modelSources": AnyCodable([
+                "webModes": AnyCodable(modes.count),
+                "xaiOAuthModels": AnyCodable(uniqueOAuthModelIDs.count)
+            ])
         ]
     }
 
