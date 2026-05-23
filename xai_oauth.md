@@ -262,6 +262,132 @@ Mapping into CLI stream events:
 
 The parser also accepts OpenAI-style `chat.completion.chunk` content and `reasoning_content` deltas as a defensive fallback, but `/v1/responses` is the primary transport.
 
+## Image Generation
+
+Image generation models returned by `/v1/models`, such as `grok-imagine-image-quality`, are not valid `/v1/responses` models. The CLI detects image-generation model IDs and routes prompt-only message requests to:
+
+```http
+POST /v1/images/generations
+Authorization: Bearer <access-token>
+Accept: application/json
+Content-Type: application/json
+```
+
+Request body:
+
+```json
+{
+  "model": "grok-imagine-image-quality",
+  "prompt": "A collage of London landmarks in a stenciled street-art style"
+}
+```
+
+xAI also documents optional image-generation fields that the CLI does not expose yet:
+
+- `n`: number of generated images, up to 10.
+- `aspect_ratio`: for example `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `3:2`, `2:3`, or `auto`.
+- `resolution`: `1k` or `2k`.
+- `response_format`: `url` or `b64_json`.
+- `user`: caller-provided end-user identifier.
+
+Consumed response shape:
+
+```json
+{
+  "data": [
+    {
+      "url": "https://imgen.x.ai/...jpeg",
+      "mime_type": "image/jpeg",
+      "revised_prompt": ""
+    }
+  ],
+  "usage": {
+    "cost_in_usd_ticks": 200000000
+  }
+}
+```
+
+The CLI prints generated URLs. If xAI returns base64 images instead of URLs, the CLI reports the base64 image count rather than dumping the full payload.
+
+Image edit uses a separate documented endpoint, `POST /v1/images/edits`, with `prompt` plus `image` or `images`. The CLI does not route chat attachments into image-edit requests yet.
+
+## Video Generation
+
+Video generation models, such as `grok-imagine-video`, use an asynchronous media API instead of `/v1/responses`.
+
+Start request:
+
+```http
+POST /v1/videos/generations
+Authorization: Bearer <access-token>
+Accept: application/json
+Content-Type: application/json
+```
+
+Request body:
+
+```json
+{
+  "model": "grok-imagine-video",
+  "prompt": "A serene lake at sunrise with mist rolling over the water"
+}
+```
+
+xAI also documents optional video-generation fields that the CLI does not expose yet:
+
+- `duration` or `seconds`: 1-15 seconds.
+- `aspect_ratio`: `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `3:2`, or `2:3`.
+- `resolution`: `480p`, `720p`, or `1080p`.
+- `image`: source image for image-to-video.
+- `reference_images`: one or more reference images.
+- `output`: upload destination metadata.
+- `user`: caller-provided end-user identifier.
+
+Start response:
+
+```json
+{
+  "request_id": "41eb9a5f-cbd4-9f21-8d59-79005f1e61b7"
+}
+```
+
+The CLI then polls:
+
+```http
+GET /v1/videos/{request_id}
+Authorization: Bearer <access-token>
+Accept: application/json
+```
+
+Documented statuses are:
+
+- `pending`: still generating.
+- `done`: video is ready.
+- `expired`: request expired.
+- `failed`: generation failed.
+
+Consumed completed response shape:
+
+```json
+{
+  "status": "done",
+  "video": {
+    "url": "https://vidgen.x.ai/.../video.mp4",
+    "duration": 6,
+    "respect_moderation": true
+  },
+  "model": "grok-imagine-video",
+  "usage": {
+    "cost_in_usd_ticks": 500000000
+  },
+  "progress": 100
+}
+```
+
+The CLI prints the completed video URL and clears OAuth text-continuation state after media generations, so later text requests do not send an image or video request ID as `previous_response_id`.
+
+Video edit and extension are separate documented endpoints, `POST /v1/videos/edits` and `POST /v1/videos/extensions`. Both return `request_id` and use the same `GET /v1/videos/{request_id}` polling endpoint. The CLI currently implements prompt-only text-to-video generation.
+
 ## Files
 
 Upload:
@@ -348,8 +474,8 @@ OAuth mode supports:
 
 - `grok auth oauth`
 - `grok models`
-- `grok message`
-- Interactive chat
+- `grok message`, including prompt-only image and video generation when a media model is selected
+- Interactive chat, including prompt-only image and video generation when a media model is selected
 - `grok files list`
 - `grok files upload`
 - `grok files delete`
@@ -362,6 +488,8 @@ Web-only resources and account counters are not available in OAuth mode. Those c
 - OAuth mode does not expose Grok web rate-limit counters.
 - OAuth auth failures do not trigger browser-cookie refresh.
 - Stored OAuth conversation continuity depends on `previous_response_id` and xAI's Responses API storage.
+- Image/video model IDs are listed with other API models, but they use media endpoints instead of `/v1/responses`.
+- The CLI only exposes prompt-only image and video generation today. Image edit, image-to-video, reference-to-video, video edit, video extension, media dimensions, counts, resolutions, and output upload options require future CLI flags or commands.
 - File delete path encoding currently uses the implementation's URL path encoding behavior.
 - Streaming exposes summarized reasoning deltas when xAI emits them; it does not expose private internal chain-of-thought.
 
@@ -370,4 +498,7 @@ Web-only resources and account counters are not available in OAuth mode. Those c
 - xAI Responses API overview: https://docs.x.ai/developers/model-capabilities/text/generate-text
 - xAI streaming guide: https://docs.x.ai/developers/model-capabilities/text/streaming
 - xAI reasoning guide: https://docs.x.ai/developers/model-capabilities/text/reasoning
+- xAI image generation REST reference: https://docs.x.ai/developers/rest-api-reference/inference/images
+- xAI video generation REST reference: https://docs.x.ai/developers/rest-api-reference/inference/videos
+- xAI video generation guide: https://docs.x.ai/developers/model-capabilities/video/generation
 - xAI files guide: https://docs.x.ai/developers/model-capabilities/files/chat-with-files

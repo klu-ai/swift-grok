@@ -217,6 +217,16 @@ class GrokCLIApp {
         return conversationId
     }
 
+    func recordXAIOAuthMediaResponse(mode: GrokMode) -> String {
+        let conversationId = currentConversationId ?? "xai-oauth"
+        currentConversationId = conversationId
+        lastResponseId = nil
+        lastWebSearchResults = nil
+        lastXPosts = nil
+        setCurrentMode(mode)
+        return conversationId
+    }
+
     func getLastLoadedConversationMode() -> GrokMode? {
         lastLoadedConversationMode
     }
@@ -821,7 +831,9 @@ class GrokCLIApp {
                             )
                             for try await response in oauth.stream {
                                 if response.isFinal {
-                                    let conversationId = recordXAIOAuthResponse(responseId: response.responseId, mode: oauth.mode)
+                                    let conversationId = oauth.mode.isXAIOAuthMediaGenerationModel
+                                        ? recordXAIOAuthMediaResponse(mode: oauth.mode)
+                                        : recordXAIOAuthResponse(responseId: response.responseId, mode: oauth.mode)
                                     continuation.yield(ConversationResponse(
                                         message: response.message,
                                         conversationId: conversationId,

@@ -1515,6 +1515,147 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertEqual(server.requests(matchingPath: "/v1/responses", method: "POST").last?.jsonBool("stream"), true)
     }
 
+    func testOAuthImageModelRoutesMessageToXAIMediaEndpointNotResponses() throws {
+        let server = try MockGrokServer(
+            xaiAPIModels: ["grok-4.3", "grok-imagine-image-quality"]
+        )
+        let environment = try TestEnvironment(server: server)
+        let xaiAPIBaseURL = "\(server.baseURL)/v1"
+        try writeSavedXAIOAuthCredential(
+            in: environment,
+            accessToken: "oauth-image-token",
+            apiBaseURL: xaiAPIBaseURL
+        )
+
+        let run = try environment.run(
+            ["message", "--json", "--model", "grok-imagine-image-quality", "make a blue square"],
+            extraEnvironment: [
+                "GROK_XAI_API_BASE_URL": xaiAPIBaseURL,
+                "GROK_AUTH_MODE": "oauth"
+            ]
+        )
+
+        XCTAssertEqual(run.status, 0)
+        assertNoHumanJSONBanners(in: run.stdout)
+        let responseData = try assertResultEnvelope(
+            try jsonObject(from: run),
+            command: "message",
+            category: "assistant_response"
+        )
+        XCTAssertContains(responseData["message"] as? String ?? "", "https://imgen.x.ai/mock-image.jpeg")
+
+        let imageRequests = server.requests(matchingPath: "/v1/images/generations", method: "POST")
+        XCTAssertEqual(imageRequests.count, 1)
+        let request = try XCTUnwrap(imageRequests.first)
+        XCTAssertEqual(request.header("authorization"), "Bearer oauth-image-token")
+        XCTAssertEqual(request.jsonString("model"), "grok-imagine-image-quality")
+        XCTAssertEqual(request.jsonString("prompt"), "make a blue square")
+        XCTAssertTrue(server.requests(matchingPath: "/v1/responses", method: "POST").isEmpty)
+    }
+
+    func testOAuthStreamingImageModelRoutesToImagesEndpointNotResponses() throws {
+        let server = try MockGrokServer(
+            xaiAPIModels: ["grok-4.3", "grok-imagine-image-quality"]
+        )
+        let environment = try TestEnvironment(server: server)
+        let xaiAPIBaseURL = "\(server.baseURL)/v1"
+        try writeSavedXAIOAuthCredential(
+            in: environment,
+            accessToken: "oauth-stream-image-token",
+            apiBaseURL: xaiAPIBaseURL
+        )
+
+        let run = try environment.run(
+            ["message", "--stream", "--json", "--model", "grok-imagine-image-quality", "make a green square"],
+            extraEnvironment: [
+                "GROK_XAI_API_BASE_URL": xaiAPIBaseURL,
+                "GROK_AUTH_MODE": "oauth"
+            ]
+        )
+
+        XCTAssertEqual(run.status, 0)
+        assertNoHumanJSONBanners(in: run.stdout)
+        XCTAssertContains(run.stdout, #""event":"assistant_final""#)
+        XCTAssertContains(run.stdout, "https://imgen.x.ai/mock-image.jpeg")
+        XCTAssertEqual(server.requests(matchingPath: "/v1/images/generations", method: "POST").count, 1)
+        XCTAssertTrue(server.requests(matchingPath: "/v1/responses", method: "POST").isEmpty)
+    }
+
+    func testOAuthVideoModelRoutesMessageToXAIVideoEndpointAndPolls() throws {
+        let server = try MockGrokServer(
+            xaiAPIModels: ["grok-4.3", "grok-imagine-video"]
+        )
+        let environment = try TestEnvironment(server: server)
+        let xaiAPIBaseURL = "\(server.baseURL)/v1"
+        try writeSavedXAIOAuthCredential(
+            in: environment,
+            accessToken: "oauth-video-token",
+            apiBaseURL: xaiAPIBaseURL
+        )
+
+        let run = try environment.run(
+            ["message", "--json", "--model", "grok-imagine-video", "make a red ball bounce once"],
+            extraEnvironment: [
+                "GROK_XAI_API_BASE_URL": xaiAPIBaseURL,
+                "GROK_AUTH_MODE": "oauth"
+            ]
+        )
+
+        XCTAssertEqual(run.status, 0)
+        assertNoHumanJSONBanners(in: run.stdout)
+        let responseData = try assertResultEnvelope(
+            try jsonObject(from: run),
+            command: "message",
+            category: "assistant_response"
+        )
+        XCTAssertContains(responseData["message"] as? String ?? "", "https://vidgen.x.ai/mock-video.mp4")
+
+        let videoRequests = server.requests(matchingPath: "/v1/videos/generations", method: "POST")
+        XCTAssertEqual(videoRequests.count, 1)
+        let request = try XCTUnwrap(videoRequests.first)
+        XCTAssertEqual(request.header("authorization"), "Bearer oauth-video-token")
+        XCTAssertEqual(request.jsonString("model"), "grok-imagine-video")
+        XCTAssertEqual(request.jsonString("prompt"), "make a red ball bounce once")
+        XCTAssertEqual(server.requests(matchingPath: "/v1/videos/vid-xai-e2e", method: "GET").count, 1)
+        XCTAssertTrue(server.requests(matchingPath: "/v1/responses", method: "POST").isEmpty)
+    }
+
+    func testInteractiveOAuthMediaGenerationDoesNotBecomePreviousResponseID() throws {
+        let server = try MockGrokServer(
+            xaiAPIModels: ["grok-4.3", "grok-imagine-image-quality"]
+        )
+        let environment = try TestEnvironment(server: server)
+        let xaiAPIBaseURL = "\(server.baseURL)/v1"
+        try writeSavedXAIOAuthCredential(
+            in: environment,
+            accessToken: "oauth-interactive-media-token",
+            apiBaseURL: xaiAPIBaseURL
+        )
+
+        let run = try environment.run(
+            [],
+            input: """
+            /model grok-imagine-image-quality
+            make a blue square
+            /model grok-4.3
+            hello after image
+            quit
+            """,
+            timeout: 15,
+            extraEnvironment: [
+                "GROK_XAI_API_BASE_URL": xaiAPIBaseURL,
+                "GROK_AUTH_MODE": "oauth"
+            ]
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Generated image:")
+        XCTAssertEqual(server.requests(matchingPath: "/v1/images/generations", method: "POST").count, 1)
+        let responseRequest = try XCTUnwrap(server.requests(matchingPath: "/v1/responses", method: "POST").last)
+        XCTAssertEqual(responseRequest.jsonString("model"), "grok-4.3")
+        XCTAssertNil(responseRequest.jsonString("previous_response_id"))
+    }
+
     func testOAuthAuthModeRoutesFilesAndTranscribeToXAIAPI() throws {
         let server = try MockGrokServer(transcriptionText: "oauth transcript", xaiAPIModels: ["grok-4.3"])
         let environment = try TestEnvironment(server: server)
@@ -4352,6 +4493,41 @@ private final class MockGrokServer {
                 "object": "response",
                 "model": request.jsonString("model") ?? "grok-4.3",
                 "output_text": finalMessage
+            ])
+        case ("POST", "/v1/images/generations"):
+            guard request.header("Authorization")?.hasPrefix("Bearer ") == true else {
+                return jsonResponse(["error": "missing bearer token"], status: 401)
+            }
+            return jsonResponse([
+                "data": [[
+                    "url": "https://imgen.x.ai/mock-image.jpeg",
+                    "mime_type": "image/jpeg",
+                    "revised_prompt": request.jsonString("prompt") ?? ""
+                ]],
+                "usage": [
+                    "cost_in_usd_ticks": 200000000
+                ]
+            ])
+        case ("POST", "/v1/videos/generations"):
+            guard request.header("Authorization")?.hasPrefix("Bearer ") == true else {
+                return jsonResponse(["error": "missing bearer token"], status: 401)
+            }
+            return jsonResponse([
+                "request_id": "vid-xai-e2e"
+            ])
+        case ("GET", "/v1/videos/vid-xai-e2e"):
+            guard request.header("Authorization")?.hasPrefix("Bearer ") == true else {
+                return jsonResponse(["error": "missing bearer token"], status: 401)
+            }
+            return jsonResponse([
+                "status": "done",
+                "video": [
+                    "url": "https://vidgen.x.ai/mock-video.mp4",
+                    "duration": 6,
+                    "respect_moderation": true
+                ],
+                "model": "grok-imagine-video",
+                "progress": 100
             ])
         case ("POST", "/v1/stt"):
             guard request.header("Authorization")?.hasPrefix("Bearer ") == true else {

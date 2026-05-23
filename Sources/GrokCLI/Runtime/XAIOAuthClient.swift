@@ -47,6 +47,17 @@ struct XAIOAuthVerificationResult {
     let testResponseText: String?
 }
 
+struct XAIMediaGenerationResponse {
+    let id: String
+    let text: String
+}
+
+struct XAIVideoGenerationPollUpdate {
+    let requestID: String
+    let status: String
+    let progress: Int?
+}
+
 private struct XAIOAuthDiscovery: Decodable {
     let issuer: String
     let authorizationEndpoint: String?
@@ -367,6 +378,52 @@ final class XAIOAuthClient {
         }
     }
 
+    func generateImage(
+        using credential: XAIOAuthCredential,
+        modelID: String,
+        prompt: String
+    ) async throws -> XAIMediaGenerationResponse {
+        let data = try await performJSONRequest(
+            path: "images/generations",
+            method: "POST",
+            credential: credential,
+            body: [
+                "model": modelID,
+                "prompt": prompt
+            ]
+        )
+        let json = try Self.jsonObject(from: data)
+        return try Self.imageGenerationResponse(from: json)
+    }
+
+    func generateVideo(
+        using credential: XAIOAuthCredential,
+        modelID: String,
+        prompt: String,
+        onPoll: ((XAIVideoGenerationPollUpdate) -> Void)? = nil
+    ) async throws -> XAIMediaGenerationResponse {
+        let data = try await performJSONRequest(
+            path: "videos/generations",
+            method: "POST",
+            credential: credential,
+            body: [
+                "model": modelID,
+                "prompt": prompt
+            ]
+        )
+        let json = try Self.jsonObject(from: data)
+        guard let requestID = Self.stringValue(json, keys: ["request_id", "id"]), !requestID.isEmpty else {
+            throw GrokError.apiError("xAI video generation response did not include a request_id")
+        }
+
+        let result = try await pollVideoGenerationResult(
+            requestID: requestID,
+            credential: credential,
+            onPoll: onPoll
+        )
+        return try Self.videoGenerationResponse(requestID: requestID, from: result)
+    }
+
     func transcribeAudio(
         using credential: XAIOAuthCredential,
         audioData: Data,
@@ -640,6 +697,145 @@ final class XAIOAuthClient {
             mimeType: json["mime_type"] as? String ?? json["mimeType"] as? String,
             rawJSON: json.mapValues(AnyCodable.init)
         )
+    }
+
+    private static func imageGenerationResponse(from json: [String: Any]) throws -> XAIMediaGenerationResponse {
+        let images = json["data"] as? [[String: Any]] ?? []
+        let urls = images.compactMap { stringValue($0, keys: ["url"]) }
+        let base64Count = images.filter { image in
+            stringValue(image, keys: ["b64_json", "base64", "image"]) != nil
+        }.count
+        let revisedPrompts = images.compactMap { stringValue($0, keys: ["revised_prompt"]) }
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+        guard !urls.isEmpty || base64Count > 0 else {
+            throw GrokError.apiError("xAI image generation response did not include a URL or base64 image")
+        }
+
+        var lines = ["Generated image:"]
+        lines.append(contentsOf: formattedMediaURLs(urls))
+        if base64Count > 0 {
+            lines.append("Returned \(base64Count) base64 image\(base64Count == 1 ? "" : "s").")
+        }
+        if let revisedPrompt = revisedPrompts.first {
+            lines.append("Revised prompt: \(revisedPrompt)")
+        }
+
+        let id = stringValue(json, keys: ["id", "request_id"]) ?? urls.first ?? "xai-image-\(UUID().uuidString)"
+        return XAIMediaGenerationResponse(id: id, text: lines.joined(separator: "\n"))
+    }
+
+    private static func videoGenerationResponse(
+        requestID: String,
+        from json: [String: Any]
+    ) throws -> XAIMediaGenerationResponse {
+        let urls = videoURLs(from: json)
+        guard !urls.isEmpty else {
+            throw GrokError.apiError("xAI video generation response did not include a video URL")
+        }
+
+        var lines = ["Generated video:"]
+        lines.append(contentsOf: formattedMediaURLs(urls))
+        if let duration = (json["video"] as? [String: Any]).flatMap({ intValue($0, keys: ["duration"]) }) {
+            lines.append("Duration: \(duration)s")
+        }
+
+        return XAIMediaGenerationResponse(id: requestID, text: lines.joined(separator: "\n"))
+    }
+
+    private static func formattedMediaURLs(_ urls: [String]) -> [String] {
+        guard !urls.isEmpty else { return [] }
+        if urls.count == 1 {
+            return [urls[0]]
+        }
+        return urls.enumerated().map { index, url in
+            "\(index + 1). \(url)"
+        }
+    }
+
+    private static func videoURLs(from json: [String: Any]) -> [String] {
+        var urls: [String] = []
+        if let url = stringValue(json, keys: ["url", "video_url"]) {
+            urls.append(url)
+        }
+        if let video = json["video"] as? [String: Any],
+           let url = stringValue(video, keys: ["url", "video_url"]) {
+            urls.append(url)
+        }
+        if let data = json["data"] as? [[String: Any]] {
+            urls.append(contentsOf: data.compactMap { stringValue($0, keys: ["url", "video_url"]) })
+        }
+        if let output = json["output"] as? [[String: Any]] {
+            urls.append(contentsOf: output.compactMap { stringValue($0, keys: ["url", "video_url"]) })
+        }
+        var seen = Set<String>()
+        return urls.filter { seen.insert($0).inserted }
+    }
+
+    private func pollVideoGenerationResult(
+        requestID: String,
+        credential: XAIOAuthCredential,
+        onPoll: ((XAIVideoGenerationPollUpdate) -> Void)?
+    ) async throws -> [String: Any] {
+        let maxAttempts = 72
+        let pollInterval: UInt64 = 5_000_000_000
+
+        for attempt in 0..<maxAttempts {
+            let data = try await performJSONRequest(
+                path: "videos/\(Self.percentEncodedPathComponent(requestID))",
+                method: "GET",
+                credential: credential,
+                body: nil
+            )
+            let json = try Self.jsonObject(from: data)
+            let status = Self.stringValue(json, keys: ["status"])?.lowercased()
+            let progress = Self.intValue(json, keys: ["progress"])
+
+            if status == "done" || status == "completed" || status == "succeeded" || status == "ready" ||
+                (status == nil && !Self.videoURLs(from: json).isEmpty) {
+                return json
+            }
+
+            if status == "failed" || status == "expired" || status == "cancelled" || status == "canceled" {
+                throw GrokError.apiError("xAI video generation \(requestID) \(status ?? "failed")")
+            }
+
+            onPoll?(XAIVideoGenerationPollUpdate(
+                requestID: requestID,
+                status: status ?? "pending",
+                progress: progress
+            ))
+
+            if attempt < maxAttempts - 1 {
+                try await Task.sleep(nanoseconds: pollInterval)
+            }
+        }
+
+        throw GrokError.apiError("Timed out waiting for xAI video generation \(requestID)")
+    }
+
+    private static func stringValue(_ json: [String: Any], keys: [String]) -> String? {
+        for key in keys {
+            if let value = json[key] as? String, !value.isEmpty {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func intValue(_ json: [String: Any], keys: [String]) -> Int? {
+        for key in keys {
+            if let value = json[key] as? Int {
+                return value
+            }
+            if let value = json[key] as? Double {
+                return Int(value)
+            }
+            if let value = json[key] as? String, let parsed = Int(value) {
+                return parsed
+            }
+        }
+        return nil
     }
 
     private static func percentEncodedPathComponent(_ value: String) -> String {

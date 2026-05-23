@@ -129,6 +129,41 @@ extension GrokCLIApp {
         let credential = try await validXAIOAuthCredential()
         let oauthClient = try XAIOAuthClient()
         let resolvedMode = await resolveXAIOAuthModel(mode)
+
+        if resolvedMode.isXAIOAuthImageGenerationModel {
+            try validateXAIOAuthMediaAttachments(fileAttachments)
+            let response = try await oauthClient.generateImage(
+                using: credential,
+                modelID: resolvedMode.id,
+                prompt: message
+            )
+            let conversationId = recordXAIOAuthMediaResponse(mode: resolvedMode)
+            return ConversationResponse(
+                message: response.text,
+                conversationId: conversationId,
+                responseId: response.id,
+                timestamp: Date(),
+                isFinal: true
+            )
+        }
+
+        if resolvedMode.isXAIOAuthVideoGenerationModel {
+            try validateXAIOAuthMediaAttachments(fileAttachments)
+            let response = try await oauthClient.generateVideo(
+                using: credential,
+                modelID: resolvedMode.id,
+                prompt: message
+            )
+            let conversationId = recordXAIOAuthMediaResponse(mode: resolvedMode)
+            return ConversationResponse(
+                message: response.text,
+                conversationId: conversationId,
+                responseId: response.id,
+                timestamp: Date(),
+                isFinal: true
+            )
+        }
+
         let previousResponseID = temporary ? nil : getLastResponseId()
         let response = try await oauthClient.createResponse(
             using: credential,
@@ -159,6 +194,57 @@ extension GrokCLIApp {
         let credential = try await validXAIOAuthCredential()
         let oauthClient = try XAIOAuthClient()
         let resolvedMode = await resolveXAIOAuthModel(mode)
+
+        if resolvedMode.isXAIOAuthImageGenerationModel || resolvedMode.isXAIOAuthVideoGenerationModel {
+            try validateXAIOAuthMediaAttachments(fileAttachments)
+            let stream = AsyncThrowingStream<ConversationResponse, Error> { continuation in
+                let task = Task {
+                    do {
+                        let response: XAIMediaGenerationResponse
+                        if resolvedMode.isXAIOAuthImageGenerationModel {
+                            response = try await oauthClient.generateImage(
+                                using: credential,
+                                modelID: resolvedMode.id,
+                                prompt: message
+                            )
+                        } else {
+                            response = try await oauthClient.generateVideo(
+                                using: credential,
+                                modelID: resolvedMode.id,
+                                prompt: message,
+                                onPoll: { update in
+                                    let progressSuffix = update.progress.map { " \($0)%" } ?? ""
+                                    continuation.yield(ConversationResponse(
+                                        message: "Video generation \(update.status)\(progressSuffix)",
+                                        conversationId: "xai-oauth",
+                                        responseId: update.requestID,
+                                        timestamp: Date(),
+                                        isThinking: true
+                                    ))
+                                }
+                            )
+                        }
+
+                        continuation.yield(ConversationResponse(
+                            message: response.text,
+                            conversationId: "xai-oauth",
+                            responseId: response.id,
+                            timestamp: Date(),
+                            isFinal: true
+                        ))
+                        continuation.finish()
+                    } catch {
+                        continuation.finish(throwing: error)
+                    }
+                }
+
+                continuation.onTermination = { _ in
+                    task.cancel()
+                }
+            }
+            return (stream, resolvedMode)
+        }
+
         let previousResponseID = temporary ? nil : getLastResponseId()
         let stream = try oauthClient.streamResponse(
             using: credential,
@@ -206,5 +292,30 @@ extension GrokCLIApp {
         let credential = try await validXAIOAuthCredential()
         let oauthClient = try XAIOAuthClient()
         return try await oauthClient.deleteFile(using: credential, fileID: fileID)
+    }
+
+    private func validateXAIOAuthMediaAttachments(_ fileAttachments: [String]) throws {
+        let hasAttachments = fileAttachments.contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard !hasAttachments else {
+            throw GrokError.apiError("xAI OAuth media generation currently supports prompt-only requests from the CLI; remove file attachments and try again.")
+        }
+    }
+}
+
+extension GrokMode {
+    var isXAIOAuthImageGenerationModel: Bool {
+        let normalized = id.lowercased()
+        return normalized.contains("imagine-image") ||
+            normalized.hasPrefix("grok-2-image") ||
+            normalized.contains("image-generation")
+    }
+
+    var isXAIOAuthVideoGenerationModel: Bool {
+        let normalized = id.lowercased()
+        return normalized.contains("imagine-video") || normalized.contains("video-generation")
+    }
+
+    var isXAIOAuthMediaGenerationModel: Bool {
+        isXAIOAuthImageGenerationModel || isXAIOAuthVideoGenerationModel
     }
 }
