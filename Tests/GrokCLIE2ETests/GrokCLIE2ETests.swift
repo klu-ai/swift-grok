@@ -1616,6 +1616,8 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertEqual(request.header("authorization"), "Bearer oauth-video-token")
         XCTAssertEqual(request.jsonString("model"), "grok-imagine-video")
         XCTAssertEqual(request.jsonString("prompt"), "make a red ball bounce once")
+        XCTAssertEqual(request.json["duration"] as? Int, 15)
+        XCTAssertEqual(request.jsonString("resolution"), "720p")
         XCTAssertEqual(server.requests(matchingPath: "/v1/videos/vid-xai-e2e", method: "GET").count, 1)
         XCTAssertTrue(server.requests(matchingPath: "/v1/responses", method: "POST").isEmpty)
     }

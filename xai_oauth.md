@@ -330,15 +330,19 @@ Request body:
 ```json
 {
   "model": "grok-imagine-video",
-  "prompt": "A serene lake at sunrise with mist rolling over the water"
+  "prompt": "A serene lake at sunrise with mist rolling over the water",
+  "duration": 15,
+  "resolution": "720p"
 }
 ```
+
+For prompt-only video generation, the CLI defaults to 15-second output at `720p`, the highest resolution currently documented by xAI for video generation.
 
 xAI also documents optional video-generation fields that the CLI does not expose yet:
 
 - `duration` or `seconds`: 1-15 seconds.
 - `aspect_ratio`: `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `3:2`, or `2:3`.
-- `resolution`: `480p`, `720p`, or `1080p`.
+- `resolution`: `480p` or `720p`.
 - `image`: source image for image-to-video.
 - `reference_images`: one or more reference images.
 - `output`: upload destination metadata.

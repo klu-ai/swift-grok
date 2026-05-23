@@ -412,7 +412,9 @@ final class XAIOAuthClient {
             credential: credential,
             body: [
                 "model": modelID,
-                "prompt": prompt
+                "prompt": prompt,
+                "duration": 15,
+                "resolution": "720p"
             ]
         )
         let json = try Self.jsonObject(from: data)
