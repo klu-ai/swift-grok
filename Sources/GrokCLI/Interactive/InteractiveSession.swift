@@ -475,6 +475,9 @@ extension GrokCLI {
         let app = GrokCLIApp.shared
         app.setQuietMode(enableQuiet)
         app.setDebugMode(enableDebug && !enableQuiet)
+        if app.usesXAIOAuthMode() {
+            selectedMode = await app.resolveXAIOAuthModel(selectedMode)
+        }
         app.setCurrentMode(selectedMode)
 
         // Reset conversation ID when starting a new chat session
@@ -545,7 +548,7 @@ extension GrokCLI {
         // `/auth` and `/auth import` can repair the session in place.
         var canSendInitialMessage = true
         do {
-            _ = try app.initializeClient()
+            try await app.ensureAuthenticationReady()
             if !hasInitialInput {
                 connectedServiceName = try await loadConnectedServiceName()
             }
@@ -558,7 +561,7 @@ extension GrokCLI {
             let recovered = await app.handleError(error, debug: enableDebug, statusLine: startupStatus)
             if recovered {
                 do {
-                    _ = try app.initializeClient()
+                    try await app.ensureAuthenticationReady()
                     if !hasInitialInput {
                         connectedServiceName = try await loadConnectedServiceName()
                     }
@@ -573,10 +576,13 @@ extension GrokCLI {
                 }
             } else if app.isAuthenticationError(error) {
                 canSendInitialMessage = false
+                let authHint = app.usesXAIOAuthMode()
+                    ? "Interactive mode is still available. Run '/oauth' to refresh xAI OAuth credentials."
+                    : "Interactive mode is still available. Run '/auth' or '/auth import <file>' to refresh credentials."
                 if enableQuiet {
-                    CLIOutput.stderr("Interactive mode is still available. Run '/auth' or '/auth import <file>' to refresh credentials.")
+                    CLIOutput.stderr(authHint)
                 } else {
-                    print("Interactive mode is still available. Run '/auth' or '/auth import <file>' to refresh credentials.".yellow)
+                    print(authHint.yellow)
                 }
             } else {
                 return
@@ -873,14 +879,17 @@ extension GrokCLI {
 
             case .some("model"), .some("models"), .some("mode"), .some("modes"):
                 let modelCommand = interactiveModelCommand(from: input)
-                let modes = await app.loadModes()
+                let xaiOAuthMode = app.usesXAIOAuthMode()
                 let xaiOAuthModelIDs = await app.loadXAIOAuthModelIDsIfAvailable()
+                let modes = xaiOAuthMode ? [] : await app.loadModes()
+                let currentDisplayMode = xaiOAuthMode ? await app.resolveXAIOAuthModel(state.mode) : state.mode
                 switch modelCommand {
                 case .some(.select):
                     guard let selectedMode = promptForModelSelection(
-                        currentMode: state.mode,
+                        currentMode: currentDisplayMode,
                         modes: modes,
-                        xaiOAuthModelIDs: xaiOAuthModelIDs
+                        xaiOAuthModelIDs: xaiOAuthModelIDs,
+                        xaiOAuthSelectable: xaiOAuthMode
                     ) else {
                         continue
                     }
@@ -888,16 +897,23 @@ extension GrokCLI {
                 case .some(.set(let requestedMode)):
                     if requestedMode.lowercased() == "list" {
                         printAvailableModels(
-                            currentMode: state.mode,
+                            currentMode: currentDisplayMode,
                             modes: modes,
-                            xaiOAuthModelIDs: xaiOAuthModelIDs
+                            xaiOAuthModelIDs: xaiOAuthModelIDs,
+                            xaiOAuthSelectable: xaiOAuthMode
                         )
                         continue
                     }
-                    guard let selectedMode = selectableResolvedMode(requestedMode, modes: modes) else {
-                        continue
+                    if xaiOAuthMode {
+                        state.mode = await app.resolveXAIOAuthModel(
+                            GrokMode.resolve(requestedMode, modes: xaiOAuthModes(from: xaiOAuthModelIDs))
+                        )
+                    } else {
+                        guard let selectedMode = selectableResolvedMode(requestedMode, modes: modes) else {
+                            continue
+                        }
+                        state.mode = selectedMode
                     }
-                    state.mode = selectedMode
                 case .none:
                     continue
                 }

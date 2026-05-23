@@ -155,7 +155,8 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertFalse(messageRequests.isEmpty)
         XCTAssertEqual(messageRequests.last?.jsonString("message"), "hello there")
         XCTAssertEqual(messageRequests.last?.jsonString("modeId"), "expert")
-        XCTAssertNil(messageRequests.last?.json["disableSearch"])
+        XCTAssertEqual(messageRequests.last?.jsonBool("disableSearch"), false)
+        XCTAssertEqual(messageRequests.last?.jsonBool("linkQuery"), false)
         XCTAssertEqual(messageRequests.last?.jsonBool("temporary"), true)
         XCTAssertNil(messageRequests.last?.json["customPersonality"])
         XCTAssertContains(nonStreaming.cleanOutput, "--reasoning is deprecated and ignored")
@@ -1232,7 +1233,10 @@ final class GrokCLIE2ETests: XCTestCase {
             apiBaseURL: xaiAPIBaseURL
         )
 
-        let extraEnvironment = ["GROK_XAI_API_BASE_URL": xaiAPIBaseURL]
+        let extraEnvironment = [
+            "GROK_XAI_API_BASE_URL": xaiAPIBaseURL,
+            "GROK_AUTH_MODE": "web"
+        ]
         let models = try environment.run(["models"], extraEnvironment: extraEnvironment)
         XCTAssertEqual(models.status, 0)
         XCTAssertContains(models.cleanOutput, "Available web modes:")
@@ -1275,7 +1279,10 @@ final class GrokCLIE2ETests: XCTestCase {
         let run = try environment.run(
             [],
             input: "/model list\nquit\n",
-            extraEnvironment: ["GROK_XAI_API_BASE_URL": xaiAPIBaseURL]
+            extraEnvironment: [
+                "GROK_XAI_API_BASE_URL": xaiAPIBaseURL,
+                "GROK_AUTH_MODE": "web"
+            ]
         )
 
         XCTAssertEqual(run.status, 0)
@@ -1298,6 +1305,152 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertEqual(run.status, 0)
         XCTAssertContains(run.cleanOutput, "No saved xAI OAuth credentials.")
         XCTAssertContains(run.cleanOutput, "Goodbye!")
+    }
+
+    func testModelsCommandUsesOAuthModelsAsSelectableWhenOAuthModeEnabled() throws {
+        let server = try MockGrokServer(xaiAPIModels: ["grok-4.3", "grok-4.3-fast-non-reasoning"])
+        let environment = try TestEnvironment(server: server)
+        let xaiAPIBaseURL = "\(server.baseURL)/v1"
+        try writeSavedXAIOAuthCredential(
+            in: environment,
+            accessToken: "oauth-models-token",
+            apiBaseURL: xaiAPIBaseURL
+        )
+
+        let extraEnvironment = [
+            "GROK_XAI_API_BASE_URL": xaiAPIBaseURL,
+            "GROK_AUTH_MODE": "oauth"
+        ]
+        let models = try environment.run(["models"], extraEnvironment: extraEnvironment)
+
+        XCTAssertEqual(models.status, 0)
+        XCTAssertFalse(models.cleanOutput.contains("Available web modes:"))
+        XCTAssertContains(models.cleanOutput, "Available xAI API models (OAuth):")
+        XCTAssertContains(models.cleanOutput, "grok-4.3-fast-non-reasoning")
+        XCTAssertContains(models.cleanOutput, "raw xAI API model ID")
+
+        let json = try environment.run(["models", "--json"], extraEnvironment: extraEnvironment)
+        XCTAssertEqual(json.status, 0)
+        let modelData = try assertResultEnvelope(
+            try jsonObject(from: json),
+            command: "models",
+            category: "model_list"
+        )
+        XCTAssertEqual((modelData["models"] as? [[String: Any]])?.count, 0)
+        let xaiOAuthModels = try XCTUnwrap(modelData["xaiOAuthModels"] as? [[String: Any]])
+        XCTAssertEqual(xaiOAuthModels.compactMap { $0["id"] as? String }, ["grok-4.3", "grok-4.3-fast-non-reasoning"])
+        XCTAssertTrue(xaiOAuthModels.allSatisfy { $0["disabled"] as? Bool == false })
+        XCTAssertTrue(xaiOAuthModels.contains { $0["id"] as? String == "grok-4.3-fast-non-reasoning" && $0["selected"] as? Bool == true })
+    }
+
+    func testOAuthAuthModeRoutesMessageToXAIResponsesAPI() throws {
+        let server = try MockGrokServer(
+            finalMessage: "oauth answer",
+            xaiAPIModels: ["grok-4.3", "grok-4.3-fast-non-reasoning"]
+        )
+        let environment = try TestEnvironment(server: server)
+        let xaiAPIBaseURL = "\(server.baseURL)/v1"
+        try writeSavedXAIOAuthCredential(
+            in: environment,
+            accessToken: "oauth-message-token",
+            apiBaseURL: xaiAPIBaseURL
+        )
+
+        let run = try environment.run(
+            ["message", "--json", "--model", "fast", "hello oauth"],
+            extraEnvironment: [
+                "GROK_XAI_API_BASE_URL": xaiAPIBaseURL,
+                "GROK_AUTH_MODE": "oauth"
+            ]
+        )
+
+        XCTAssertEqual(run.status, 0)
+        assertNoHumanJSONBanners(in: run.stdout)
+        let responseData = try assertResultEnvelope(
+            try jsonObject(from: run),
+            command: "message",
+            category: "assistant_response"
+        )
+        XCTAssertEqual((responseData["model"] as? [String: Any])?["id"] as? String, "grok-4.3-fast-non-reasoning")
+
+        let responseRequests = server.requests(matchingPath: "/v1/responses", method: "POST")
+        XCTAssertEqual(responseRequests.count, 1)
+        let request = try XCTUnwrap(responseRequests.first)
+        XCTAssertEqual(request.header("authorization"), "Bearer oauth-message-token")
+        XCTAssertEqual(request.jsonString("model"), "grok-4.3-fast-non-reasoning")
+        let input = try XCTUnwrap(request.json["input"] as? [[String: Any]])
+        XCTAssertEqual(input.first?["role"] as? String, "user")
+        XCTAssertEqual(input.first?["content"] as? String, "hello oauth")
+        XCTAssertEqual(request.jsonBool("store"), true)
+        XCTAssertNil(request.jsonString("previous_response_id"))
+        XCTAssertTrue(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").isEmpty)
+    }
+
+    func testOAuthAuthModeRoutesFilesAndTranscribeToXAIAPI() throws {
+        let server = try MockGrokServer(transcriptionText: "oauth transcript", xaiAPIModels: ["grok-4.3"])
+        let environment = try TestEnvironment(server: server)
+        let xaiAPIBaseURL = "\(server.baseURL)/v1"
+        try writeSavedXAIOAuthCredential(
+            in: environment,
+            accessToken: "oauth-resource-token",
+            apiBaseURL: xaiAPIBaseURL
+        )
+        let extraEnvironment = [
+            "GROK_XAI_API_BASE_URL": xaiAPIBaseURL,
+            "GROK_AUTH_MODE": "oauth"
+        ]
+
+        let list = try environment.run(["files", "list", "--format", "json"], extraEnvironment: extraEnvironment)
+        XCTAssertEqual(list.status, 0)
+        XCTAssertEqual(server.requests(matchingPath: "/v1/files", method: "GET").last?.header("authorization"), "Bearer oauth-resource-token")
+
+        let uploadURL = environment.scratchURL.appendingPathComponent("oauth.txt")
+        try "upload body".write(to: uploadURL, atomically: true, encoding: .utf8)
+        let upload = try environment.run(["files", "upload", uploadURL.path, "--format", "json"], extraEnvironment: extraEnvironment)
+        XCTAssertEqual(upload.status, 0)
+        let uploadRequest = try XCTUnwrap(server.requests(matchingPath: "/v1/files", method: "POST").last)
+        XCTAssertEqual(uploadRequest.header("authorization"), "Bearer oauth-resource-token")
+        let uploadBody = String(data: uploadRequest.body, encoding: .utf8) ?? ""
+        XCTAssertContains(uploadBody, #"name="purpose""#)
+        XCTAssertContains(uploadBody, "assistants")
+        XCTAssertContains(uploadBody, #"filename="oauth.txt""#)
+
+        let delete = try environment.run(["files", "delete", "file-xai-1", "--format", "json"], extraEnvironment: extraEnvironment)
+        XCTAssertEqual(delete.status, 0)
+        XCTAssertEqual(server.requests(matchingPath: "/v1/files/file-xai-1", method: "DELETE").last?.header("authorization"), "Bearer oauth-resource-token")
+
+        let audioURL = environment.scratchURL.appendingPathComponent("sample.wav")
+        try Data("audio bytes".utf8).write(to: audioURL)
+        let transcribe = try environment.run(["transcribe", "--format", "json", audioURL.path], extraEnvironment: extraEnvironment)
+        XCTAssertEqual(transcribe.status, 0)
+        let transcribeRequest = try XCTUnwrap(server.requests(matchingPath: "/v1/stt", method: "POST").last)
+        XCTAssertEqual(transcribeRequest.header("authorization"), "Bearer oauth-resource-token")
+        let transcribeBody = String(data: transcribeRequest.body, encoding: .utf8) ?? ""
+        XCTAssertContains(transcribeBody, #"filename="sample.wav""#)
+        XCTAssertContains(transcribeBody, "Content-Type: audio/wav")
+    }
+
+    func testOAuthAuthModeRejectsWebOnlyTasksWithoutWebRequest() throws {
+        let server = try MockGrokServer(xaiAPIModels: ["grok-4.3"])
+        let environment = try TestEnvironment(server: server)
+        let xaiAPIBaseURL = "\(server.baseURL)/v1"
+        try writeSavedXAIOAuthCredential(
+            in: environment,
+            accessToken: "oauth-web-only-token",
+            apiBaseURL: xaiAPIBaseURL
+        )
+
+        let run = try environment.run(
+            ["tasks", "list", "--format", "json"],
+            extraEnvironment: [
+                "GROK_XAI_API_BASE_URL": xaiAPIBaseURL,
+                "GROK_AUTH_MODE": "oauth"
+            ]
+        )
+
+        XCTAssertEqual(run.status, 1)
+        XCTAssertContains(run.cleanOutput, "not available in xAI OAuth mode")
+        XCTAssertTrue(server.requests(matchingPath: "/rest/tasks", method: "GET").isEmpty)
     }
 
     func testTasksListJSONModeEmitsResourceEnvelope() throws {
@@ -1831,6 +1984,45 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertContains(run.cleanOutput, "Successfully refreshed credentials from browser.")
         XCTAssertContains(run.cleanOutput, "Mock streamed answer")
         XCTAssertContains(try String(contentsOf: environment.credentialsURL, encoding: .utf8), "refreshed")
+        XCTAssertEqual(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").count, 2)
+    }
+
+    func testInteractiveAntiBotErrorRefreshesBrowserEnvelope() throws {
+        let server = try MockGrokServer(antiBotNewConversationCount: 1)
+        let environment = try TestEnvironment(server: server)
+        let extractor = environment.scratchURL.appendingPathComponent("fake_antibot_cookie_extractor.py")
+        let extractorScript = """
+        import json
+        import sys
+        args = sys.argv[1:]
+        output = args[args.index("--output") + 1]
+        with open(output, "w") as handle:
+            json.dump({
+                "x-anonuserid": "refreshed-anon",
+                "cf_clearance": "refreshed-cf",
+                "__cf_bm": "refreshed-bm",
+                "grok_device_id": "refreshed-device"
+            }, handle)
+        """
+        try extractorScript.write(to: extractor, atomically: true, encoding: .utf8)
+
+        let run = try environment.run(
+            [],
+            input: "first message trips anti bot\nsecond message after envelope refresh\nquit\n",
+            timeout: 15,
+            extraEnvironment: ["GROK_COOKIE_EXTRACTOR": extractor.path]
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Grok rejected the CLI browser request for Fast (fast)")
+        XCTAssertContains(run.cleanOutput, "not model access")
+        XCTAssertFalse(run.cleanOutput.contains("Switch models"))
+        XCTAssertContains(run.cleanOutput, "Grok rejected this CLI request as automated")
+        XCTAssertContains(run.cleanOutput, "Trying to refresh credentials from your browser...")
+        XCTAssertContains(run.cleanOutput, "Successfully refreshed credentials from browser.")
+        let credentials = try String(contentsOf: environment.credentialsURL, encoding: .utf8)
+        XCTAssertContains(credentials, "refreshed-cf")
+        XCTAssertContains(credentials, "refreshed-bm")
         XCTAssertEqual(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").count, 2)
     }
 
@@ -3809,6 +4001,7 @@ private final class MockGrokServer {
     private var recordedRequests: [RecordedRequest] = []
     private var unauthorizedNewConversationCount: Int
     private var accessDeniedNewConversationCount: Int
+    private var antiBotNewConversationCount: Int
     private var rateLimitedNewConversationCount: Int
     private let rateLimitResponse: [String: Any]
     private let conversations: [[String: Any]]
@@ -3830,6 +4023,7 @@ private final class MockGrokServer {
     init(
         unauthorizedNewConversationCount: Int = 0,
         accessDeniedNewConversationCount: Int = 0,
+        antiBotNewConversationCount: Int = 0,
         rateLimitedNewConversationCount: Int = 0,
         rateLimitResponse: [String: Any] = ["remainingResponses": 25, "resetAfterSeconds": 3_600],
         conversations: [[String: Any]] = [[
@@ -3869,6 +4063,7 @@ private final class MockGrokServer {
     ) throws {
         self.unauthorizedNewConversationCount = unauthorizedNewConversationCount
         self.accessDeniedNewConversationCount = accessDeniedNewConversationCount
+        self.antiBotNewConversationCount = antiBotNewConversationCount
         self.rateLimitedNewConversationCount = rateLimitedNewConversationCount
         self.rateLimitResponse = rateLimitResponse
         self.conversations = conversations
@@ -4006,6 +4201,47 @@ private final class MockGrokServer {
             return jsonResponse([
                 "data": xaiAPIModels.map { ["id": $0, "object": "model"] }
             ])
+        case ("POST", "/v1/responses"):
+            guard request.header("Authorization")?.hasPrefix("Bearer ") == true else {
+                return jsonResponse(["error": "missing bearer token"], status: 401)
+            }
+            return jsonResponse([
+                "id": "resp-xai-e2e",
+                "object": "response",
+                "model": request.jsonString("model") ?? "grok-4.3",
+                "output_text": finalMessage
+            ])
+        case ("POST", "/v1/stt"):
+            guard request.header("Authorization")?.hasPrefix("Bearer ") == true else {
+                return jsonResponse(["error": "missing bearer token"], status: 401)
+            }
+            return jsonResponse(["text": transcriptionText])
+        case ("GET", "/v1/files"):
+            guard request.header("Authorization")?.hasPrefix("Bearer ") == true else {
+                return jsonResponse(["error": "missing bearer token"], status: 401)
+            }
+            return jsonResponse([
+                "data": [
+                    ["id": "file-xai-1", "filename": "oauth.txt", "mime_type": "text/plain"]
+                ]
+            ])
+        case ("POST", "/v1/files"):
+            guard request.header("Authorization")?.hasPrefix("Bearer ") == true else {
+                return jsonResponse(["error": "missing bearer token"], status: 401)
+            }
+            return jsonResponse([
+                "id": "file-xai-1",
+                "filename": "oauth.txt",
+                "mime_type": "text/plain"
+            ])
+        case ("DELETE", let path) where path.hasPrefix("/v1/files/"):
+            guard request.header("Authorization")?.hasPrefix("Bearer ") == true else {
+                return jsonResponse(["error": "missing bearer token"], status: 401)
+            }
+            return jsonResponse([
+                "id": request.pathComponent(after: "files") ?? "file-xai-1",
+                "deleted": true
+            ])
         case ("POST", "/rest/voice/speech-to-text"):
             return jsonResponse([
                 "text": transcriptionText,
@@ -4028,6 +4264,14 @@ private final class MockGrokServer {
                     "error": [
                         "code": "model_access_denied",
                         "message": "Your account does not have access to Grok Heavy."
+                    ]
+                ], status: 403)
+            }
+            if antiBotNewConversationCount > 0 {
+                antiBotNewConversationCount -= 1
+                return jsonResponse([
+                    "error": [
+                        "message": "Request rejected by anti-bot rules"
                     ]
                 ], status: 403)
             }

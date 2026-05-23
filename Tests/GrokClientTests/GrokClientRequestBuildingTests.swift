@@ -41,14 +41,27 @@ final class GrokClientRequestBuildingTests: XCTestCase {
     }
 
     func testPostRequestIncludesBrowserHeadersCookieRequestIDAndStatsig() throws {
-        let client = try makeClient(cookies: ["sso": "sso-cookie", "x-anonuserid": "anon-cookie"])
+        let client = try makeClient(cookies: [
+            "__cf_bm": "bm-cookie",
+            "cf_clearance": "cf-cookie",
+            "grok_device_id": "device-cookie",
+            "sso": "sso-cookie",
+            "x-anonuserid": "anon-cookie"
+        ])
         let request = try client.makeRequest(path: "/conversations/new", payload: ["message": "hello"])
 
         XCTAssertEqual(request.value(forHTTPHeaderField: "accept"), "*/*")
         XCTAssertEqual(request.value(forHTTPHeaderField: "content-type"), "application/json")
         XCTAssertEqual(request.value(forHTTPHeaderField: "origin"), "https://grok.com")
         XCTAssertEqual(request.value(forHTTPHeaderField: "referer"), "https://grok.com/")
-        XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "sso=sso-cookie; x-anonuserid=anon-cookie")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "sec-ch-ua-full-version"), #""148.0.7778.168""#)
+        XCTAssertTrue(try XCTUnwrap(request.value(forHTTPHeaderField: "sec-ch-ua-full-version-list")).contains("148.0.7778.168"))
+        let cookieHeader = try XCTUnwrap(request.value(forHTTPHeaderField: "Cookie"))
+        XCTAssertTrue(cookieHeader.contains("__cf_bm=bm-cookie"))
+        XCTAssertTrue(cookieHeader.contains("cf_clearance=cf-cookie"))
+        XCTAssertTrue(cookieHeader.contains("grok_device_id=device-cookie"))
+        XCTAssertTrue(cookieHeader.contains("sso=sso-cookie"))
+        XCTAssertTrue(cookieHeader.contains("x-anonuserid=anon-cookie"))
 
         let requestID = try XCTUnwrap(request.value(forHTTPHeaderField: "x-xai-request-id"))
         XCTAssertNotNil(UUID(uuidString: requestID))

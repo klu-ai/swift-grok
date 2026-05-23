@@ -17,6 +17,7 @@ extension GrokClient {
             "modeId": options.modeId,
             "imageAttachments": [],
             "fileAttachments": options.fileAttachments,
+            "disableSearch": false,
             "enableImageGeneration": true,
             "returnImageBytes": false,
             "returnRawGrokInXaiRequest": false,
@@ -33,6 +34,7 @@ extension GrokClient {
             "disableSelfHarmShortCircuit": false,
             "collectionIds": [],
             "disabledConnectorIds": options.disabledConnectorIds,
+            "linkQuery": false,
             "deviceEnvInfo": deviceEnvInfo()
         ]
 

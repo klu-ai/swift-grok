@@ -19,6 +19,9 @@ extension GrokClient {
                 if responseBodyIndicatesAuthenticationFailure(bodyMessage) {
                     throw GrokError.unauthorized
                 }
+                if responseBodyIndicatesAntiBotFailure(bodyMessage) {
+                    throw GrokError.antiBotRejected(antiBotRejectedMessage(bodyMessage: bodyMessage, modeId: modeId))
+                }
                 throw GrokError.accessDenied(accessDeniedMessage(bodyMessage: bodyMessage, modeId: modeId))
             case 404:
                 throw GrokError.notFound
@@ -67,6 +70,34 @@ extension GrokClient {
             (normalized.contains("cookie") && (normalized.contains("invalid") || normalized.contains("expired"))) ||
             normalized.contains("csrf") ||
             normalized.contains("sso")
+    }
+
+    func responseBodyIndicatesAntiBotFailure(_ message: String?) -> Bool {
+        guard let message else {
+            return false
+        }
+
+        let normalized = message.lowercased()
+        return normalized.contains("anti-bot") ||
+            normalized.contains("bot rules") ||
+            normalized.contains("request rejected")
+    }
+
+    func antiBotRejectedMessage(bodyMessage: String?, modeId: String?) -> String {
+        let resolvedMode = modeId.map(GrokMode.resolve)
+        let subject: String
+        if let resolvedMode {
+            subject = "\(resolvedMode.displayName) (\(resolvedMode.id))"
+        } else {
+            subject = "this request"
+        }
+
+        var message = "Grok rejected the CLI browser request for \(subject)."
+        if let bodyMessage, !isGenericForbiddenMessage(bodyMessage) {
+            message += " \(bodyMessage)"
+        }
+        message += " This looks like Grok's browser anti-bot check, not model access. Refresh browser credentials with `grok auth generate` after opening grok.com, then retry."
+        return message
     }
 
     func accessDeniedMessage(bodyMessage: String?, modeId: String?) -> String {

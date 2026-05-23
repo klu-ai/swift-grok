@@ -267,20 +267,44 @@ final class XAIOAuthClient {
     }
 
     func createTinyResponse(using credential: XAIOAuthCredential) async throws -> (id: String, text: String?) {
-        let url = apiBaseURL.appendingPathComponent("responses")
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue(credential.bearerToken, forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "model": "grok-4.3",
-            "input": "Reply with exactly: oauth-ok",
-            "max_output_tokens": 16
-        ])
+        try await createResponse(
+            using: credential,
+            modelID: "grok-4.3",
+            message: "Reply with exactly: oauth-ok",
+            previousResponseID: nil,
+            store: false,
+            fileAttachmentIDs: [],
+            maxOutputTokens: 16
+        )
+    }
 
-        let (data, response) = try await session.data(for: request)
-        try validate(response: response, data: data)
+    func createResponse(
+        using credential: XAIOAuthCredential,
+        modelID: String,
+        message: String,
+        previousResponseID: String?,
+        store: Bool,
+        fileAttachmentIDs: [String],
+        maxOutputTokens: Int? = nil
+    ) async throws -> (id: String, text: String?) {
+        var body: [String: Any] = [
+            "model": modelID,
+            "input": responseInput(message: message, fileAttachmentIDs: fileAttachmentIDs),
+            "store": store
+        ]
+        if let previousResponseID, !previousResponseID.isEmpty {
+            body["previous_response_id"] = previousResponseID
+        }
+        if let maxOutputTokens {
+            body["max_output_tokens"] = maxOutputTokens
+        }
+
+        let data = try await performJSONRequest(
+            path: "responses",
+            method: "POST",
+            credential: credential,
+            body: body
+        )
 
         do {
             let decoded = try JSONDecoder().decode(XAIResponseCreateResponse.self, from: data)
@@ -288,6 +312,223 @@ final class XAIOAuthClient {
         } catch {
             throw GrokError.decodingError(error)
         }
+    }
+
+    func transcribeAudio(
+        using credential: XAIOAuthCredential,
+        audioData: Data,
+        fileName: String,
+        mimeType: String
+    ) async throws -> GrokSpeechToTextResponse {
+        let data = try await performMultipartRequest(
+            path: "stt",
+            credential: credential,
+            fields: [],
+            fileFieldName: "file",
+            fileName: fileName,
+            fileMimeType: mimeType,
+            fileData: audioData
+        )
+        let json = try Self.jsonObject(from: data)
+        guard let text = json["text"] as? String, !text.isEmpty else {
+            throw GrokError.apiError("xAI speech-to-text response did not include a transcript")
+        }
+        return GrokSpeechToTextResponse(text: text, rawJSON: AnyCodable(json))
+    }
+
+    func uploadFile(
+        using credential: XAIOAuthCredential,
+        fileData: Data,
+        fileName: String,
+        mimeType: String
+    ) async throws -> GrokFileUploadResponse {
+        let data = try await performMultipartRequest(
+            path: "files",
+            credential: credential,
+            fields: [("purpose", "assistants")],
+            fileFieldName: "file",
+            fileName: fileName,
+            fileMimeType: mimeType,
+            fileData: fileData
+        )
+        let json = try Self.jsonObject(from: data)
+        let asset = Self.asset(from: json)
+        return GrokFileUploadResponse(
+            fileId: json["id"] as? String,
+            id: json["id"] as? String,
+            fileName: json["filename"] as? String ?? json["fileName"] as? String,
+            asset: asset,
+            rawJSON: AnyCodable(json)
+        )
+    }
+
+    func listFiles(using credential: XAIOAuthCredential, pageSize: Int) async throws -> GrokAssetsResponse {
+        var components = URLComponents(url: apiBaseURL.appendingPathComponent("files"), resolvingAgainstBaseURL: false)
+        components?.queryItems = [URLQueryItem(name: "limit", value: String(pageSize))]
+        guard let url = components?.url else {
+            throw GrokError.apiError("Invalid xAI files URL")
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(credential.bearerToken, forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await session.data(for: request)
+        try validate(response: response, data: data)
+        let json = try Self.jsonObject(from: data)
+        let dataArray = json["data"] as? [[String: Any]] ?? []
+        return GrokAssetsResponse(
+            assets: dataArray.map(Self.asset),
+            rawJSON: AnyCodable(json)
+        )
+    }
+
+    func deleteFile(using credential: XAIOAuthCredential, fileID: String) async throws -> GrokFileMutationResponse {
+        let data = try await performJSONRequest(
+            path: "files/\(Self.percentEncodedPathComponent(fileID))",
+            method: "DELETE",
+            credential: credential,
+            body: nil
+        )
+        let json = try Self.jsonObject(from: data)
+        return GrokFileMutationResponse(
+            asset: GrokAsset(
+                fileId: json["id"] as? String,
+                id: json["id"] as? String,
+                rawJSON: json.mapValues(AnyCodable.init)
+            ),
+            rawJSON: AnyCodable(json)
+        )
+    }
+
+    private func responseInput(message: String, fileAttachmentIDs: [String]) -> Any {
+        let trimmedIDs = fileAttachmentIDs
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        let content: Any
+        if trimmedIDs.isEmpty {
+            content = message
+        } else {
+            var items: [[String: Any]] = [
+                ["type": "input_text", "text": message]
+            ]
+            items.append(contentsOf: trimmedIDs.map { fileID in
+                ["type": "input_file", "file_id": fileID]
+            })
+            content = items
+        }
+
+        return [
+            [
+                "role": "user",
+                "content": content
+            ]
+        ]
+    }
+
+    private func performJSONRequest(
+        path: String,
+        method: String,
+        credential: XAIOAuthCredential,
+        body: [String: Any]?
+    ) async throws -> Data {
+        let url = apiBaseURL.appendingPathComponent(path)
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue(credential.bearerToken, forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
+
+        let (data, response) = try await session.data(for: request)
+        try validate(response: response, data: data)
+        return data
+    }
+
+    private func performMultipartRequest(
+        path: String,
+        credential: XAIOAuthCredential,
+        fields: [(String, String)],
+        fileFieldName: String,
+        fileName: String,
+        fileMimeType: String,
+        fileData: Data
+    ) async throws -> Data {
+        let boundary = "grok-xai-\(UUID().uuidString)"
+        let url = apiBaseURL.appendingPathComponent(path)
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(credential.bearerToken, forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Self.multipartBody(
+            boundary: boundary,
+            fields: fields,
+            fileFieldName: fileFieldName,
+            fileName: fileName,
+            fileMimeType: fileMimeType,
+            fileData: fileData
+        )
+
+        let (data, response) = try await session.data(for: request)
+        try validate(response: response, data: data)
+        return data
+    }
+
+    private static func multipartBody(
+        boundary: String,
+        fields: [(String, String)],
+        fileFieldName: String,
+        fileName: String,
+        fileMimeType: String,
+        fileData: Data
+    ) -> Data {
+        var body = Data()
+
+        func append(_ string: String) {
+            body.append(Data(string.utf8))
+        }
+
+        for (name, value) in fields {
+            append("--\(boundary)\r\n")
+            append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n")
+            append("\(value)\r\n")
+        }
+
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"\(fileFieldName)\"; filename=\"\(fileName)\"\r\n")
+        append("Content-Type: \(fileMimeType)\r\n\r\n")
+        body.append(fileData)
+        append("\r\n--\(boundary)--\r\n")
+        return body
+    }
+
+    private static func jsonObject(from data: Data) throws -> [String: Any] {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw GrokError.decodingError(
+                DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Expected JSON object"))
+            )
+        }
+        return json
+    }
+
+    private static func asset(from json: [String: Any]) -> GrokAsset {
+        GrokAsset(
+            fileId: json["id"] as? String ?? json["file_id"] as? String,
+            id: json["id"] as? String,
+            fileName: json["filename"] as? String ?? json["fileName"] as? String,
+            name: json["filename"] as? String ?? json["name"] as? String,
+            mimeType: json["mime_type"] as? String ?? json["mimeType"] as? String,
+            rawJSON: json.mapValues(AnyCodable.init)
+        )
+    }
+
+    private static func percentEncodedPathComponent(_ value: String) -> String {
+        value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? value
     }
 
     private func fetchDiscovery() async throws -> XAIOAuthDiscovery {

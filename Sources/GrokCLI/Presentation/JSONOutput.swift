@@ -223,6 +223,8 @@ extension GrokCLI {
             return "auth_error"
         case .accessDenied:
             return "access_denied"
+        case .antiBotRejected:
+            return "anti_bot_rejected"
         case .networkError:
             return "network_error"
         case .decodingError:
@@ -242,6 +244,8 @@ extension GrokCLI {
         }
         switch grokError {
         case .invalidCredentials, .unauthorized:
+            return true
+        case .antiBotRejected:
             return true
         case .accessDenied:
             return false
@@ -311,7 +315,8 @@ extension GrokCLI {
     static func selectedModelJSON(
         currentMode: GrokMode,
         modes: [GrokMode] = GrokMode.knownModes,
-        xaiOAuthModelIDs: [String] = []
+        xaiOAuthModelIDs: [String] = [],
+        xaiOAuthSelectable: Bool = false
     ) -> [String: AnyCodable] {
         var seenOAuthModelIDs = Set<String>()
         let uniqueOAuthModelIDs = xaiOAuthModelIDs.compactMap { modelID -> String? in
@@ -329,13 +334,16 @@ extension GrokCLI {
                 return item
             }),
             "xaiOAuthModels": AnyCodable(uniqueOAuthModelIDs.map { modelID in
-                [
+                var json: [String: AnyCodable] = [
                     "id": AnyCodable(modelID),
                     "source": AnyCodable("xai_oauth_api"),
-                    "selected": AnyCodable(false),
-                    "disabled": AnyCodable(true),
-                    "unavailableReason": AnyCodable("OAuth API model; web chat uses web modes")
+                    "selected": AnyCodable(xaiOAuthSelectable && modelID == currentMode.id),
+                    "disabled": AnyCodable(!xaiOAuthSelectable)
                 ]
+                if !xaiOAuthSelectable {
+                    json["unavailableReason"] = AnyCodable("OAuth API model; web chat uses web modes")
+                }
+                return json
             }),
             "modelSources": AnyCodable([
                 "webModes": AnyCodable(modes.count),

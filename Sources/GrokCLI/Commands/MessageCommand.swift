@@ -16,7 +16,10 @@ struct MessageCommand: ParsableCommand {
     func run() async throws {
         let app = GrokCLIApp.shared
         app.setDebugMode(options.debug)
-        let selectedMode = GrokMode.resolve(options.model)
+        var selectedMode = GrokMode.resolve(options.model)
+        if app.usesXAIOAuthMode() {
+            selectedMode = await app.resolveXAIOAuthModel(selectedMode)
+        }
         app.setCurrentMode(selectedMode)
         let formatter = OutputFormatter(format: try options.resolvedOutputFormat())
         let reasoningWarnings = GrokCLI.reasoningConfigurationWarnings(
@@ -55,8 +58,7 @@ struct MessageCommand: ParsableCommand {
         print("Sending: \(message)".cyan)
 
         do {
-            // Try to initialize the client
-            _ = try app.initializeClient()
+            try await app.ensureAuthenticationReady()
 
             let stream = try await app.msg(
                 message: message,
@@ -349,6 +351,9 @@ extension GrokCLI {
         let app = GrokCLIApp.shared
         app.setQuietMode(enableQuiet && !jsonMode)
         app.setDebugMode(enableDebug && !jsonMode && !enableQuiet)
+        if app.usesXAIOAuthMode() {
+            selectedMode = await app.resolveXAIOAuthModel(selectedMode)
+        }
         app.setCurrentMode(selectedMode)
 
         let messageText: String
@@ -446,18 +451,22 @@ extension GrokCLI {
         let formatter = OutputFormatter(format: outputFormat)
 
         do {
-            // Initialize client
-            let client = try app.initializeClient()
+            try await app.ensureAuthenticationReady()
 
             var fileAttachmentIds = attachmentIds
             if !uploadPaths.isEmpty, !jsonMode, !enableQuiet {
                 print(uploadPaths.count == 1 ? "Uploading file...".cyan : "Uploading \(uploadPaths.count) files...".cyan)
             }
             for path in uploadPaths {
-                let response = try await client.uploadFile(
-                    at: path,
-                    mimeType: inferredMessageAttachmentMimeType(for: path)
-                )
+                let mimeType = inferredMessageAttachmentMimeType(for: path)
+                let response = if app.usesXAIOAuthMode() {
+                    try await app.uploadFileWithXAIOAuth(at: path, mimeType: mimeType)
+                } else {
+                    try await app.initializeClient().uploadFile(
+                        at: path,
+                        mimeType: mimeType
+                    )
+                }
                 guard let fileId = response.uploadedFileId?.trimmingCharacters(in: .whitespacesAndNewlines),
                       !fileId.isEmpty else {
                     throw GrokError.apiError("Uploaded file response did not include an attachment ID")

@@ -37,13 +37,17 @@ extension GrokCLI {
         }
 
         do {
-            let client = try app.initializeClient()
             switch parsed.action {
             case .upload(let options):
-                let response = try await client.uploadFile(
-                    at: options.path,
-                    mimeType: options.mimeType ?? inferredMimeType(for: options.path)
-                )
+                let mimeType = options.mimeType ?? inferredMimeType(for: options.path)
+                let response = if app.usesXAIOAuthMode() {
+                    try await app.uploadFileWithXAIOAuth(at: options.path, mimeType: mimeType)
+                } else {
+                    try await app.initializeClient().uploadFile(
+                        at: options.path,
+                        mimeType: mimeType
+                    )
+                }
                 if parsed.json {
                     try printJSONResult(
                         command: "files",
@@ -67,7 +71,11 @@ extension GrokCLI {
                 ])
 
             case .list(let options):
-                let response = try await client.listAssetsResponse(pageSize: options.pageSize)
+                let response = if app.usesXAIOAuthMode() {
+                    try await app.listFilesWithXAIOAuth(pageSize: options.pageSize)
+                } else {
+                    try await app.initializeClient().listAssetsResponse(pageSize: options.pageSize)
+                }
                 if parsed.json {
                     try printJSONResult(
                         command: "files",
@@ -86,7 +94,11 @@ extension GrokCLI {
                 printAssetRows(response.assets)
 
             case .delete(let fileId):
-                let response = try await client.deleteAsset(assetId: fileId)
+                let response = if app.usesXAIOAuthMode() {
+                    try await app.deleteFileWithXAIOAuth(fileID: fileId)
+                } else {
+                    try await app.initializeClient().deleteAsset(assetId: fileId)
+                }
                 if parsed.json {
                     try printJSONResult(
                         command: "files",

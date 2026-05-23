@@ -301,6 +301,23 @@ final class GrokClientModelTests: XCTestCase {
         }
     }
 
+    func testValidationMaps403AntiBotBodyToAntiBotRejected() throws {
+        let client = try makeClient()
+        let response = try httpResponse(statusCode: 403)
+        let body = #"{"error":{"message":"Request rejected by anti-bot rules"}}"#.data(using: .utf8)!
+
+        XCTAssertThrowsError(try client.validateHTTPResponse(response, data: body, modeId: "fast")) { error in
+            guard case .antiBotRejected(let message) = error as? GrokError else {
+                return XCTFail("Expected antiBotRejected, got \(error)")
+            }
+
+            XCTAssertTrue(message.contains("Fast (fast)"))
+            XCTAssertTrue(message.contains("Request rejected by anti-bot rules"))
+            XCTAssertTrue(message.contains("not model access"))
+            XCTAssertFalse(message.contains("Switch models"))
+        }
+    }
+
     func testValidationMaps404ToNotFound() throws {
         let client = try makeClient()
         let response = try httpResponse(statusCode: 404)

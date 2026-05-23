@@ -27,8 +27,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
-AUTH_COOKIES = ("sso", "sso-rw")
-OPTIONAL_AUTH_COOKIES = ("x-userid", "x-anonuserid", "x-challenge", "x-signature", "cf_clearance")
+AUTH_COOKIES = ("sso", "sso-rw", "x-userid", "x-anonuserid")
+OPTIONAL_AUTH_COOKIES = ("x-challenge", "x-signature", "cf_clearance", "__cf_bm", "grok_device_id")
 
 SAFARI_COOKIE_PATHS = (
     "~/Library/Cookies/Cookies.binarycookies",
@@ -655,9 +655,8 @@ def validate_required(cookies: Dict[str, str], strict: bool) -> bool:
     if not strict:
         return True
 
-    missing = [name for name in AUTH_COOKIES if not cookies.get(name)]
-    if missing:
-        print(f"Missing required Grok auth cookies: {', '.join(missing)}", file=sys.stderr)
+    if not any(cookies.get(name) for name in AUTH_COOKIES):
+        print(f"Missing required Grok auth cookies: one of {', '.join(AUTH_COOKIES)}", file=sys.stderr)
         present = [name for name in AUTH_COOKIES + OPTIONAL_AUTH_COOKIES if cookies.get(name)]
         if present:
             print(f"Auth-related cookies found: {', '.join(present)}", file=sys.stderr)

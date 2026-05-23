@@ -309,28 +309,35 @@ extension GrokCLI {
         case "list":
             try await handleListCommand(args: remainingArgs, exitOnError: true)
         case "models", "modes":
+            let app = GrokCLIApp.shared
             if containsHelpArgument(remainingArgs) {
                 printModelsUsage()
-                printAvailableModels(currentMode: GrokCLIApp.shared.getCurrentMode(), modes: GrokMode.knownModes)
+                printAvailableModels(currentMode: app.getCurrentMode(), modes: GrokMode.knownModes)
             } else if isJSONRequested(remainingArgs) {
-                let modes = await GrokCLIApp.shared.loadModes()
-                let xaiOAuthModelIDs = await GrokCLIApp.shared.loadXAIOAuthModelIDsIfAvailable()
+                let xaiOAuthMode = app.usesXAIOAuthMode()
+                let modes = xaiOAuthMode ? [] : await app.loadModes()
+                let xaiOAuthModelIDs = await app.loadXAIOAuthModelIDsIfAvailable()
+                let currentMode = xaiOAuthMode ? await app.resolveXAIOAuthModel(app.getCurrentMode()) : app.getCurrentMode()
                 try printJSONResult(
                     command: command == "modes" ? "modes" : "models",
                     category: "model_list",
                     data: AnyCodable(selectedModelJSON(
-                        currentMode: GrokCLIApp.shared.getCurrentMode(),
+                        currentMode: currentMode,
                         modes: modes,
-                        xaiOAuthModelIDs: xaiOAuthModelIDs
+                        xaiOAuthModelIDs: xaiOAuthModelIDs,
+                        xaiOAuthSelectable: xaiOAuthMode
                     ))
                 )
             } else {
-                let modes = await GrokCLIApp.shared.loadModes()
-                let xaiOAuthModelIDs = await GrokCLIApp.shared.loadXAIOAuthModelIDsIfAvailable()
+                let xaiOAuthMode = app.usesXAIOAuthMode()
+                let modes = xaiOAuthMode ? [] : await app.loadModes()
+                let xaiOAuthModelIDs = await app.loadXAIOAuthModelIDsIfAvailable()
+                let currentMode = xaiOAuthMode ? await app.resolveXAIOAuthModel(app.getCurrentMode()) : app.getCurrentMode()
                 printAvailableModels(
-                    currentMode: GrokCLIApp.shared.getCurrentMode(),
+                    currentMode: currentMode,
                     modes: modes,
-                    xaiOAuthModelIDs: xaiOAuthModelIDs
+                    xaiOAuthModelIDs: xaiOAuthModelIDs,
+                    xaiOAuthSelectable: xaiOAuthMode
                 )
             }
         case "agents":

@@ -8,6 +8,7 @@ public enum GrokError: Error, Equatable, LocalizedError {
     case unauthorized
     case notFound
     case accessDenied(String)
+    case antiBotRejected(String)
     case apiError(String)
     case streamingError
 
@@ -21,6 +22,8 @@ public enum GrokError: Error, Equatable, LocalizedError {
         case (.apiError(let lhsMessage), .apiError(let rhsMessage)):
             return lhsMessage == rhsMessage
         case (.accessDenied(let lhsMessage), .accessDenied(let rhsMessage)):
+            return lhsMessage == rhsMessage
+        case (.antiBotRejected(let lhsMessage), .antiBotRejected(let rhsMessage)):
             return lhsMessage == rhsMessage
         case (.networkError, .networkError),
              (.decodingError, .decodingError):
@@ -45,6 +48,8 @@ public enum GrokError: Error, Equatable, LocalizedError {
         case .notFound:
             return "Grok API endpoint was not found"
         case .accessDenied(let message):
+            return message
+        case .antiBotRejected(let message):
             return message
         case .apiError(let message):
             return message

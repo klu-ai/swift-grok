@@ -122,14 +122,42 @@ public struct GrokFileUploadResponse: Codable {
     public var uploadedFileId: String? {
         fileMetadataId ?? fileId ?? assetId ?? id ?? asset?.resolvedId
     }
+
+    public init(
+        fileMetadataId: String? = nil,
+        fileId: String? = nil,
+        assetId: String? = nil,
+        id: String? = nil,
+        fileName: String? = nil,
+        asset: GrokAsset? = nil,
+        rawJSON: AnyCodable
+    ) {
+        self.fileMetadataId = fileMetadataId
+        self.fileId = fileId
+        self.assetId = assetId
+        self.id = id
+        self.fileName = fileName
+        self.asset = asset
+        self.rawJSON = rawJSON
+    }
 }
 
 public struct GrokAssetsResponse: Codable {
     public let assets: [GrokAsset]
     public let rawJSON: AnyCodable
+
+    public init(assets: [GrokAsset], rawJSON: AnyCodable) {
+        self.assets = assets
+        self.rawJSON = rawJSON
+    }
 }
 
 public struct GrokFileMutationResponse: Codable {
     public let asset: GrokAsset?
     public let rawJSON: AnyCodable
+
+    public init(asset: GrokAsset? = nil, rawJSON: AnyCodable) {
+        self.asset = asset
+        self.rawJSON = rawJSON
+    }
 }

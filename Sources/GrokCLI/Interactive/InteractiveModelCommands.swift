@@ -18,37 +18,53 @@ extension GrokCLI {
     static func printAvailableModels(
         currentMode: GrokMode? = nil,
         modes: [GrokMode] = GrokMode.knownModes,
-        xaiOAuthModelIDs: [String] = []
+        xaiOAuthModelIDs: [String] = [],
+        xaiOAuthSelectable: Bool = false
     ) {
         if let currentMode {
             print("Current model: \(currentMode.displayName) (\(currentMode.id))".cyan)
         }
-        print("Available web modes:".cyan)
-        for (index, mode) in modes.enumerated() {
-            let marker = mode.id == currentMode?.id ? "✓ " : "  "
-            print(modelListLine(mode: mode, index: index, marker: marker))
+        if !modes.isEmpty {
+            print("Available web modes:".cyan)
+            for (index, mode) in modes.enumerated() {
+                let marker = mode.id == currentMode?.id ? "✓ " : "  "
+                print(modelListLine(mode: mode, index: index, marker: marker))
+            }
         }
 
         let oauthModelIDs = uniqueModelIDs(xaiOAuthModelIDs)
         if !oauthModelIDs.isEmpty {
-            print("")
+            if !modes.isEmpty {
+                print("")
+            }
             print("Available xAI API models (OAuth):".cyan)
             for (index, modelID) in oauthModelIDs.enumerated() {
-                print("  \(index + 1). \(modelID)".yellow)
+                let marker = xaiOAuthSelectable && modelID == currentMode?.id ? "✓ " : "  "
+                print("\(marker)\(index + 1). \(modelID)".yellow)
             }
         }
-        print("You can also pass a raw web modeId with --model.".blue)
+        if xaiOAuthSelectable {
+            print("You can also pass a raw xAI API model ID with --model.".blue)
+        } else {
+            print("You can also pass a raw web modeId with --model.".blue)
+        }
     }
 
     static func printAvailableModelsJSON(
         currentMode: GrokMode,
         modes: [GrokMode] = GrokMode.knownModes,
-        xaiOAuthModelIDs: [String] = []
+        xaiOAuthModelIDs: [String] = [],
+        xaiOAuthSelectable: Bool = false
     ) throws {
         try printJSONResult(
             command: "models",
             category: "model_list",
-            data: AnyCodable(selectedModelJSON(currentMode: currentMode, modes: modes, xaiOAuthModelIDs: xaiOAuthModelIDs))
+            data: AnyCodable(selectedModelJSON(
+                currentMode: currentMode,
+                modes: modes,
+                xaiOAuthModelIDs: xaiOAuthModelIDs,
+                xaiOAuthSelectable: xaiOAuthSelectable
+            ))
         )
     }
 
@@ -99,9 +115,14 @@ extension GrokCLI {
     static func promptForModelSelection(
         currentMode: GrokMode,
         modes: [GrokMode] = GrokMode.knownModes,
-        xaiOAuthModelIDs: [String] = []
+        xaiOAuthModelIDs: [String] = [],
+        xaiOAuthSelectable: Bool = false
     ) -> GrokMode? {
-        let items = modelPickerItems(modes: modes, xaiOAuthModelIDs: xaiOAuthModelIDs)
+        let items = modelPickerItems(
+            modes: modes,
+            xaiOAuthModelIDs: xaiOAuthModelIDs,
+            xaiOAuthSelectable: xaiOAuthSelectable
+        )
         return InteractivePicker.select(
             title: "Select model",
             items: items,
@@ -109,7 +130,17 @@ extension GrokCLI {
         )
     }
 
-    private static func modelPickerItems(modes: [GrokMode], xaiOAuthModelIDs: [String]) -> [PickerItem<GrokMode>] {
+    static func xaiOAuthModes(from modelIDs: [String]) -> [GrokMode] {
+        uniqueModelIDs(modelIDs).map {
+            GrokMode(id: $0, displayName: $0, summary: "xAI API model")
+        }
+    }
+
+    private static func modelPickerItems(
+        modes: [GrokMode],
+        xaiOAuthModelIDs: [String],
+        xaiOAuthSelectable: Bool
+    ) -> [PickerItem<GrokMode>] {
         var items = modes.map { mode in
             PickerItem(
                 id: mode.id,
@@ -127,18 +158,18 @@ extension GrokCLI {
                 id: modelID,
                 displayName: modelID,
                 summary: "xAI API model",
-                isAvailable: false,
-                unavailableReason: "OAuth API model; web chat uses web modes"
+                isAvailable: xaiOAuthSelectable,
+                unavailableReason: xaiOAuthSelectable ? nil : "OAuth API model; web chat uses web modes"
             )
             items.append(PickerItem(
-                id: "xai-oauth:\(modelID)",
+                id: xaiOAuthSelectable ? modelID : "xai-oauth:\(modelID)",
                 title: modelID,
                 subtitle: "xAI API",
                 metadataLabel: "source",
                 metadata: "xAI OAuth API",
-                preview: mode.unavailableDescription,
+                preview: mode.unavailableDescription ?? mode.summary,
                 value: mode,
-                isEnabled: false,
+                isEnabled: xaiOAuthSelectable,
                 searchText: "\(modelID) xAI API OAuth model"
             ))
         }

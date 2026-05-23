@@ -47,6 +47,39 @@ class GrokCLIApp {
         isQuiet
     }
 
+    func currentAuthMode() -> GrokAuthMode {
+        if let environmentMode = GrokAuthMode.parse(ProcessInfo.processInfo.environment[GrokAuthMode.environmentKey]) {
+            return environmentMode
+        }
+
+        if let storedMode = try? configManager.loadPreferredAuthMode() {
+            return storedMode
+        }
+
+        if configManager.getSavedOAuthCredentialsPath() != nil {
+            return .xaiOAuth
+        }
+
+        return .web
+    }
+
+    func usesXAIOAuthMode() -> Bool {
+        currentAuthMode() == .xaiOAuth
+    }
+
+    func ensureAuthenticationReady() async throws {
+        switch currentAuthMode() {
+        case .web:
+            _ = try initializeClient()
+        case .xaiOAuth:
+            _ = try await validXAIOAuthCredential()
+        }
+    }
+
+    func unsupportedInCurrentAuthMode(_ capability: String) -> GrokError {
+        GrokError.apiError("\(capability) is not available in xAI OAuth mode. Use xAI API models with `grok message`, `grok chat`, `grok models`, `grok files`, or `grok transcribe`; run `grok auth generate` or set GROK_AUTH_MODE=web to use Grok web-only features.")
+    }
+
     // Reset the current conversation ID
     func resetConversation() {
         currentConversationId = nil
@@ -124,6 +157,10 @@ class GrokCLIApp {
             throw GrokError.apiError("No active conversation to share")
         }
 
+        if currentAuthMode() == .xaiOAuth {
+            throw unsupportedInCurrentAuthMode("Share links")
+        }
+
         let client = try initializeClient()
         return try await client.shareLinkURL(conversationId: conversationId, responseId: lastResponseId)
     }
@@ -170,11 +207,27 @@ class GrokCLIApp {
         self.currentMode = mode
     }
 
+    func recordXAIOAuthResponse(responseId: String, mode: GrokMode) -> String {
+        let conversationId = currentConversationId ?? "xai-oauth"
+        currentConversationId = conversationId
+        lastResponseId = responseId
+        lastWebSearchResults = nil
+        lastXPosts = nil
+        setCurrentMode(mode)
+        return conversationId
+    }
+
     func getLastLoadedConversationMode() -> GrokMode? {
         lastLoadedConversationMode
     }
 
     func loadModes() async -> [GrokMode] {
+        if currentAuthMode() == .xaiOAuth {
+            return await loadXAIOAuthModelIDsIfAvailable().map {
+                GrokMode(id: $0, displayName: $0, summary: "xAI API model")
+            }
+        }
+
         if let cachedModes {
             return cachedModes
         }
@@ -196,6 +249,10 @@ class GrokCLIApp {
     }
 
     func refreshSubscriptionDisplayName() async throws -> String {
+        if currentAuthMode() == .xaiOAuth {
+            return GrokAuthMode.xaiOAuth.displayName
+        }
+
         if let cachedSubscriptionDisplayName {
             return cachedSubscriptionDisplayName
         }
@@ -213,6 +270,10 @@ class GrokCLIApp {
 
     @discardableResult
     func refreshRateLimit(for mode: GrokMode) async -> GrokRateLimit? {
+        guard currentAuthMode() == .web else {
+            return nil
+        }
+
         guard let client else {
             return cachedRateLimit(for: mode)
         }
@@ -249,6 +310,10 @@ class GrokCLIApp {
     }
 
     func currentRateLimitStatus(for mode: GrokMode) -> String? {
+        guard currentAuthMode() == .web else {
+            return nil
+        }
+
         guard let lastRateLimit = cachedRateLimit(for: mode) else {
             return nil
         }
@@ -256,6 +321,13 @@ class GrokCLIApp {
     }
 
     func currentRateLimitSummary(for mode: GrokMode) -> String {
+        guard currentAuthMode() == .web else {
+            return """
+            Rate limits for \(mode.displayName) (\(mode.id))
+            xAI OAuth mode does not expose Grok web rate-limit counters.
+            """
+        }
+
         guard let rateLimit = cachedRateLimit(for: mode) else {
             return """
             Rate limits for \(mode.displayName) (\(mode.id))
@@ -468,7 +540,8 @@ class GrokCLIApp {
             write("Debug: Error type: \(type(of: error))".cyan)
         }
 
-        guard isAuthenticationError(error) else {
+        let shouldRefreshBrowserCredentials = isAuthenticationError(error) || isBrowserEnvelopeRefreshError(error)
+        guard shouldRefreshBrowserCredentials else {
             if statusLine != nil {
                 statusLine?.finish(finalText: "Error: \(displayMessage)".red)
             }
@@ -478,10 +551,27 @@ class GrokCLIApp {
         client = nil
         cachedModes = nil
         cachedSubscriptionDisplayName = nil
+        if currentAuthMode() == .xaiOAuth {
+            let message = "xAI OAuth authentication failed. Run `grok auth oauth` to refresh OAuth credentials."
+            if let statusLine {
+                statusLine.finish(finalText: message.yellow)
+            } else {
+                write(message.yellow)
+            }
+            return false
+        }
+
         if let statusLine {
-            statusLine.update(text: "Authentication failed; refreshing browser cookies...".yellow)
+            let status = isBrowserEnvelopeRefreshError(error)
+                ? "Grok rejected this browser envelope; refreshing cookies..."
+                : "Authentication failed; refreshing browser cookies..."
+            statusLine.update(text: status.yellow)
         } else {
-            write("Authentication failed. Your saved Grok browser cookies may have expired.".yellow)
+            if isBrowserEnvelopeRefreshError(error) {
+                write("Grok rejected this CLI request as automated. Your browser anti-bot cookies may be stale or incomplete.".yellow)
+            } else {
+                write("Authentication failed. Your saved Grok browser cookies may have expired.".yellow)
+            }
             write("Trying to refresh credentials from your browser...".cyan)
         }
 
@@ -582,6 +672,19 @@ class GrokCLIApp {
         }
     }
 
+    func isBrowserEnvelopeRefreshError(_ error: Error) -> Bool {
+        guard let grokError = error as? GrokError else {
+            return false
+        }
+
+        switch grokError {
+        case .antiBotRejected:
+            return true
+        default:
+            return false
+        }
+    }
+
     // Load cookies directly from GrokCookies.swift file
     internal func getCookiesFromFile() throws -> [String: String] {
         // Try to find GrokCookies.swift in standard locations
@@ -620,6 +723,10 @@ class GrokCLIApp {
 
     // Initialize the Grok client using available authentication methods
     func initializeClient() throws -> GrokClient {
+        guard currentAuthMode() == .web else {
+            throw unsupportedInCurrentAuthMode("Grok web browser-cookie client")
+        }
+
         if let existingClient = client {
             return existingClient
         }
@@ -698,6 +805,31 @@ class GrokCLIApp {
                 }
             } else {
                 print("Debug: - Starting new conversation")
+            }
+        }
+
+        if currentAuthMode() == .xaiOAuth {
+            return AsyncThrowingStream<ConversationResponse, Error> { continuation in
+                let task = Task {
+                    do {
+                        let response = try await sendXAIOAuthMessage(
+                            message: message,
+                            mode: selectedMode,
+                            temporary: temporary,
+                            fileAttachments: fileAttachments
+                        )
+                        continuation.yield(response)
+                        continuation.finish()
+                    } catch {
+                        if isDebug {
+                            print("Debug: Error in xAI OAuth msg: \(error.localizedDescription)")
+                        }
+                        continuation.finish(throwing: error)
+                    }
+                }
+                continuation.onTermination = { _ in
+                    task.cancel()
+                }
             }
         }
 

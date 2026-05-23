@@ -169,12 +169,22 @@ extension GrokCLI {
             throw GrokError.apiError("Could not infer audio format. Pass --audio-format when using stdin or an unknown extension.")
         }
 
-        let client = try app.initializeClient()
-        let response = try await client.speechToText(
-            audioData: audioData,
-            audioFormat: resolvedFormat,
-            refinementLevel: options.refinementLevel
-        )
+        let response: GrokSpeechToTextResponse
+        if app.usesXAIOAuthMode() {
+            let uploadName = fileName ?? "audio.\(resolvedFormat)"
+            response = try await app.transcribeWithXAIOAuth(
+                audioData: audioData,
+                fileName: uploadName,
+                mimeType: audioMimeType(for: resolvedFormat)
+            )
+        } else {
+            let client = try app.initializeClient()
+            response = try await client.speechToText(
+                audioData: audioData,
+                audioFormat: resolvedFormat,
+                refinementLevel: options.refinementLevel
+            )
+        }
 
         return ResolvedAudioInput(
             transcript: response.text,
@@ -182,6 +192,25 @@ extension GrokCLI {
             audioFormat: resolvedFormat,
             refinementLevel: options.refinementLevel
         )
+    }
+
+    static func audioMimeType(for format: String) -> String {
+        switch format.lowercased() {
+        case "mp3", "mpeg", "mpga":
+            return "audio/mpeg"
+        case "m4a", "mp4":
+            return "audio/mp4"
+        case "wav":
+            return "audio/wav"
+        case "webm":
+            return "audio/webm"
+        case "ogg", "oga":
+            return "audio/ogg"
+        case "flac":
+            return "audio/flac"
+        default:
+            return "audio/\(format.lowercased())"
+        }
     }
 
     static func resolveInteractiveAudioInput(

@@ -598,9 +598,10 @@ final class GrokClientTests: XCTestCase {
 
         XCTAssertEqual(payload["message"] as? String, "test")
         XCTAssertEqual(payload["modeId"] as? String, "expert")
+        XCTAssertEqual(payload["disableSearch"] as? Bool, false)
+        XCTAssertEqual(payload["linkQuery"] as? Bool, false)
         XCTAssertNil(payload["customPersonality"])
         XCTAssertNil(payload["systemPromptName"])
-        XCTAssertNil(payload["disableSearch"])
     }
 
     func testGrokModeAliases() {
