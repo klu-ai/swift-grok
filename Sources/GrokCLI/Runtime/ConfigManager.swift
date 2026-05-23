@@ -26,6 +26,10 @@ class ConfigManager {
         return configDirectory.appendingPathComponent("credentials.json")
     }
 
+    private var oauthCredentialsPath: URL {
+        return configDirectory.appendingPathComponent("xai-oauth.json")
+    }
+
     // Create config directory if it doesn't exist
     private func ensureConfigDirectoryExists() throws {
         var isDirectory: ObjCBool = false
@@ -63,6 +67,10 @@ class ConfigManager {
         return fileManager.fileExists(atPath: credentialsPath.path) ? credentialsPath.path : nil
     }
 
+    func getSavedOAuthCredentialsPath() -> String? {
+        return fileManager.fileExists(atPath: oauthCredentialsPath.path) ? oauthCredentialsPath.path : nil
+    }
+
     // Save path to credentials
     func saveCredentialsPath(_ path: String) throws {
         try ensureConfigDirectoryExists()
@@ -75,6 +83,31 @@ class ConfigManager {
         // Save to the credentials path
         try data.write(to: credentialsPath)
         try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: credentialsPath.path)
+    }
+
+    @discardableResult
+    func saveOAuthCredential(_ credential: XAIOAuthCredential) throws -> String {
+        try ensureConfigDirectoryExists()
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(credential)
+
+        try data.write(to: oauthCredentialsPath, options: [.atomic])
+        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: oauthCredentialsPath.path)
+        return oauthCredentialsPath.path
+    }
+
+    func loadOAuthCredential() throws -> XAIOAuthCredential? {
+        guard fileManager.fileExists(atPath: oauthCredentialsPath.path) else {
+            return nil
+        }
+
+        let data = try Data(contentsOf: oauthCredentialsPath)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(XAIOAuthCredential.self, from: data)
     }
 
     private func validatedCredentialCookies(from data: Data, context: String) throws -> [String: String] {

@@ -47,6 +47,7 @@ final class GrokCLIE2ETests: XCTestCase {
         let auth = try environment.run(["auth", "help"])
         XCTAssertEqual(auth.status, 0)
         XCTAssertContains(auth.cleanOutput, "Auth commands:")
+        XCTAssertContains(auth.cleanOutput, "oauth")
 
         let authFlagHelp = try environment.run(["auth", "--help"])
         XCTAssertEqual(authFlagHelp.status, 0)
@@ -1580,6 +1581,28 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertEqual(generateHelp.status, 0)
         XCTAssertContains(generateHelp.cleanOutput, "Usage: grok auth generate")
         XCTAssertFalse(generateHelp.cleanOutput.contains("Extracting credentials"))
+
+        let oauthHelp = try environment.run(["auth", "oauth", "--help"])
+        XCTAssertEqual(oauthHelp.status, 0)
+        XCTAssertContains(oauthHelp.cleanOutput, "Usage: grok auth oauth")
+
+        let oauthStatus = try environment.run(["auth", "oauth", "status"])
+        XCTAssertEqual(oauthStatus.status, 0)
+        XCTAssertContains(oauthStatus.cleanOutput, "No saved xAI OAuth credentials.")
+
+        let oauthStatusJSON = try environment.run(["auth", "oauth", "status", "--json"])
+        XCTAssertEqual(oauthStatusJSON.status, 0)
+        let oauthStatusData = try assertResultEnvelope(
+            try jsonObject(from: oauthStatusJSON),
+            command: "auth",
+            subcommand: "oauth",
+            category: "auth_status"
+        )
+        XCTAssertEqual(oauthStatusData["authenticated"] as? Bool, false)
+
+        let oauthUnknown = try environment.run(["auth", "oauth", "unknown"])
+        XCTAssertEqual(oauthUnknown.status, 2)
+        XCTAssertContains(oauthUnknown.cleanOutput, "Unknown xAI OAuth command: unknown")
 
         let extractorLog = environment.scratchURL.appendingPathComponent("extractor-args.txt")
         let extractor = environment.scratchURL.appendingPathComponent("fake_cookie_extractor.py")

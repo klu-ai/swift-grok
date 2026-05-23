@@ -6,7 +6,7 @@ class GrokCLIApp {
     static let shared = GrokCLIApp()
 
     private var client: GrokClient?
-    private let configManager = ConfigManager()
+    let configManager = ConfigManager()
     private var isDebug = false
     private var isQuiet = false
     private var currentConversationId: String?

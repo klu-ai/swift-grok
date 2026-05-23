@@ -115,7 +115,7 @@ extension GrokCLI {
         }
 
         let groupSubcommands: [String: Set<String>] = [
-            "auth": Set(["generate", "import", "help", "-h", "--help"]).union(authBrowserNames),
+            "auth": Set(["generate", "import", "oauth", "help", "-h", "--help"]).union(authBrowserNames),
             "tasks": ["list", "select", "show", "details", "detail", "results", "result", "create", "archive", "help", "-h", "--help", "--json", "--debug"],
             "skills": ["list", "mine", "user", "help", "-h", "--help", "--json", "--debug"],
             "agents": ["list", "show", "view", "edit", "set", "clear", "help", "-h", "--help", "--replace", "--include-instructions", "--show-instructions", "--json", "--debug"],

@@ -328,12 +328,16 @@ extension GrokCLI {
         exactFormatter.dateFormat = "yyyy-MM-dd HH:mm"
         let exact = exactFormatter.string(from: date)
 
+        let dateStart = calendar.startOfDay(for: date)
+        let nowStart = calendar.startOfDay(for: now)
+        let dayDifference = calendar.dateComponents([.day], from: dateStart, to: nowStart).day
+
         let friendly: String
-        if calendar.isDateInToday(date) {
+        if dayDifference == 0 {
             friendly = "Today"
-        } else if calendar.isDateInYesterday(date) {
+        } else if dayDifference == 1 {
             friendly = "Yesterday"
-        } else if let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day,
+        } else if let days = dayDifference,
                   days > 1,
                   days <= 7 {
             friendly = "Last week"

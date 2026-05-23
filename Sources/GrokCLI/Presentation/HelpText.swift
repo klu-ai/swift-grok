@@ -98,6 +98,7 @@ extension GrokCLI {
           grok message --audio note.webm --raw --quiet - Send an audio transcript
           grok transcribe note.webm                  - Print an audio transcript
           grok auth                                 - Generate new credentials from browser cookies
+          grok auth oauth                           - Sign in with xAI OAuth device code
           grok auth generate --json                  - Generate credentials and print JSON
           grok auth import /path/to/credentials.json --json
                                                     - Import credentials and print JSON
