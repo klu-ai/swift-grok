@@ -55,7 +55,6 @@ class OutputFormatter {
         var printedText = false
         var printedTrace = false
         var finalResponse: ConversationResponse?
-        var sawNonFinalEvent = false
         var pendingAnswerEvents: [StreamDisplayEvent] = []
 
         func renderTraceLine(_ line: String) {
@@ -171,15 +170,13 @@ class OutputFormatter {
 
             if response.isFinal {
                 finalResponse = response
-                if !sawNonFinalEvent && !printedText {
+                if !printedText && pendingAnswerEvents.isEmpty && !answerParser.hasPendingContent {
                     handleAnswerEvents(answerParser.consume(response.message))
                 }
                 break
             } else if response.isThinking {
-                sawNonFinalEvent = true
                 handleThinking(response.message)
             } else {
-                sawNonFinalEvent = true
                 handleAnswerEvents(answerParser.consume(response.message))
             }
         }

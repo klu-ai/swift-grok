@@ -31,6 +31,7 @@ Supported environment overrides:
 - `GROK_XAI_OAUTH_DISCOVERY_URL`: override discovery.
 - `GROK_XAI_API_BASE_URL`: override the API base.
 - `GROK_XAI_OAUTH_ALLOW_LOCAL=1`: allow local HTTP endpoints for tests.
+- `GROK_XAI_VIDEO_POLL_INTERVAL_MS`: override video polling interval; default `5000`, minimum `10`.
 
 Endpoint validation only accepts HTTPS x.ai hosts by default. Local HTTP is allowed only for `localhost`, `127.0.0.1`, or `::1` when local overrides are enabled.
 

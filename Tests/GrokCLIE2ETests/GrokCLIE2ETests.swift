@@ -1620,6 +1620,47 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertTrue(server.requests(matchingPath: "/v1/responses", method: "POST").isEmpty)
     }
 
+    func testInteractiveOAuthVideoProgressStillPrintsFinalVideoURL() throws {
+        let server = try MockGrokServer(
+            xaiVideoPollResponses: [
+                [
+                    "status": "pending",
+                    "progress": 88
+                ],
+                MockGrokServer.doneXAIVideoPollResponse
+            ],
+            xaiAPIModels: ["grok-4.3", "grok-imagine-video"]
+        )
+        let environment = try TestEnvironment(server: server)
+        let xaiAPIBaseURL = "\(server.baseURL)/v1"
+        try writeSavedXAIOAuthCredential(
+            in: environment,
+            accessToken: "oauth-interactive-video-token",
+            apiBaseURL: xaiAPIBaseURL
+        )
+
+        let run = try environment.run(
+            [],
+            input: """
+            /model grok-imagine-video
+            make a red ball bounce once
+            quit
+            """,
+            timeout: 15,
+            extraEnvironment: [
+                "GROK_XAI_API_BASE_URL": xaiAPIBaseURL,
+                "GROK_XAI_VIDEO_POLL_INTERVAL_MS": "10",
+                "GROK_AUTH_MODE": "oauth"
+            ]
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "[thinking] Video generation pending 88%")
+        XCTAssertContains(run.cleanOutput, "Generated video:")
+        XCTAssertContains(run.cleanOutput, "https://vidgen.x.ai/mock-video.mp4")
+        XCTAssertEqual(server.requests(matchingPath: "/v1/videos/vid-xai-e2e", method: "GET").count, 2)
+    }
+
     func testInteractiveOAuthMediaGenerationDoesNotBecomePreviousResponseID() throws {
         let server = try MockGrokServer(
             xaiAPIModels: ["grok-4.3", "grok-imagine-image-quality"]
@@ -4297,6 +4338,18 @@ private final class MockGrokServer {
     private let userSkills: [[String: Any]]
     private let xaiAPIModels: [String]
     private let xaiResponseStreamLines: [String]?
+    private var xaiVideoPollResponses: [[String: Any]]
+
+    static let doneXAIVideoPollResponse: [String: Any] = [
+        "status": "done",
+        "video": [
+            "url": "https://vidgen.x.ai/mock-video.mp4",
+            "duration": 6,
+            "respect_moderation": true
+        ],
+        "model": "grok-imagine-video",
+        "progress": 100
+    ]
 
     init(
         unauthorizedNewConversationCount: Int = 0,
@@ -4338,6 +4391,7 @@ private final class MockGrokServer {
             "status": "enabled"
         ]],
         xaiResponseStreamLines: [String]? = nil,
+        xaiVideoPollResponses: [[String: Any]] = [MockGrokServer.doneXAIVideoPollResponse],
         xaiAPIModels: [String] = []
     ) throws {
         self.unauthorizedNewConversationCount = unauthorizedNewConversationCount
@@ -4361,6 +4415,7 @@ private final class MockGrokServer {
         self.userSkills = userSkills
         self.xaiAPIModels = xaiAPIModels
         self.xaiResponseStreamLines = xaiResponseStreamLines
+        self.xaiVideoPollResponses = xaiVideoPollResponses
         self.listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: 0)!)
 
         let ready = DispatchSemaphore(value: 0)
@@ -4519,16 +4574,7 @@ private final class MockGrokServer {
             guard request.header("Authorization")?.hasPrefix("Bearer ") == true else {
                 return jsonResponse(["error": "missing bearer token"], status: 401)
             }
-            return jsonResponse([
-                "status": "done",
-                "video": [
-                    "url": "https://vidgen.x.ai/mock-video.mp4",
-                    "duration": 6,
-                    "respect_moderation": true
-                ],
-                "model": "grok-imagine-video",
-                "progress": 100
-            ])
+            return jsonResponse(nextXAIVideoPollResponse())
         case ("POST", "/v1/stt"):
             guard request.header("Authorization")?.hasPrefix("Bearer ") == true else {
                 return jsonResponse(["error": "missing bearer token"], status: 401)
@@ -4756,6 +4802,16 @@ private final class MockGrokServer {
             "data: [DONE]"
         ]
         return HTTPResponse(body: Data(lines.joined(separator: "\n").appending("\n").utf8), contentType: "text/event-stream")
+    }
+
+    private func nextXAIVideoPollResponse() -> [String: Any] {
+        guard !xaiVideoPollResponses.isEmpty else {
+            return Self.doneXAIVideoPollResponse
+        }
+        if xaiVideoPollResponses.count == 1 {
+            return xaiVideoPollResponses[0]
+        }
+        return xaiVideoPollResponses.removeFirst()
     }
 
     private func jsonLine(_ object: Any) -> String {

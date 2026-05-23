@@ -178,6 +178,7 @@ final class XAIOAuthClient {
     private let clientID: String
     private let scope: String
     private let allowsLocalEndpoints: Bool
+    private let videoPollIntervalNanoseconds: UInt64
 
     init(environment: [String: String] = ProcessInfo.processInfo.environment, session: URLSession = .shared) throws {
         self.session = session
@@ -186,6 +187,9 @@ final class XAIOAuthClient {
         self.allowsLocalEndpoints = environment["GROK_XAI_OAUTH_ALLOW_LOCAL"] == "1" ||
             environment["GROK_XAI_OAUTH_DISCOVERY_URL"] != nil ||
             environment["GROK_XAI_API_BASE_URL"] != nil
+        let videoPollIntervalMilliseconds = environment["GROK_XAI_VIDEO_POLL_INTERVAL_MS"]
+            .flatMap(UInt64.init) ?? 5_000
+        self.videoPollIntervalNanoseconds = max(10, videoPollIntervalMilliseconds) * 1_000_000
 
         let discovery = environment["GROK_XAI_OAUTH_DISCOVERY_URL"]?.trimmedNonEmpty ?? Self.defaultDiscoveryURL
         self.discoveryURL = try Self.validatedEndpointURL(
@@ -778,7 +782,6 @@ final class XAIOAuthClient {
         onPoll: ((XAIVideoGenerationPollUpdate) -> Void)?
     ) async throws -> [String: Any] {
         let maxAttempts = 72
-        let pollInterval: UInt64 = 5_000_000_000
 
         for attempt in 0..<maxAttempts {
             let data = try await performJSONRequest(
@@ -807,7 +810,7 @@ final class XAIOAuthClient {
             ))
 
             if attempt < maxAttempts - 1 {
-                try await Task.sleep(nanoseconds: pollInterval)
+                try await Task.sleep(nanoseconds: videoPollIntervalNanoseconds)
             }
         }
 
