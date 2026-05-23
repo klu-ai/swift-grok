@@ -287,23 +287,19 @@ final class XAIOAuthClient {
         fileAttachmentIDs: [String],
         maxOutputTokens: Int? = nil
     ) async throws -> (id: String, text: String?) {
-        var body: [String: Any] = [
-            "model": modelID,
-            "input": responseInput(message: message, fileAttachmentIDs: fileAttachmentIDs),
-            "store": store
-        ]
-        if let previousResponseID, !previousResponseID.isEmpty {
-            body["previous_response_id"] = previousResponseID
-        }
-        if let maxOutputTokens {
-            body["max_output_tokens"] = maxOutputTokens
-        }
-
         let data = try await performJSONRequest(
             path: "responses",
             method: "POST",
             credential: credential,
-            body: body
+            body: responseRequestBody(
+                modelID: modelID,
+                message: message,
+                previousResponseID: previousResponseID,
+                store: store,
+                fileAttachmentIDs: fileAttachmentIDs,
+                maxOutputTokens: maxOutputTokens,
+                stream: false
+            )
         )
 
         do {
@@ -311,6 +307,63 @@ final class XAIOAuthClient {
             return (decoded.id, decoded.flattenedText)
         } catch {
             throw GrokError.decodingError(error)
+        }
+    }
+
+    func streamResponse(
+        using credential: XAIOAuthCredential,
+        modelID: String,
+        message: String,
+        previousResponseID: String?,
+        store: Bool,
+        fileAttachmentIDs: [String]
+    ) throws -> AsyncThrowingStream<ConversationResponse, Error> {
+        let request = try jsonRequest(
+            path: "responses",
+            method: "POST",
+            credential: credential,
+            body: responseRequestBody(
+                modelID: modelID,
+                message: message,
+                previousResponseID: previousResponseID,
+                store: store,
+                fileAttachmentIDs: fileAttachmentIDs,
+                maxOutputTokens: nil,
+                stream: true
+            )
+        )
+        let lines = streamingLines(for: request)
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    var parser = XAIOAuthResponsesStreamParser()
+                    for try await line in lines {
+                        if Task.isCancelled {
+                            continuation.finish()
+                            return
+                        }
+                        if let response = try parser.consume(line: line) {
+                            continuation.yield(response)
+                            if response.isFinal {
+                                continuation.finish()
+                                return
+                            }
+                        }
+                    }
+
+                    if let finalResponse = parser.finish() {
+                        continuation.yield(finalResponse)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
         }
     }
 
@@ -402,6 +455,32 @@ final class XAIOAuthClient {
         )
     }
 
+    private func responseRequestBody(
+        modelID: String,
+        message: String,
+        previousResponseID: String?,
+        store: Bool,
+        fileAttachmentIDs: [String],
+        maxOutputTokens: Int?,
+        stream: Bool
+    ) -> [String: Any] {
+        var body: [String: Any] = [
+            "model": modelID,
+            "input": responseInput(message: message, fileAttachmentIDs: fileAttachmentIDs),
+            "store": store
+        ]
+        if let previousResponseID, !previousResponseID.isEmpty {
+            body["previous_response_id"] = previousResponseID
+        }
+        if let maxOutputTokens {
+            body["max_output_tokens"] = maxOutputTokens
+        }
+        if stream {
+            body["stream"] = true
+        }
+        return body
+    }
+
     private func responseInput(message: String, fileAttachmentIDs: [String]) -> Any {
         let trimmedIDs = fileAttachmentIDs
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -434,6 +513,24 @@ final class XAIOAuthClient {
         credential: XAIOAuthCredential,
         body: [String: Any]?
     ) async throws -> Data {
+        let request = try jsonRequest(
+            path: path,
+            method: method,
+            credential: credential,
+            body: body
+        )
+
+        let (data, response) = try await session.data(for: request)
+        try validate(response: response, data: data)
+        return data
+    }
+
+    private func jsonRequest(
+        path: String,
+        method: String,
+        credential: XAIOAuthCredential,
+        body: [String: Any]?
+    ) throws -> URLRequest {
         let url = apiBaseURL.appendingPathComponent(path)
         var request = URLRequest(url: url)
         request.httpMethod = method
@@ -443,10 +540,28 @@ final class XAIOAuthClient {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
+        return request
+    }
 
-        let (data, response) = try await session.data(for: request)
-        try validate(response: response, data: data)
-        return data
+    private func streamingLines(for request: URLRequest) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            let delegate = XAIOAuthStreamingLineDelegate(
+                continuation: continuation,
+                validateResponse: { response, data in
+                    try self.validate(response: response, data: data ?? Data())
+                }
+            )
+            let streamingSession = URLSession(
+                configuration: session.configuration,
+                delegate: delegate,
+                delegateQueue: nil
+            )
+            delegate.start(request: request, session: streamingSession)
+
+            continuation.onTermination = { _ in
+                delegate.cancel()
+            }
+        }
     }
 
     private func performMultipartRequest(
@@ -729,6 +844,172 @@ private struct XAIOAuthPollingError: LocalizedError {
 
     var errorDescription: String? {
         message
+    }
+}
+
+private struct XAIOAuthStreamingLineReader {
+    private var buffer = Data()
+    private var consumedOffset = 0
+    private var searchOffset = 0
+    private let maxBufferedBytes = 1_048_576
+    private let compactionThreshold = 65_536
+
+    mutating func append(_ data: Data) throws -> [Data] {
+        guard !data.isEmpty else { return [] }
+        buffer.append(data)
+
+        var lines: [Data] = []
+        while searchOffset < buffer.count,
+              let newlineIndex = buffer[searchOffset...].firstIndex(of: UInt8(ascii: "\n")) {
+            lines.append(Data(buffer[consumedOffset..<newlineIndex]))
+            consumedOffset = buffer.index(after: newlineIndex)
+            searchOffset = consumedOffset
+        }
+
+        compactIfNeeded()
+        try validatePendingByteCount()
+        return lines
+    }
+
+    mutating func flushPartialLine() -> Data? {
+        guard consumedOffset < buffer.count else {
+            reset()
+            return nil
+        }
+
+        let line = Data(buffer[consumedOffset...])
+        reset()
+        return line
+    }
+
+    private mutating func compactIfNeeded() {
+        guard consumedOffset > 0 else { return }
+        guard consumedOffset >= compactionThreshold || consumedOffset > buffer.count / 2 else { return }
+
+        buffer = Data(buffer[consumedOffset...])
+        searchOffset -= consumedOffset
+        consumedOffset = 0
+    }
+
+    private func validatePendingByteCount() throws {
+        guard buffer.count - consumedOffset <= maxBufferedBytes else {
+            throw GrokError.streamingError
+        }
+    }
+
+    private mutating func reset() {
+        buffer.removeAll(keepingCapacity: false)
+        consumedOffset = 0
+        searchOffset = 0
+    }
+}
+
+private final class XAIOAuthStreamingLineDelegate: NSObject, URLSessionDataDelegate {
+    private let continuation: AsyncThrowingStream<String, Error>.Continuation
+    private let validateResponse: (URLResponse, Data?) throws -> Void
+    private var session: URLSession?
+    private var task: URLSessionDataTask?
+    private var response: URLResponse?
+    private var isErrorResponse = false
+    private var errorData = Data()
+    private var lineReader = XAIOAuthStreamingLineReader()
+
+    init(
+        continuation: AsyncThrowingStream<String, Error>.Continuation,
+        validateResponse: @escaping (URLResponse, Data?) throws -> Void
+    ) {
+        self.continuation = continuation
+        self.validateResponse = validateResponse
+    }
+
+    func start(request: URLRequest, session: URLSession) {
+        self.session = session
+        let task = session.dataTask(with: request)
+        self.task = task
+        task.resume()
+    }
+
+    func cancel() {
+        task?.cancel()
+        session?.invalidateAndCancel()
+        task = nil
+        session = nil
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        self.response = response
+        if let httpResponse = response as? HTTPURLResponse {
+            isErrorResponse = !(200...299).contains(httpResponse.statusCode)
+        }
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        if isErrorResponse {
+            appendErrorData(data)
+            return
+        }
+
+        do {
+            for lineData in try lineReader.append(data) {
+                try yieldLine(lineData)
+            }
+        } catch {
+            continuation.finish(throwing: error)
+            cancel()
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        defer { cancel() }
+
+        if let error {
+            continuation.finish(throwing: error)
+            return
+        }
+
+        do {
+            if let response {
+                try validateResponse(response, isErrorResponse ? errorData : nil)
+            }
+            if !isErrorResponse, let partial = lineReader.flushPartialLine() {
+                try yieldLine(partial)
+            }
+            continuation.finish()
+        } catch {
+            continuation.finish(throwing: error)
+        }
+    }
+
+    private func appendErrorData(_ data: Data) {
+        guard errorData.count < 65_536 else { return }
+        let remaining = 65_536 - errorData.count
+        errorData.append(data.prefix(remaining))
+    }
+
+    private func yieldLine(_ data: Data) throws {
+        var lineData = data
+        if lineData.last == UInt8(ascii: "\r") {
+            lineData.removeLast()
+        }
+        guard let line = String(data: lineData, encoding: .utf8) else {
+            throw GrokError.decodingError(
+                DecodingError.dataCorrupted(.init(
+                    codingPath: [],
+                    debugDescription: "Streaming line was not valid UTF-8"
+                ))
+            )
+        }
+        continuation.yield(line)
     }
 }
 

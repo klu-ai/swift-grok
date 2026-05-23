@@ -1343,6 +1343,56 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertTrue(xaiOAuthModels.contains { $0["id"] as? String == "grok-4.3-fast-non-reasoning" && $0["selected"] as? Bool == true })
     }
 
+    func testSavedOAuthCredentialsTakePriorityOverSavedWebAuthMode() throws {
+        let server = try MockGrokServer(xaiAPIModels: ["grok-4.3", "grok-code-fast"])
+        let environment = try TestEnvironment(server: server)
+        let xaiAPIBaseURL = "\(server.baseURL)/v1"
+        try writeSavedXAIOAuthCredential(
+            in: environment,
+            accessToken: "oauth-priority-token",
+            apiBaseURL: xaiAPIBaseURL
+        )
+        try writeSavedAuthMode("web", in: environment)
+
+        let run = try environment.run(
+            ["models"],
+            extraEnvironment: ["GROK_XAI_API_BASE_URL": xaiAPIBaseURL]
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertFalse(run.cleanOutput.contains("Available web modes:"))
+        XCTAssertContains(run.cleanOutput, "Available xAI API models (OAuth):")
+        XCTAssertEqual(server.requests(matchingPath: "/v1/models", method: "GET").count, 1)
+        XCTAssertEqual(server.requests(matchingPath: "/rest/modes", method: "POST").count, 0)
+    }
+
+    func testInteractiveModelPickerPrioritizesSavedOAuthCredentialsOverWebAuthMode() throws {
+        let server = try MockGrokServer(xaiAPIModels: ["grok-4.3", "grok-code-fast"])
+        let environment = try TestEnvironment(server: server)
+        let xaiAPIBaseURL = "\(server.baseURL)/v1"
+        try writeSavedXAIOAuthCredential(
+            in: environment,
+            accessToken: "oauth-picker-priority-token",
+            apiBaseURL: xaiAPIBaseURL
+        )
+        try writeSavedAuthMode("web", in: environment)
+
+        let run = try environment.run(
+            [],
+            input: "/model\n\nquit\n",
+            extraEnvironment: ["GROK_XAI_API_BASE_URL": xaiAPIBaseURL]
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Select model")
+        XCTAssertContains(run.cleanOutput, "grok-4.3")
+        XCTAssertContains(run.cleanOutput, "grok-code-fast")
+        XCTAssertFalse(run.cleanOutput.contains("Auto  auto"))
+        XCTAssertFalse(run.cleanOutput.contains("Fast  fast"))
+        XCTAssertFalse(run.cleanOutput.contains("Grok 4.3 (beta)"))
+        XCTAssertEqual(server.requests(matchingPath: "/rest/modes", method: "POST").count, 0)
+    }
+
     func testOAuthAuthModeRoutesMessageToXAIResponsesAPI() throws {
         let server = try MockGrokServer(
             finalMessage: "oauth answer",
@@ -1384,6 +1434,85 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertEqual(request.jsonBool("store"), true)
         XCTAssertNil(request.jsonString("previous_response_id"))
         XCTAssertTrue(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").isEmpty)
+    }
+
+    func testOAuthStreamingResponsesAPIEmitsThinkingDeltas() throws {
+        let server = try MockGrokServer(
+            xaiResponseStreamLines: [
+                "event: response.created",
+                #"data: {"type":"response.created","response":{"id":"resp-xai-stream"}}"#,
+                "event: response.reasoning_summary_text.delta",
+                #"data: {"type":"response.reasoning_summary_text.delta","delta":"checking the OAuth stream"}"#,
+                "id: stream-event-1",
+                #"data: {"type":"response.output_text.delta","delta":"streamed "}"#,
+                #"data: {"type":"response.output_text.delta","delta":"oauth answer"}"#,
+                ": keep-alive",
+                #"data: {"type":"response.completed","response":{"id":"resp-xai-stream","output_text":"streamed oauth answer"}}"#,
+                "data: [DONE]"
+            ],
+            xaiAPIModels: ["grok-4.3"]
+        )
+        let environment = try TestEnvironment(server: server)
+        let xaiAPIBaseURL = "\(server.baseURL)/v1"
+        try writeSavedXAIOAuthCredential(
+            in: environment,
+            accessToken: "oauth-stream-token",
+            apiBaseURL: xaiAPIBaseURL
+        )
+
+        let run = try environment.run(
+            ["message", "--stream", "--model", "grok-4.3", "hello oauth stream"],
+            extraEnvironment: [
+                "GROK_XAI_API_BASE_URL": xaiAPIBaseURL,
+                "GROK_AUTH_MODE": "oauth"
+            ]
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "[thinking] checking the OAuth stream")
+        XCTAssertContains(run.cleanOutput, "streamed oauth answer")
+
+        let request = try XCTUnwrap(server.requests(matchingPath: "/v1/responses", method: "POST").last)
+        XCTAssertEqual(request.header("authorization"), "Bearer oauth-stream-token")
+        XCTAssertEqual(request.jsonString("model"), "grok-4.3")
+        XCTAssertEqual(request.jsonBool("stream"), true)
+        XCTAssertEqual(request.jsonBool("store"), true)
+        XCTAssertTrue(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").isEmpty)
+    }
+
+    func testOAuthStreamingJSONIncludesThinkingEvents() throws {
+        let server = try MockGrokServer(
+            xaiResponseStreamLines: [
+                #"data: {"type":"response.created","response":{"id":"resp-xai-json-stream"}}"#,
+                #"data: {"type":"response.reasoning_summary_text.delta","delta":"oauth json thought"}"#,
+                #"data: {"type":"response.output_text.delta","delta":"json oauth answer"}"#,
+                #"data: {"type":"response.completed","response":{"id":"resp-xai-json-stream","output_text":"json oauth answer"}}"#
+            ],
+            xaiAPIModels: ["grok-4.3"]
+        )
+        let environment = try TestEnvironment(server: server)
+        let xaiAPIBaseURL = "\(server.baseURL)/v1"
+        try writeSavedXAIOAuthCredential(
+            in: environment,
+            accessToken: "oauth-stream-json-token",
+            apiBaseURL: xaiAPIBaseURL
+        )
+
+        let run = try environment.run(
+            ["message", "--stream", "--json", "--model", "grok-4.3", "hello oauth json stream"],
+            extraEnvironment: [
+                "GROK_XAI_API_BASE_URL": xaiAPIBaseURL,
+                "GROK_AUTH_MODE": "oauth"
+            ]
+        )
+
+        XCTAssertEqual(run.status, 0)
+        assertNoHumanJSONBanners(in: run.stdout)
+        XCTAssertContains(run.stdout, #""event":"thinking_delta""#)
+        XCTAssertContains(run.stdout, "oauth json thought")
+        XCTAssertContains(run.stdout, #""event":"assistant_delta""#)
+        XCTAssertContains(run.stdout, "json oauth answer")
+        XCTAssertEqual(server.requests(matchingPath: "/v1/responses", method: "POST").last?.jsonBool("stream"), true)
     }
 
     func testOAuthAuthModeRoutesFilesAndTranscribeToXAIAPI() throws {
@@ -3818,6 +3947,13 @@ final class GrokCLIE2ETests: XCTestCase {
         try payload.write(to: oauthCredentialsURL, atomically: true, encoding: .utf8)
     }
 
+    private func writeSavedAuthMode(_ mode: String, in environment: TestEnvironment) throws {
+        let authModeURL = environment.credentialsURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("auth-mode.json")
+        try #"{"mode":"\#(mode)"}"#.write(to: authModeURL, atomically: true, encoding: .utf8)
+    }
+
     private func occurrences(of needle: String, in haystack: String) -> Int {
         guard !needle.isEmpty else {
             return 0
@@ -4019,6 +4155,7 @@ private final class MockGrokServer {
     private let builtInSkills: [[String: Any]]
     private let userSkills: [[String: Any]]
     private let xaiAPIModels: [String]
+    private let xaiResponseStreamLines: [String]?
 
     init(
         unauthorizedNewConversationCount: Int = 0,
@@ -4059,6 +4196,7 @@ private final class MockGrokServer {
             "description": "Mock skill description",
             "status": "enabled"
         ]],
+        xaiResponseStreamLines: [String]? = nil,
         xaiAPIModels: [String] = []
     ) throws {
         self.unauthorizedNewConversationCount = unauthorizedNewConversationCount
@@ -4081,6 +4219,7 @@ private final class MockGrokServer {
         self.builtInSkills = builtInSkills
         self.userSkills = userSkills
         self.xaiAPIModels = xaiAPIModels
+        self.xaiResponseStreamLines = xaiResponseStreamLines
         self.listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: 0)!)
 
         let ready = DispatchSemaphore(value: 0)
@@ -4204,6 +4343,9 @@ private final class MockGrokServer {
         case ("POST", "/v1/responses"):
             guard request.header("Authorization")?.hasPrefix("Bearer ") == true else {
                 return jsonResponse(["error": "missing bearer token"], status: 401)
+            }
+            if request.jsonBool("stream") == true {
+                return xaiStreamingResponse(responseId: "resp-xai-e2e")
             }
             return jsonResponse([
                 "id": "resp-xai-e2e",
@@ -4427,6 +4569,16 @@ private final class MockGrokServer {
                 ]
             ]
         ]))
+        return HTTPResponse(body: Data(lines.joined(separator: "\n").appending("\n").utf8), contentType: "text/event-stream")
+    }
+
+    private func xaiStreamingResponse(responseId: String) -> HTTPResponse {
+        let lines = xaiResponseStreamLines ?? [
+            "data: \(jsonLine(["type": "response.created", "response": ["id": responseId]]))",
+            "data: \(jsonLine(["type": "response.output_text.delta", "delta": finalMessage]))",
+            "data: \(jsonLine(["type": "response.completed", "response": ["id": responseId, "output_text": finalMessage]]))",
+            "data: [DONE]"
+        ]
         return HTTPResponse(body: Data(lines.joined(separator: "\n").appending("\n").utf8), contentType: "text/event-stream")
     }
 
@@ -4685,6 +4837,10 @@ private struct HTTPRequest {
 
     func jsonString(_ key: String) -> String? {
         jsonBody[key] as? String
+    }
+
+    func jsonBool(_ key: String) -> Bool? {
+        jsonBody[key] as? Bool
     }
 
     func pathComponent(after component: String) -> String? {

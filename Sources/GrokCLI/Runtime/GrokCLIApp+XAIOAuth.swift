@@ -150,6 +150,27 @@ extension GrokCLIApp {
         )
     }
 
+    func streamXAIOAuthMessage(
+        message: String,
+        mode: GrokMode,
+        temporary: Bool,
+        fileAttachments: [String]
+    ) async throws -> (stream: AsyncThrowingStream<ConversationResponse, Error>, mode: GrokMode) {
+        let credential = try await validXAIOAuthCredential()
+        let oauthClient = try XAIOAuthClient()
+        let resolvedMode = await resolveXAIOAuthModel(mode)
+        let previousResponseID = temporary ? nil : getLastResponseId()
+        let stream = try oauthClient.streamResponse(
+            using: credential,
+            modelID: resolvedMode.id,
+            message: message,
+            previousResponseID: previousResponseID,
+            store: !temporary,
+            fileAttachmentIDs: fileAttachments
+        )
+        return (stream, resolvedMode)
+    }
+
     func transcribeWithXAIOAuth(audioData: Data, fileName: String, mimeType: String) async throws -> GrokSpeechToTextResponse {
         let credential = try await validXAIOAuthCredential()
         let oauthClient = try XAIOAuthClient()

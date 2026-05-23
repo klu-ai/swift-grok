@@ -52,12 +52,12 @@ class GrokCLIApp {
             return environmentMode
         }
 
-        if let storedMode = try? configManager.loadPreferredAuthMode() {
-            return storedMode
-        }
-
         if configManager.getSavedOAuthCredentialsPath() != nil {
             return .xaiOAuth
+        }
+
+        if let storedMode = try? configManager.loadPreferredAuthMode() {
+            return storedMode
         }
 
         return .web
@@ -77,7 +77,7 @@ class GrokCLIApp {
     }
 
     func unsupportedInCurrentAuthMode(_ capability: String) -> GrokError {
-        GrokError.apiError("\(capability) is not available in xAI OAuth mode. Use xAI API models with `grok message`, `grok chat`, `grok models`, `grok files`, or `grok transcribe`; run `grok auth generate` or set GROK_AUTH_MODE=web to use Grok web-only features.")
+        GrokError.apiError("\(capability) is not available in xAI OAuth mode. Use xAI API models with `grok message`, `grok chat`, `grok models`, `grok files`, or `grok transcribe`; set GROK_AUTH_MODE=web to use Grok web-only features.")
     }
 
     // Reset the current conversation ID
@@ -812,13 +812,40 @@ class GrokCLIApp {
             return AsyncThrowingStream<ConversationResponse, Error> { continuation in
                 let task = Task {
                     do {
-                        let response = try await sendXAIOAuthMessage(
-                            message: message,
-                            mode: selectedMode,
-                            temporary: temporary,
-                            fileAttachments: fileAttachments
-                        )
-                        continuation.yield(response)
+                        if streamOutput {
+                            let oauth = try await streamXAIOAuthMessage(
+                                message: message,
+                                mode: selectedMode,
+                                temporary: temporary,
+                                fileAttachments: fileAttachments
+                            )
+                            for try await response in oauth.stream {
+                                if response.isFinal {
+                                    let conversationId = recordXAIOAuthResponse(responseId: response.responseId, mode: oauth.mode)
+                                    continuation.yield(ConversationResponse(
+                                        message: response.message,
+                                        conversationId: conversationId,
+                                        responseId: response.responseId,
+                                        timestamp: response.timestamp,
+                                        webSearchResults: response.webSearchResults,
+                                        xposts: response.xposts,
+                                        isSoftStop: response.isSoftStop,
+                                        isFinal: true
+                                    ))
+                                    continuation.finish()
+                                    return
+                                }
+                                continuation.yield(response)
+                            }
+                        } else {
+                            let response = try await sendXAIOAuthMessage(
+                                message: message,
+                                mode: selectedMode,
+                                temporary: temporary,
+                                fileAttachments: fileAttachments
+                            )
+                            continuation.yield(response)
+                        }
                         continuation.finish()
                     } catch {
                         if isDebug {
