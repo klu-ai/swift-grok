@@ -1663,6 +1663,101 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertEqual(server.requests(matchingPath: "/v1/videos/vid-xai-e2e", method: "GET").count, 2)
     }
 
+    func testInteractiveOAuthVideoDroppedImagePathUsesReferenceToVideo() throws {
+        let server = try MockGrokServer(
+            xaiAPIModels: ["grok-4.3", "grok-imagine-video"]
+        )
+        let environment = try TestEnvironment(server: server)
+        let imageData = Data([0x89, 0x50, 0x4E, 0x47])
+        let imageURL = environment.scratchURL.appendingPathComponent("reference image.png")
+        try imageData.write(to: imageURL)
+
+        let xaiAPIBaseURL = "\(server.baseURL)/v1"
+        try writeSavedXAIOAuthCredential(
+            in: environment,
+            accessToken: "oauth-interactive-video-reference-token",
+            apiBaseURL: xaiAPIBaseURL
+        )
+
+        let droppedPath = imageURL.path.replacingOccurrences(of: " ", with: "\\ ")
+        let run = try environment.run(
+            [],
+            input: """
+            /model grok-imagine-video
+            make it cinematic \(droppedPath)
+            quit
+            """,
+            timeout: 15,
+            extraEnvironment: [
+                "GROK_XAI_API_BASE_URL": xaiAPIBaseURL,
+                "GROK_XAI_VIDEO_POLL_INTERVAL_MS": "10",
+                "GROK_AUTH_MODE": "oauth"
+            ]
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Using video reference image: reference image.png")
+
+        let videoRequests = server.requests(matchingPath: "/v1/videos/generations", method: "POST")
+        XCTAssertEqual(videoRequests.count, 1)
+        let request = try XCTUnwrap(videoRequests.first)
+        XCTAssertEqual(request.jsonString("model"), "grok-imagine-video")
+        XCTAssertEqual(request.jsonString("prompt"), "make it cinematic")
+        XCTAssertEqual(request.json["duration"] as? Int, 10)
+        XCTAssertEqual(request.jsonString("resolution"), "720p")
+        let referenceImages = try XCTUnwrap(request.json["reference_images"] as? [[String: Any]])
+        XCTAssertEqual(referenceImages.count, 1)
+        let referenceURL = try XCTUnwrap(referenceImages.first?["url"] as? String)
+        XCTAssertEqual(referenceURL, "data:image/png;base64,\(imageData.base64EncodedString())")
+        XCTAssertTrue(server.requests(matchingPath: "/v1/responses", method: "POST").isEmpty)
+    }
+
+    func testInteractiveOAuthVideoDroppedImagePathCanBeQueuedForNextPrompt() throws {
+        let server = try MockGrokServer(
+            xaiAPIModels: ["grok-4.3", "grok-imagine-video"]
+        )
+        let environment = try TestEnvironment(server: server)
+        let imageData = Data([0xFF, 0xD8, 0xFF])
+        let imageURL = environment.scratchURL.appendingPathComponent("queued-reference.jpg")
+        try imageData.write(to: imageURL)
+
+        let xaiAPIBaseURL = "\(server.baseURL)/v1"
+        try writeSavedXAIOAuthCredential(
+            in: environment,
+            accessToken: "oauth-interactive-video-queued-reference-token",
+            apiBaseURL: xaiAPIBaseURL
+        )
+
+        let run = try environment.run(
+            [],
+            input: """
+            /model grok-imagine-video
+            \(imageURL.path)
+            animate this portrait with subtle motion
+            quit
+            """,
+            timeout: 15,
+            extraEnvironment: [
+                "GROK_XAI_API_BASE_URL": xaiAPIBaseURL,
+                "GROK_XAI_VIDEO_POLL_INTERVAL_MS": "10",
+                "GROK_AUTH_MODE": "oauth"
+            ]
+        )
+
+        XCTAssertEqual(run.status, 0)
+        XCTAssertContains(run.cleanOutput, "Added video reference image for next prompt: queued-reference.jpg")
+        XCTAssertContains(run.cleanOutput, "Using video reference image: queued-reference.jpg")
+
+        let videoRequests = server.requests(matchingPath: "/v1/videos/generations", method: "POST")
+        XCTAssertEqual(videoRequests.count, 1)
+        let request = try XCTUnwrap(videoRequests.first)
+        XCTAssertEqual(request.jsonString("prompt"), "animate this portrait with subtle motion")
+        XCTAssertEqual(request.json["duration"] as? Int, 10)
+        let referenceImages = try XCTUnwrap(request.json["reference_images"] as? [[String: Any]])
+        let referenceURL = try XCTUnwrap(referenceImages.first?["url"] as? String)
+        XCTAssertEqual(referenceURL, "data:image/jpeg;base64,\(imageData.base64EncodedString())")
+    }
+
     func testInteractiveOAuthMediaGenerationDoesNotBecomePreviousResponseID() throws {
         let server = try MockGrokServer(
             xaiAPIModels: ["grok-4.3", "grok-imagine-image-quality"]

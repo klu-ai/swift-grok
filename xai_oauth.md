@@ -338,13 +338,30 @@ Request body:
 
 For prompt-only video generation, the CLI defaults to 15-second output at `720p`, the highest resolution currently documented by xAI for video generation.
 
+In interactive mode, when an OAuth video model is selected, dragging or pasting a local image path into the prompt uses that image as a one-shot reference image. If the line contains only the image path, the CLI queues the image for the next video prompt. If the path and prompt are on the same line, the CLI strips the path from the prompt and sends immediately. In both cases, it reads the file, sends it as a base64 data URI in `reference_images`, and uses `duration: 10` because xAI caps reference-to-video requests at 10 seconds.
+
+Reference-to-video request body:
+
+```json
+{
+  "model": "grok-imagine-video",
+  "prompt": "A cinematic pan across the product on a marble table",
+  "reference_images": [
+    {
+      "url": "data:image/png;base64,..."
+    }
+  ],
+  "duration": 10,
+  "resolution": "720p"
+}
+```
+
 xAI also documents optional video-generation fields that the CLI does not expose yet:
 
 - `duration` or `seconds`: 1-15 seconds.
 - `aspect_ratio`: `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `3:2`, or `2:3`.
 - `resolution`: `480p` or `720p`.
 - `image`: source image for image-to-video.
-- `reference_images`: one or more reference images.
 - `output`: upload destination metadata.
 - `user`: caller-provided end-user identifier.
 
@@ -391,7 +408,7 @@ Consumed completed response shape:
 
 The CLI prints the completed video URL and clears OAuth text-continuation state after media generations, so later text requests do not send an image or video request ID as `previous_response_id`.
 
-Video edit and extension are separate documented endpoints, `POST /v1/videos/edits` and `POST /v1/videos/extensions`. Both return `request_id` and use the same `GET /v1/videos/{request_id}` polling endpoint. The CLI currently implements prompt-only text-to-video generation.
+Video edit and extension are separate documented endpoints, `POST /v1/videos/edits` and `POST /v1/videos/extensions`. Both return `request_id` and use the same `GET /v1/videos/{request_id}` polling endpoint. The CLI currently implements prompt-only text-to-video plus one-shot interactive reference-to-video from local image paths.
 
 ## Files
 
@@ -480,7 +497,7 @@ OAuth mode supports:
 - `grok auth oauth`
 - `grok models`
 - `grok message`, including prompt-only image and video generation when a media model is selected
-- Interactive chat, including prompt-only image and video generation when a media model is selected
+- Interactive chat, including prompt-only image/video generation and one-shot local image references for video models
 - `grok files list`
 - `grok files upload`
 - `grok files delete`
@@ -494,7 +511,7 @@ Web-only resources and account counters are not available in OAuth mode. Those c
 - OAuth auth failures do not trigger browser-cookie refresh.
 - Stored OAuth conversation continuity depends on `previous_response_id` and xAI's Responses API storage.
 - Image/video model IDs are listed with other API models, but they use media endpoints instead of `/v1/responses`.
-- The CLI only exposes prompt-only image and video generation today. Image edit, image-to-video, reference-to-video, video edit, video extension, media dimensions, counts, resolutions, and output upload options require future CLI flags or commands.
+- The CLI exposes prompt-only image/video generation and one-shot interactive local image references for OAuth video models. Image edit, image-to-video, video edit, video extension, media dimensions, counts, resolutions, and output upload options require future CLI flags or commands.
 - File delete path encoding currently uses the implementation's URL path encoding behavior.
 - Streaming exposes summarized reasoning deltas when xAI emits them; it does not expose private internal chain-of-thought.
 

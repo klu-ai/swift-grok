@@ -790,7 +790,7 @@ class GrokCLIApp {
     }
 
     // Send a message and get a streaming response
-    func msg(message: String, enableReasoning _: Bool = true, enableDeepSearch: Bool = false, disableSearch: Bool = false, customInstructions: String = "", temporary: Bool = false, personalityType: GrokClient.PersonalityType? = nil, mode: GrokMode? = nil, fileAttachments: [String] = [], workspaceIds: [String] = [], disabledConnectorIds: [String] = [], streamOutput: Bool = true) async throws -> AsyncThrowingStream<ConversationResponse, Error> {
+    func msg(message: String, enableReasoning _: Bool = true, enableDeepSearch: Bool = false, disableSearch: Bool = false, customInstructions: String = "", temporary: Bool = false, personalityType: GrokClient.PersonalityType? = nil, mode: GrokMode? = nil, fileAttachments: [String] = [], workspaceIds: [String] = [], disabledConnectorIds: [String] = [], streamOutput: Bool = true, xaiOAuthVideoReferenceImages: [XAIVideoReferenceImage] = []) async throws -> AsyncThrowingStream<ConversationResponse, Error> {
         let personality = personalityType ?? currentPersonality
         let selectedMode = mode ?? currentMode
         currentMode = selectedMode
@@ -827,7 +827,8 @@ class GrokCLIApp {
                                 message: message,
                                 mode: selectedMode,
                                 temporary: temporary,
-                                fileAttachments: fileAttachments
+                                fileAttachments: fileAttachments,
+                                videoReferenceImages: xaiOAuthVideoReferenceImages
                             )
                             for try await response in oauth.stream {
                                 if response.isFinal {
@@ -854,7 +855,8 @@ class GrokCLIApp {
                                 message: message,
                                 mode: selectedMode,
                                 temporary: temporary,
-                                fileAttachments: fileAttachments
+                                fileAttachments: fileAttachments,
+                                videoReferenceImages: xaiOAuthVideoReferenceImages
                             )
                             continuation.yield(response)
                         }

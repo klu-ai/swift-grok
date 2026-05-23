@@ -771,12 +771,32 @@ extension GrokCLI {
         }
         // Main chat loop
         var isRunning = true
+        var pendingVideoReferenceImages: [XAIVideoReferenceImage] = []
+        var pendingVideoReferenceFileNames: [String] = []
 
         while isRunning {
             // Get user input
             guard let input = inputReader.readLine(prompt: enableQuiet ? "" : "> ") else { break }
             let trimmedInput = input.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-            let interactiveCommand = GrokCLI.interactiveCommand(from: input)
+            let currentInputModeIsXAIOAuthVideo: Bool
+            if app.usesXAIOAuthMode() {
+                currentInputModeIsXAIOAuthVideo = await app.resolveXAIOAuthModel(state.mode).isXAIOAuthVideoGenerationModel
+            } else {
+                currentInputModeIsXAIOAuthVideo = false
+            }
+            let preParsedVideoReferenceInput: GrokCLI.InteractiveVideoReferenceInput?
+            do {
+                preParsedVideoReferenceInput = currentInputModeIsXAIOAuthVideo
+                    ? try GrokCLI.interactiveVideoReferenceInput(from: input, requiresPrompt: false)
+                    : nil
+            } catch {
+                await app.handleError(error, debug: enableDebug)
+                continue
+            }
+            var interactiveCommand = GrokCLI.interactiveCommand(from: input)
+            if preParsedVideoReferenceInput != nil {
+                interactiveCommand = nil
+            }
             let interactiveArgs: [String]
             do {
                 if interactiveCommand?.name == "skill" {
@@ -1364,6 +1384,37 @@ extension GrokCLI {
             // show thinking indicator
             do {
                 let pendingFileAttachments = app.getAttachedFileIds()
+                var videoReferenceImages = currentInputModeIsXAIOAuthVideo ? pendingVideoReferenceImages : []
+                var videoReferenceFileNames = currentInputModeIsXAIOAuthVideo ? pendingVideoReferenceFileNames : []
+                if currentInputModeIsXAIOAuthVideo {
+                    if let droppedReferenceInput = preParsedVideoReferenceInput {
+                        if droppedReferenceInput.prompt.isEmpty {
+                            pendingVideoReferenceImages = droppedReferenceInput.referenceImages
+                            pendingVideoReferenceFileNames = droppedReferenceInput.fileNames
+                            if !enableQuiet {
+                                let fileSummary = droppedReferenceInput.fileNames.count == 1
+                                    ? droppedReferenceInput.fileNames[0]
+                                    : "\(droppedReferenceInput.fileNames.count) reference images"
+                                print("Added video reference image for next prompt: \(fileSummary)".cyan)
+                            }
+                            continue
+                        }
+                        inputForSend = droppedReferenceInput.prompt
+                        videoReferenceImages.append(contentsOf: droppedReferenceInput.referenceImages)
+                        videoReferenceFileNames.append(contentsOf: droppedReferenceInput.fileNames)
+                    }
+                }
+                if !videoReferenceImages.isEmpty {
+                    guard videoReferenceImages.count <= 7 else {
+                        throw GrokError.apiError("xAI reference-to-video supports at most 7 reference images")
+                    }
+                    if !enableQuiet {
+                        let fileSummary = videoReferenceFileNames.count == 1
+                            ? videoReferenceFileNames[0]
+                            : "\(videoReferenceFileNames.count) reference images"
+                        print("Using video reference image: \(fileSummary)".cyan)
+                    }
+                }
                 let wasMultiTurnConversation = app.getCurrentConversationId() != nil
                 if !enableQuiet {
                     formatter.printThinkingStatus()
@@ -1378,7 +1429,8 @@ extension GrokCLI {
                     mode: state.mode,
                     fileAttachments: pendingFileAttachments,
                     workspaceIds: state.workspaceIds(app: app),
-                    streamOutput: state.stream
+                    streamOutput: state.stream,
+                    xaiOAuthVideoReferenceImages: videoReferenceImages
                 )
 
                 if enableQuiet {
@@ -1413,6 +1465,10 @@ extension GrokCLI {
                 }
                 if !pendingFileAttachments.isEmpty {
                     app.clearAttachedFiles()
+                }
+                if !videoReferenceImages.isEmpty {
+                    pendingVideoReferenceImages.removeAll()
+                    pendingVideoReferenceFileNames.removeAll()
                 }
                 await refreshRateLimitStatus(
                     state: &state,

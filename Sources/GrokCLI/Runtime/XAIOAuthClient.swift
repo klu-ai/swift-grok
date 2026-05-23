@@ -58,6 +58,10 @@ struct XAIVideoGenerationPollUpdate {
     let progress: Int?
 }
 
+struct XAIVideoReferenceImage: Equatable {
+    let url: String
+}
+
 private struct XAIOAuthDiscovery: Decodable {
     let issuer: String
     let authorizationEndpoint: String?
@@ -404,18 +408,24 @@ final class XAIOAuthClient {
         using credential: XAIOAuthCredential,
         modelID: String,
         prompt: String,
+        referenceImages: [XAIVideoReferenceImage] = [],
         onPoll: ((XAIVideoGenerationPollUpdate) -> Void)? = nil
     ) async throws -> XAIMediaGenerationResponse {
+        var body: [String: Any] = [
+            "model": modelID,
+            "prompt": prompt,
+            "duration": referenceImages.isEmpty ? 15 : 10,
+            "resolution": "720p"
+        ]
+        if !referenceImages.isEmpty {
+            body["reference_images"] = referenceImages.map { ["url": $0.url] }
+        }
+
         let data = try await performJSONRequest(
             path: "videos/generations",
             method: "POST",
             credential: credential,
-            body: [
-                "model": modelID,
-                "prompt": prompt,
-                "duration": 15,
-                "resolution": "720p"
-            ]
+            body: body
         )
         let json = try Self.jsonObject(from: data)
         guard let requestID = Self.stringValue(json, keys: ["request_id", "id"]), !requestID.isEmpty else {

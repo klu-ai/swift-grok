@@ -124,7 +124,8 @@ extension GrokCLIApp {
         message: String,
         mode: GrokMode,
         temporary: Bool,
-        fileAttachments: [String]
+        fileAttachments: [String],
+        videoReferenceImages: [XAIVideoReferenceImage] = []
     ) async throws -> ConversationResponse {
         let credential = try await validXAIOAuthCredential()
         let oauthClient = try XAIOAuthClient()
@@ -152,7 +153,8 @@ extension GrokCLIApp {
             let response = try await oauthClient.generateVideo(
                 using: credential,
                 modelID: resolvedMode.id,
-                prompt: message
+                prompt: message,
+                referenceImages: videoReferenceImages
             )
             let conversationId = recordXAIOAuthMediaResponse(mode: resolvedMode)
             return ConversationResponse(
@@ -189,7 +191,8 @@ extension GrokCLIApp {
         message: String,
         mode: GrokMode,
         temporary: Bool,
-        fileAttachments: [String]
+        fileAttachments: [String],
+        videoReferenceImages: [XAIVideoReferenceImage] = []
     ) async throws -> (stream: AsyncThrowingStream<ConversationResponse, Error>, mode: GrokMode) {
         let credential = try await validXAIOAuthCredential()
         let oauthClient = try XAIOAuthClient()
@@ -212,6 +215,7 @@ extension GrokCLIApp {
                                 using: credential,
                                 modelID: resolvedMode.id,
                                 prompt: message,
+                                referenceImages: videoReferenceImages,
                                 onPoll: { update in
                                     let progressSuffix = update.progress.map { " \($0)%" } ?? ""
                                     continuation.yield(ConversationResponse(
