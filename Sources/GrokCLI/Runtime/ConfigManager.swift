@@ -91,7 +91,7 @@ class ConfigManager {
     }
 
     @discardableResult
-    func saveOAuthCredential(_ credential: XAIOAuthCredential) throws -> String {
+    func saveOAuthCredential(_ credential: XAIOAuthCredential, select: Bool = true) throws -> String {
         try ensureConfigDirectoryExists()
 
         let encoder = JSONEncoder()
@@ -101,7 +101,9 @@ class ConfigManager {
 
         try data.write(to: oauthCredentialsPath, options: [.atomic])
         try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: oauthCredentialsPath.path)
-        try savePreferredAuthMode(.xaiOAuth)
+        if select {
+            try savePreferredAuthMode(.xaiOAuth)
+        }
         return oauthCredentialsPath.path
     }
 

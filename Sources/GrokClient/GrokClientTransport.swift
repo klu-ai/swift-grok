@@ -15,8 +15,8 @@ extension GrokClient {
 
     private func makeStatsigID(path: String, method: String, namespace: RestNamespace = .appChat) -> String? {
         #if canImport(CryptoKit)
-        let metaBase64 = "aTdepyfBsvO5OewwurJnUTpd+p89iA3b26j9Sw2BhK32z+fmV5t8Qxe91l75WsOp"
-        let fingerprint = "90e5cb100a3d70a3d70a3d800a3d70a3d70a3d8100"
+        let metaBase64 = "n3ZIx7mlK0v5tXOOwnOW0kx919Tg8EB66MmUtAeyFyZjNZVZ3P+DYM+SHCIrOoxZ"
+        let fingerprint = "09100b5c28f5c28f5c0b5c28f5c28f5c0b5c28f5c28f5c0b5c28f5c28f5c00"
         guard let metaBytes = Data(base64Encoded: metaBase64) else {
             return nil
         }

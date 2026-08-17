@@ -54,8 +54,8 @@ final class GrokClientRequestBuildingTests: XCTestCase {
         XCTAssertEqual(request.value(forHTTPHeaderField: "content-type"), "application/json")
         XCTAssertEqual(request.value(forHTTPHeaderField: "origin"), "https://grok.com")
         XCTAssertEqual(request.value(forHTTPHeaderField: "referer"), "https://grok.com/")
-        XCTAssertEqual(request.value(forHTTPHeaderField: "sec-ch-ua-full-version"), #""148.0.7778.168""#)
-        XCTAssertTrue(try XCTUnwrap(request.value(forHTTPHeaderField: "sec-ch-ua-full-version-list")).contains("148.0.7778.168"))
+        XCTAssertEqual(request.value(forHTTPHeaderField: "sec-ch-ua-full-version"), #""151.0.7922.138""#)
+        XCTAssertTrue(try XCTUnwrap(request.value(forHTTPHeaderField: "sec-ch-ua-full-version-list")).contains("151.0.7922.138"))
         let cookieHeader = try XCTUnwrap(request.value(forHTTPHeaderField: "Cookie"))
         XCTAssertTrue(cookieHeader.contains("__cf_bm=bm-cookie"))
         XCTAssertTrue(cookieHeader.contains("cf_clearance=cf-cookie"))
@@ -68,7 +68,11 @@ final class GrokClientRequestBuildingTests: XCTestCase {
         XCTAssertEqual(requestID, requestID.lowercased())
 
         #if canImport(CryptoKit)
-        XCTAssertFalse(try XCTUnwrap(request.value(forHTTPHeaderField: "x-statsig-id")).isEmpty)
+        let statsigID = try XCTUnwrap(request.value(forHTTPHeaderField: "x-statsig-id"))
+        XCTAssertFalse(statsigID.isEmpty)
+        let decodedStatsig = try decodeStatsigID(statsigID)
+        XCTAssertEqual(decodedStatsig.metaBase64, "n3ZIx7mlK0v5tXOOwnOW0kx919Tg8EB66MmUtAeyFyZjNZVZ3P+DYM+SHCIrOoxZ")
+        XCTAssertEqual(decodedStatsig.version, 3)
         #endif
     }
 
@@ -132,6 +136,26 @@ final class GrokClientRequestBuildingTests: XCTestCase {
         let body = try XCTUnwrap(MockURLProtocol.lastRequestBody)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
         XCTAssertTrue(json.isEmpty)
+    }
+
+    private func decodeStatsigID(_ value: String) throws -> (metaBase64: String, version: UInt8) {
+        let paddingLength = (4 - value.count % 4) % 4
+        guard var bytes = Data(base64Encoded: value + String(repeating: "=", count: paddingLength)).map(Array.init),
+              bytes.count >= 70 else {
+            throw NSError(domain: "GrokClientRequestBuildingTests", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "Invalid x-statsig-id encoding"
+            ])
+        }
+
+        let randomByte = bytes[0]
+        for index in bytes.indices.dropFirst() {
+            bytes[index] ^= randomByte
+        }
+
+        return (
+            metaBase64: Data(bytes[1..<49]).base64EncodedString(),
+            version: bytes[69]
+        )
     }
 
     private func makeClient(

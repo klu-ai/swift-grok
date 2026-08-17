@@ -19,11 +19,11 @@ public class GrokClient {
         "origin": "https://grok.com",
         "priority": "u=1, i",
         "referer": "https://grok.com/",
-        "sec-ch-ua": "\"Chromium\";v=\"148\", \"Google Chrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"",
+        "sec-ch-ua": "\"Chromium\";v=\"151\", \"Google Chrome\";v=\"151\", \"Not/A)Brand\";v=\"99\"",
         "sec-ch-ua-arch": "\"arm\"",
         "sec-ch-ua-bitness": "\"64\"",
-        "sec-ch-ua-full-version": "\"148.0.7778.168\"",
-        "sec-ch-ua-full-version-list": "\"Chromium\";v=\"148.0.7778.168\", \"Google Chrome\";v=\"148.0.7778.168\", \"Not/A)Brand\";v=\"99.0.0.0\"",
+        "sec-ch-ua-full-version": "\"151.0.7922.138\"",
+        "sec-ch-ua-full-version-list": "\"Chromium\";v=\"151.0.7922.138\", \"Google Chrome\";v=\"151.0.7922.138\", \"Not/A)Brand\";v=\"99.0.0.0\"",
         "sec-ch-ua-mobile": "?0",
         "sec-ch-ua-model": "\"\"",
         "sec-ch-ua-platform": "\"macOS\"",
@@ -31,7 +31,7 @@ public class GrokClient {
         "sec-fetch-dest": "empty",
         "sec-fetch-mode": "cors",
         "sec-fetch-site": "same-origin",
-        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
     ]
 
     enum RestNamespace {

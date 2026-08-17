@@ -963,6 +963,7 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertTrue(eventNames.contains("request"))
         XCTAssertTrue(eventNames.contains("progress"))
         XCTAssertTrue(eventNames.contains("assistant_final"))
+        XCTAssertEqual(Array(eventNames.prefix(2)), ["request", "progress"])
         XCTAssertEqual(events.last?["event"] as? String, "done")
 
         let requestEvent = try XCTUnwrap(events.first { $0["event"] as? String == "request" })
@@ -976,6 +977,43 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertEqual(finalData["message"] as? String, "Mock final response")
         XCTAssertEqual(finalData["conversationId"] as? String, "conv-e2e")
         XCTAssertEqual(finalData["responseId"] as? String, "resp-e2e")
+    }
+
+    func testMessageJSONEncodesFinalSources() throws {
+        let server = try MockGrokServer(streamLines: sourceBackedStreamLines())
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(["message", "--json", "hello sources"])
+
+        XCTAssertEqual(run.status, 0, run.cleanOutput)
+        assertNoHumanJSONBanners(in: run.stdout)
+        let data = try assertResultEnvelope(
+            try jsonObject(from: run),
+            command: "message",
+            category: "assistant_response"
+        )
+        assertSourceBackedResponseJSON(data)
+    }
+
+    func testMessageStreamingJSONEncodesFinalSources() throws {
+        let server = try MockGrokServer(streamLines: sourceBackedStreamLines())
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(["message", "--stream", "--json", "hello sources"])
+
+        XCTAssertEqual(run.status, 0, run.cleanOutput)
+        assertNoHumanJSONBanners(in: run.stdout)
+
+        let events = try jsonLines(from: run)
+        XCTAssertEqual(events.first?["event"] as? String, "request")
+        XCTAssertEqual(events.dropFirst().first?["event"] as? String, "progress")
+        let finalEvent = try XCTUnwrap(events.first { $0["event"] as? String == "assistant_final" })
+        let finalData = try XCTUnwrap(finalEvent["data"] as? [String: Any])
+        assertSourceBackedResponseJSON(finalData)
+
+        let done = try XCTUnwrap(events.last)
+        XCTAssertEqual(done["event"] as? String, "done")
+        XCTAssertEqual((done["data"] as? [String: Any])?["ok"] as? Bool, true)
     }
 
     func testStreamingJSONErrorsRemainNDJSONAndExitNonZero() throws {
@@ -1343,7 +1381,7 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertTrue(xaiOAuthModels.contains { $0["id"] as? String == "grok-4.3-fast-non-reasoning" && $0["selected"] as? Bool == true })
     }
 
-    func testSavedOAuthCredentialsTakePriorityOverSavedWebAuthMode() throws {
+    func testSavedWebAuthModeTakesPriorityOverSavedOAuthCredentials() throws {
         let server = try MockGrokServer(xaiAPIModels: ["grok-4.3", "grok-code-fast"])
         let environment = try TestEnvironment(server: server)
         let xaiAPIBaseURL = "\(server.baseURL)/v1"
@@ -1360,13 +1398,14 @@ final class GrokCLIE2ETests: XCTestCase {
         )
 
         XCTAssertEqual(run.status, 0)
-        XCTAssertFalse(run.cleanOutput.contains("Available web modes:"))
+        XCTAssertContains(run.cleanOutput, "Available web modes:")
         XCTAssertContains(run.cleanOutput, "Available xAI API models (OAuth):")
+        XCTAssertContains(run.cleanOutput, "grok-code-fast")
         XCTAssertEqual(server.requests(matchingPath: "/v1/models", method: "GET").count, 1)
-        XCTAssertEqual(server.requests(matchingPath: "/rest/modes", method: "POST").count, 0)
+        XCTAssertEqual(server.requests(matchingPath: "/rest/modes", method: "POST").count, 1)
     }
 
-    func testInteractiveModelPickerPrioritizesSavedOAuthCredentialsOverWebAuthMode() throws {
+    func testInteractiveModelListUsesSavedWebAuthModeWhenOAuthCredentialsExist() throws {
         let server = try MockGrokServer(xaiAPIModels: ["grok-4.3", "grok-code-fast"])
         let environment = try TestEnvironment(server: server)
         let xaiAPIBaseURL = "\(server.baseURL)/v1"
@@ -1379,18 +1418,16 @@ final class GrokCLIE2ETests: XCTestCase {
 
         let run = try environment.run(
             [],
-            input: "/model\n\nquit\n",
+            input: "/model list\nquit\n",
             extraEnvironment: ["GROK_XAI_API_BASE_URL": xaiAPIBaseURL]
         )
 
         XCTAssertEqual(run.status, 0)
-        XCTAssertContains(run.cleanOutput, "Select model")
+        XCTAssertContains(run.cleanOutput, "Available web modes:")
+        XCTAssertContains(run.cleanOutput, "Available xAI API models (OAuth):")
         XCTAssertContains(run.cleanOutput, "grok-4.3")
         XCTAssertContains(run.cleanOutput, "grok-code-fast")
-        XCTAssertFalse(run.cleanOutput.contains("Auto  auto"))
-        XCTAssertFalse(run.cleanOutput.contains("Fast  fast"))
-        XCTAssertFalse(run.cleanOutput.contains("Grok 4.3 (beta)"))
-        XCTAssertEqual(server.requests(matchingPath: "/rest/modes", method: "POST").count, 0)
+        XCTAssertEqual(server.requests(matchingPath: "/rest/modes", method: "POST").count, 1)
     }
 
     func testOAuthAuthModeRoutesMessageToXAIResponsesAPI() throws {
@@ -1433,6 +1470,162 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertEqual(input.first?["content"] as? String, "hello oauth")
         XCTAssertEqual(request.jsonBool("store"), true)
         XCTAssertNil(request.jsonString("previous_response_id"))
+        XCTAssertTrue(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").isEmpty)
+    }
+
+    func testCodeCommandRunsOAuthResponsesToolLoopLocally() throws {
+        let server = try MockGrokServer(
+            xaiResponseBodies: [
+                [
+                    "id": "resp-code-tool",
+                    "object": "response",
+                    "output": [[
+                        "type": "function_call",
+                        "id": "fc-code-patch",
+                        "call_id": "call-patch",
+                        "name": "apply_patch",
+                        "arguments": #"{"patch":"*** Begin Patch\n*** Add File: result.txt\n+hello from grok code\n*** End Patch"}"#
+                    ]]
+                ],
+                [
+                    "id": "resp-code-final",
+                    "object": "response",
+                    "output_text": "Created result.txt."
+                ]
+            ],
+            xaiAPIModels: ["grok-4.3", "grok-build-0.1"]
+        )
+        let environment = try TestEnvironment(server: server)
+        let workspace = environment.scratchURL.appendingPathComponent("code-workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        let xaiAPIBaseURL = "\(server.baseURL)/v1"
+        try writeSavedXAIOAuthCredential(
+            in: environment,
+            accessToken: "oauth-code-token",
+            apiBaseURL: xaiAPIBaseURL
+        )
+
+        let run = try environment.run(
+            [
+                "code",
+                "--json",
+                "--permission-mode",
+                "bypass",
+                "--cwd",
+                workspace.path,
+                "create result.txt"
+            ],
+            timeout: 20,
+            extraEnvironment: [
+                "GROK_XAI_API_BASE_URL": xaiAPIBaseURL,
+                "GROK_AUTH_MODE": "oauth"
+            ]
+        )
+
+        XCTAssertEqual(run.status, 0, run.cleanOutput)
+        assertNoHumanJSONBanners(in: run.stdout)
+        let data = try assertResultEnvelope(
+            try jsonObject(from: run),
+            command: "code",
+            category: "code_session"
+        )
+        XCTAssertEqual(data["finalAnswer"] as? String, "Created result.txt.")
+        XCTAssertEqual(data["completedTurns"] as? Int, 2)
+        XCTAssertEqual(data["responseId"] as? String, "resp-code-final")
+        XCTAssertEqual(
+            try String(contentsOf: workspace.appendingPathComponent("result.txt"), encoding: .utf8),
+            "hello from grok code"
+        )
+        let events = try XCTUnwrap(data["events"] as? [[String: Any]])
+        XCTAssertTrue(events.contains { $0["kind"] as? String == "tool_call" && $0["message"] as? String == "Calling apply_patch" })
+        XCTAssertTrue(events.contains { $0["kind"] as? String == "tool_result" && $0["message"] as? String == "apply_patch completed" })
+
+        let responseRequests = server.requests(matchingPath: "/v1/responses", method: "POST")
+        XCTAssertEqual(responseRequests.count, 2)
+        let first = try XCTUnwrap(responseRequests.first)
+        XCTAssertEqual(first.header("authorization"), "Bearer oauth-code-token")
+        XCTAssertEqual(first.jsonString("model"), "grok-build-0.1")
+        XCTAssertEqual(first.jsonBool("parallel_tool_calls"), false)
+        XCTAssertEqual(first.jsonString("tool_choice"), "auto")
+        let tools = try XCTUnwrap(first.json["tools"] as? [[String: Any]])
+        XCTAssertTrue(tools.contains { $0["name"] as? String == "run_terminal_cmd" })
+        XCTAssertTrue(tools.contains { $0["name"] as? String == "search_replace" })
+        XCTAssertTrue(tools.contains { $0["name"] as? String == "apply_patch" })
+        let firstInput = try XCTUnwrap(first.json["input"] as? [[String: Any]])
+        XCTAssertEqual(firstInput.first?["role"] as? String, "user")
+        XCTAssertContains(firstInput.first?["content"] as? String ?? "", "create result.txt")
+
+        let second = try XCTUnwrap(responseRequests.last)
+        XCTAssertEqual(second.jsonString("previous_response_id"), "resp-code-tool")
+        let secondInput = try XCTUnwrap(second.json["input"] as? [[String: Any]])
+        XCTAssertEqual(secondInput.first?["type"] as? String, "function_call_output")
+        XCTAssertEqual(secondInput.first?["call_id"] as? String, "call-patch")
+        XCTAssertContains(secondInput.first?["output"] as? String ?? "", #""ok":true"#)
+        XCTAssertTrue(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").isEmpty)
+    }
+
+    func testCodeCommandRequiresSavedOAuthCredentials() throws {
+        let server = try MockGrokServer(xaiAPIModels: ["grok-build-0.1"])
+        let environment = try TestEnvironment(server: server)
+
+        let run = try environment.run(["code", "--json", "hello"])
+
+        XCTAssertEqual(run.status, 2)
+        let error = try jsonObject(from: run)
+        XCTAssertEqual(error["ok"] as? Bool, false)
+        XCTAssertEqual(error["command"] as? String, "code")
+        XCTAssertEqual((error["error"] as? [String: Any])?["code"] as? String, "usage_error")
+        XCTAssertContains(((error["error"] as? [String: Any])?["message"] as? String) ?? "", "xAI OAuth")
+        XCTAssertTrue(server.requests(matchingPath: "/v1/responses", method: "POST").isEmpty)
+    }
+
+    func testCodeCommandUsesSavedOAuthCredentialWhenGlobalAuthModeIsWeb() throws {
+        let server = try MockGrokServer(
+            xaiResponseBodies: [[
+                "id": "resp-code-web-mode",
+                "object": "response",
+                "output_text": "oauth code path"
+            ]],
+            xaiAPIModels: ["grok-build-0.1"]
+        )
+        let environment = try TestEnvironment(server: server)
+        let workspace = environment.scratchURL.appendingPathComponent("code-web-mode-workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        let xaiAPIBaseURL = "\(server.baseURL)/v1"
+        try writeSavedXAIOAuthCredential(
+            in: environment,
+            accessToken: "oauth-code-web-mode-token",
+            apiBaseURL: xaiAPIBaseURL
+        )
+
+        let run = try environment.run(
+            [
+                "code",
+                "--json",
+                "--cwd",
+                workspace.path,
+                "confirm oauth"
+            ],
+            timeout: 20,
+            extraEnvironment: [
+                "GROK_XAI_API_BASE_URL": xaiAPIBaseURL,
+                "GROK_AUTH_MODE": "web"
+            ]
+        )
+
+        XCTAssertEqual(run.status, 0, run.cleanOutput)
+        let data = try assertResultEnvelope(
+            try jsonObject(from: run),
+            command: "code",
+            category: "code_session"
+        )
+        XCTAssertEqual(data["finalAnswer"] as? String, "oauth code path")
+
+        let responseRequests = server.requests(matchingPath: "/v1/responses", method: "POST")
+        XCTAssertEqual(responseRequests.count, 1)
+        let request = try XCTUnwrap(responseRequests.first)
+        XCTAssertEqual(request.header("authorization"), "Bearer oauth-code-web-mode-token")
+        XCTAssertEqual(request.jsonString("model"), "grok-build-0.1")
         XCTAssertTrue(server.requests(matchingPath: "/rest/app-chat/conversations/new", method: "POST").isEmpty)
     }
 
@@ -2296,6 +2489,70 @@ final class GrokCLIE2ETests: XCTestCase {
         let unknown = try environment.run(["auth", "wat"])
         XCTAssertEqual(unknown.status, 2)
         XCTAssertContains(unknown.cleanOutput, "Unknown auth command: wat")
+    }
+
+    func testAuthUseSelectsDefaultModeWithoutDeletingOtherCredentials() throws {
+        let server = try MockGrokServer(xaiAPIModels: ["grok-4.3", "grok-build-0.1"])
+        let environment = try TestEnvironment(server: server)
+        let xaiAPIBaseURL = "\(server.baseURL)/v1"
+        try writeSavedXAIOAuthCredential(
+            in: environment,
+            accessToken: "oauth-select-token",
+            apiBaseURL: xaiAPIBaseURL
+        )
+
+        let oauthUse = try environment.run(["auth", "use", "oauth"])
+        XCTAssertEqual(oauthUse.status, 0)
+        XCTAssertContains(oauthUse.cleanOutput, "Default auth mode set to: xAI OAuth")
+
+        let oauthStatus = try environment.run(["auth", "status", "--json"])
+        XCTAssertEqual(oauthStatus.status, 0)
+        let oauthStatusData = try assertResultEnvelope(
+            try jsonObject(from: oauthStatus),
+            command: "auth",
+            subcommand: "status",
+            category: "auth_status"
+        )
+        XCTAssertEqual(oauthStatusData["selectedMode"] as? String, "xai-oauth")
+        XCTAssertEqual(oauthStatusData["preferredMode"] as? String, "xai-oauth")
+        XCTAssertEqual(oauthStatusData["webAuthenticated"] as? Bool, true)
+        XCTAssertEqual(oauthStatusData["oauthAuthenticated"] as? Bool, true)
+
+        let oauthModels = try environment.run(
+            ["models"],
+            extraEnvironment: ["GROK_XAI_API_BASE_URL": xaiAPIBaseURL]
+        )
+        XCTAssertEqual(oauthModels.status, 0)
+        XCTAssertFalse(oauthModels.cleanOutput.contains("Available web modes:"))
+        XCTAssertContains(oauthModels.cleanOutput, "Available xAI API models (OAuth):")
+        XCTAssertEqual(server.requests(matchingPath: "/rest/modes", method: "POST").count, 0)
+
+        let webUse = try environment.run(["auth", "use", "web"])
+        XCTAssertEqual(webUse.status, 0)
+        XCTAssertContains(webUse.cleanOutput, "Default auth mode set to: Grok web")
+
+        let webStatus = try environment.run(["auth", "status", "--json"])
+        XCTAssertEqual(webStatus.status, 0)
+        let webStatusData = try assertResultEnvelope(
+            try jsonObject(from: webStatus),
+            command: "auth",
+            subcommand: "status",
+            category: "auth_status"
+        )
+        XCTAssertEqual(webStatusData["selectedMode"] as? String, "web")
+        XCTAssertEqual(webStatusData["preferredMode"] as? String, "web")
+        XCTAssertEqual(webStatusData["webAuthenticated"] as? Bool, true)
+        XCTAssertEqual(webStatusData["oauthAuthenticated"] as? Bool, true)
+
+        let webModeRequestsBefore = server.requests(matchingPath: "/rest/modes", method: "POST").count
+        let webModels = try environment.run(
+            ["models"],
+            extraEnvironment: ["GROK_XAI_API_BASE_URL": xaiAPIBaseURL]
+        )
+        XCTAssertEqual(webModels.status, 0)
+        XCTAssertContains(webModels.cleanOutput, "Available web modes:")
+        XCTAssertContains(webModels.cleanOutput, "Available xAI API models (OAuth):")
+        XCTAssertGreaterThan(server.requests(matchingPath: "/rest/modes", method: "POST").count, webModeRequestsBefore)
     }
 
     func testInteractiveAuthGenerateRefreshesCredentialsInPlace() throws {
@@ -4202,6 +4459,43 @@ final class GrokCLIE2ETests: XCTestCase {
         }
     }
 
+    private func sourceBackedStreamLines() -> [String] {
+        [
+            ##"{"result":{"conversation":{"conversationId":"conv-e2e"},"response":{"responseId":"resp-e2e","token":"Source-backed "}}}"##,
+            ##"{"result":{"response":{"responseId":"resp-e2e","token":"answer"}}}"##,
+            ##"{"result":{"response":{"modelResponse":{"message":"Source-backed answer","responseId":"resp-e2e","webSearchResults":[{"citationId":"1","description":"Description text","preview":"Preview text","siteName":"Example","title":"Example Report","url":"https://example.com/report"}],"xposts":[{"citationId":"2","createTime":"2026-05-24T00:00:00Z","name":"Source User","postId":"post-1","profileImageUrl":"https://example.com/avatar.jpg","text":"Post text","username":"sourceuser"}]}}}}"##
+        ]
+    }
+
+    private func assertSourceBackedResponseJSON(
+        _ data: [String: Any],
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertEqual(data["message"] as? String, "Source-backed answer", file: file, line: line)
+        let sources = data["sources"] as? [String: Any]
+        let webSearchResults = sources?["webSearchResults"] as? [[String: Any]]
+        let webResult = webSearchResults?.first
+        XCTAssertEqual(webSearchResults?.count, 1, file: file, line: line)
+        XCTAssertEqual(webResult?["url"] as? String, "https://example.com/report", file: file, line: line)
+        XCTAssertEqual(webResult?["title"] as? String, "Example Report", file: file, line: line)
+        XCTAssertEqual(webResult?["preview"] as? String, "Preview text", file: file, line: line)
+        XCTAssertEqual(webResult?["siteName"] as? String, "Example", file: file, line: line)
+        XCTAssertEqual(webResult?["description"] as? String, "Description text", file: file, line: line)
+        XCTAssertEqual(webResult?["citationId"] as? String, "1", file: file, line: line)
+
+        let xposts = sources?["xposts"] as? [[String: Any]]
+        let xpost = xposts?.first
+        XCTAssertEqual(xposts?.count, 1, file: file, line: line)
+        XCTAssertEqual(xpost?["username"] as? String, "sourceuser", file: file, line: line)
+        XCTAssertEqual(xpost?["name"] as? String, "Source User", file: file, line: line)
+        XCTAssertEqual(xpost?["text"] as? String, "Post text", file: file, line: line)
+        XCTAssertEqual(xpost?["postId"] as? String, "post-1", file: file, line: line)
+        XCTAssertEqual(xpost?["createTime"] as? String, "2026-05-24T00:00:00Z", file: file, line: line)
+        XCTAssertEqual(xpost?["profileImageUrl"] as? String, "https://example.com/avatar.jpg", file: file, line: line)
+        XCTAssertEqual(xpost?["citationId"] as? String, "2", file: file, line: line)
+    }
+
     private func writeSavedXAIOAuthCredential(
         in environment: TestEnvironment,
         accessToken: String,
@@ -4434,6 +4728,7 @@ private final class MockGrokServer {
     private let builtInSkills: [[String: Any]]
     private let userSkills: [[String: Any]]
     private let xaiAPIModels: [String]
+    private var xaiResponseBodies: [[String: Any]]?
     private let xaiResponseStreamLines: [String]?
     private var xaiVideoPollResponses: [[String: Any]]
 
@@ -4487,6 +4782,7 @@ private final class MockGrokServer {
             "description": "Mock skill description",
             "status": "enabled"
         ]],
+        xaiResponseBodies: [[String: Any]]? = nil,
         xaiResponseStreamLines: [String]? = nil,
         xaiVideoPollResponses: [[String: Any]] = [MockGrokServer.doneXAIVideoPollResponse],
         xaiAPIModels: [String] = []
@@ -4511,6 +4807,7 @@ private final class MockGrokServer {
         self.builtInSkills = builtInSkills
         self.userSkills = userSkills
         self.xaiAPIModels = xaiAPIModels
+        self.xaiResponseBodies = xaiResponseBodies
         self.xaiResponseStreamLines = xaiResponseStreamLines
         self.xaiVideoPollResponses = xaiVideoPollResponses
         self.listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: 0)!)
@@ -4639,6 +4936,9 @@ private final class MockGrokServer {
             }
             if request.jsonBool("stream") == true {
                 return xaiStreamingResponse(responseId: "resp-xai-e2e")
+            }
+            if let response = nextXAIResponseBody() {
+                return jsonResponse(response)
             }
             return jsonResponse([
                 "id": "resp-xai-e2e",
@@ -4899,6 +5199,15 @@ private final class MockGrokServer {
             "data: [DONE]"
         ]
         return HTTPResponse(body: Data(lines.joined(separator: "\n").appending("\n").utf8), contentType: "text/event-stream")
+    }
+
+    private func nextXAIResponseBody() -> [String: Any]? {
+        guard var bodies = xaiResponseBodies, !bodies.isEmpty else {
+            return nil
+        }
+        let body = bodies.removeFirst()
+        xaiResponseBodies = bodies
+        return body
     }
 
     private func nextXAIVideoPollResponse() -> [String: Any] {

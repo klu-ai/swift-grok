@@ -6,8 +6,29 @@ struct XAIOAuthResponsesStreamParser {
     private var accumulatedAnswer = ""
     private var yieldedFinal = false
     private var finished = false
+    private(set) var functionCalls: [XAIResponsesFunctionCall] = []
+    private var pendingFunctionCalls: [String: PendingFunctionCall] = [:]
 
     private typealias JSONDictionary = [String: Any]
+
+    private struct PendingFunctionCall {
+        var id: String?
+        var callID: String
+        var name: String
+        var arguments: String
+        var status: String?
+
+        var functionCall: XAIResponsesFunctionCall? {
+            guard !callID.isEmpty || !name.isEmpty else { return nil }
+            return XAIResponsesFunctionCall(
+                id: id,
+                callID: callID,
+                name: name,
+                arguments: arguments,
+                status: status
+            )
+        }
+    }
 
     mutating func consume(line: String) throws -> ConversationResponse? {
         guard !finished else { return nil }
@@ -49,6 +70,7 @@ struct XAIOAuthResponsesStreamParser {
         }
 
         updateResponseId(from: json)
+        captureFunctionCalls(from: json, type: type)
 
         if let token = outputDelta(from: json, type: type) {
             accumulatedAnswer += token
@@ -102,6 +124,105 @@ struct XAIOAuthResponsesStreamParser {
             isThinking: isThinking,
             isFinal: isFinal
         )
+    }
+
+    private mutating func captureFunctionCalls(from json: JSONDictionary, type: String) {
+        if let response = Self.dictionary(json["response"]),
+           let result = Self.responsesResult(from: response) {
+            appendFunctionCalls(result.functionCalls)
+        } else if let result = Self.responsesResult(from: json) {
+            appendFunctionCalls(result.functionCalls)
+        }
+
+        if let item = Self.dictionary(json["item"]) ?? Self.dictionary(json["output_item"]) {
+            captureFunctionCallItem(item, finalize: type.hasSuffix(".done") || type == "response.output_item.done")
+        }
+
+        if type.contains("function_call_arguments") {
+            captureFunctionCallArgumentsEvent(json, type: type)
+        } else if type.contains("function_call"),
+                  let call = XAIResponsesFunctionCall(json: json) {
+            appendFunctionCalls([call])
+        }
+    }
+
+    private mutating func captureFunctionCallItem(_ item: JSONDictionary, finalize: Bool) {
+        guard Self.stringValue(item, keys: ["type"]) == "function_call" else {
+            return
+        }
+
+        let id = Self.stringValue(item, keys: ["id"])
+        let callID = Self.stringValue(item, keys: ["call_id", "callId"]) ?? id ?? ""
+        let key = id ?? callID
+        guard !key.isEmpty else {
+            if let call = XAIResponsesFunctionCall(json: item) {
+                appendFunctionCalls([call])
+            }
+            return
+        }
+
+        var pending = pendingFunctionCalls[key] ?? PendingFunctionCall(
+            id: id,
+            callID: callID,
+            name: "",
+            arguments: "",
+            status: nil
+        )
+        pending.id = id ?? pending.id
+        pending.callID = callID.isEmpty ? pending.callID : callID
+        pending.name = Self.stringValue(item, keys: ["name"]) ?? pending.name
+        pending.arguments = Self.stringValueAllowingEmpty(item, keys: ["arguments"]) ?? pending.arguments
+        pending.status = Self.stringValue(item, keys: ["status"]) ?? pending.status
+        pendingFunctionCalls[key] = pending
+
+        if finalize, let call = pending.functionCall {
+            appendFunctionCalls([call])
+            pendingFunctionCalls.removeValue(forKey: key)
+        }
+    }
+
+    private mutating func captureFunctionCallArgumentsEvent(_ json: JSONDictionary, type: String) {
+        let key = Self.stringValue(json, keys: ["item_id", "itemId", "call_id", "callId", "output_index", "outputIndex"])
+        guard let key, !key.isEmpty else {
+            return
+        }
+
+        var pending = pendingFunctionCalls[key] ?? PendingFunctionCall(
+            id: Self.stringValue(json, keys: ["item_id", "itemId"]),
+            callID: Self.stringValue(json, keys: ["call_id", "callId"]) ?? "",
+            name: Self.stringValue(json, keys: ["name"]) ?? "",
+            arguments: "",
+            status: Self.stringValue(json, keys: ["status"])
+        )
+        pending.callID = Self.stringValue(json, keys: ["call_id", "callId"]) ?? pending.callID
+        pending.name = Self.stringValue(json, keys: ["name"]) ?? pending.name
+        pending.status = Self.stringValue(json, keys: ["status"]) ?? pending.status
+
+        if let delta = Self.stringValueAllowingEmpty(json, keys: ["delta", "arguments_delta", "argumentsDelta"]) {
+            pending.arguments += delta
+        }
+        if let arguments = Self.stringValueAllowingEmpty(json, keys: ["arguments"]) {
+            pending.arguments = arguments
+        }
+
+        pendingFunctionCalls[key] = pending
+        if type.hasSuffix(".done"), let call = pending.functionCall {
+            appendFunctionCalls([call])
+            pendingFunctionCalls.removeValue(forKey: key)
+        }
+    }
+
+    private mutating func appendFunctionCalls(_ calls: [XAIResponsesFunctionCall]) {
+        for call in calls where !call.callID.isEmpty || !call.name.isEmpty {
+            if let index = functionCalls.firstIndex(where: { existing in
+                (!call.callID.isEmpty && existing.callID == call.callID) ||
+                    (call.callID.isEmpty && !call.name.isEmpty && existing.name == call.name)
+            }) {
+                functionCalls[index] = call
+            } else {
+                functionCalls.append(call)
+            }
+        }
     }
 
     private func outputDelta(from json: JSONDictionary, type: String) -> String? {
@@ -174,6 +295,14 @@ struct XAIOAuthResponsesStreamParser {
 
     private static func firstDictionary(in value: Any?) -> JSONDictionary? {
         (value as? [JSONDictionary])?.first
+    }
+
+    private static func responsesResult(from dictionary: JSONDictionary) -> XAIResponsesResult? {
+        guard JSONSerialization.isValidJSONObject(dictionary),
+              let data = try? JSONSerialization.data(withJSONObject: dictionary) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(XAIResponsesResult.self, from: data)
     }
 
     private static func stringValue(_ dictionary: JSONDictionary?, keys: [String]) -> String? {

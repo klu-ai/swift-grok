@@ -2,6 +2,14 @@ import Foundation
 import GrokClient
 import Rainbow
 
+struct GrokAuthSelectionStatus {
+    let selectedMode: GrokAuthMode
+    let preferredMode: GrokAuthMode?
+    let environmentMode: GrokAuthMode?
+    let webCredentialsPath: String?
+    let oauthCredentialsPath: String?
+}
+
 class GrokCLIApp {
     static let shared = GrokCLIApp()
 
@@ -47,17 +55,32 @@ class GrokCLIApp {
         isQuiet
     }
 
+    private func environmentAuthMode() -> GrokAuthMode? {
+        GrokAuthMode.parse(ProcessInfo.processInfo.environment[GrokAuthMode.environmentKey])
+    }
+
     func currentAuthMode() -> GrokAuthMode {
-        if let environmentMode = GrokAuthMode.parse(ProcessInfo.processInfo.environment[GrokAuthMode.environmentKey]) {
+        if let environmentMode = environmentAuthMode() {
             return environmentMode
+        }
+
+        if let storedMode = try? configManager.loadPreferredAuthMode() {
+            switch storedMode {
+            case .web:
+                return .web
+            case .xaiOAuth:
+                if configManager.getSavedOAuthCredentialsPath() != nil {
+                    return .xaiOAuth
+                }
+            }
+        }
+
+        if configManager.getSavedCredentialsPath() != nil {
+            return .web
         }
 
         if configManager.getSavedOAuthCredentialsPath() != nil {
             return .xaiOAuth
-        }
-
-        if let storedMode = try? configManager.loadPreferredAuthMode() {
-            return storedMode
         }
 
         return .web
@@ -74,6 +97,35 @@ class GrokCLIApp {
         case .xaiOAuth:
             _ = try await validXAIOAuthCredential()
         }
+    }
+
+    func authSelectionStatus() -> GrokAuthSelectionStatus {
+        GrokAuthSelectionStatus(
+            selectedMode: currentAuthMode(),
+            preferredMode: try? configManager.loadPreferredAuthMode(),
+            environmentMode: environmentAuthMode(),
+            webCredentialsPath: configManager.getSavedCredentialsPath(),
+            oauthCredentialsPath: configManager.getSavedOAuthCredentialsPath()
+        )
+    }
+
+    func selectAuthMode(_ mode: GrokAuthMode) throws -> GrokAuthSelectionStatus {
+        switch mode {
+        case .web:
+            guard configManager.getSavedCredentialsPath() != nil else {
+                throw GrokError.apiError("No saved Grok web credentials. Run `grok auth` first.")
+            }
+        case .xaiOAuth:
+            guard configManager.getSavedOAuthCredentialsPath() != nil else {
+                throw GrokError.apiError("No saved xAI OAuth credentials. Run `grok auth oauth` first.")
+            }
+        }
+
+        try configManager.savePreferredAuthMode(mode)
+        client = nil
+        cachedModes = nil
+        cachedSubscriptionDisplayName = nil
+        return authSelectionStatus()
     }
 
     func unsupportedInCurrentAuthMode(_ capability: String) -> GrokError {

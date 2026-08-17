@@ -73,6 +73,14 @@ grok auth import /path/to/credentials.json
 The credential JSON contains browser cookies, so keep it private and do not commit it.
 See [Advanced Configuration](#advanced-configuration) for the exact credential rules and storage paths.
 
+If both browser-cookie auth and xAI OAuth credentials are saved, select the default mode without deleting either credential:
+
+```bash
+grok auth use web
+grok auth use oauth
+grok auth status
+```
+
 ## Advanced Configuration
 
 Most installs do not need these settings, but they are useful for custom installs,

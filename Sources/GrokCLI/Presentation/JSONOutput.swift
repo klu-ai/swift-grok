@@ -204,6 +204,7 @@ extension GrokCLI {
             throw GrokError.apiError("Could not encode JSON output")
         }
         print(json)
+        fflush(stdout)
     }
 
     static func anyCodable<T: Encodable>(_ value: T) throws -> AnyCodable {
@@ -365,8 +366,8 @@ extension GrokCLI {
             "responseId": AnyCodable(response.responseId),
             "model": AnyCodable(modeJSON(mode)),
             "sources": AnyCodable([
-                "webSearchResults": AnyCodable(response.webSearchResults ?? []),
-                "xposts": AnyCodable(response.xposts ?? [])
+                "webSearchResults": AnyCodable((response.webSearchResults ?? []).map(webSearchResultJSON)),
+                "xposts": AnyCodable((response.xposts ?? []).map(xPostJSON))
             ]),
             "request": AnyCodable(request)
         ]
@@ -378,6 +379,43 @@ extension GrokCLI {
         }
         if let timestamp = response.timestamp {
             data["timestamp"] = AnyCodable(timestamp.timeIntervalSince1970)
+        }
+        return data
+    }
+
+    static func webSearchResultJSON(_ result: WebSearchResult) -> [String: AnyCodable] {
+        var data: [String: AnyCodable] = [
+            "url": AnyCodable(result.url),
+            "title": AnyCodable(result.title),
+            "preview": AnyCodable(result.preview)
+        ]
+        if let siteName = result.siteName {
+            data["siteName"] = AnyCodable(siteName)
+        }
+        if let description = result.description {
+            data["description"] = AnyCodable(description)
+        }
+        if let citationId = result.citationId {
+            data["citationId"] = AnyCodable(citationId)
+        }
+        return data
+    }
+
+    static func xPostJSON(_ post: XPost) -> [String: AnyCodable] {
+        var data: [String: AnyCodable] = [
+            "username": AnyCodable(post.username),
+            "name": AnyCodable(post.name),
+            "text": AnyCodable(post.text),
+            "postId": AnyCodable(post.postId)
+        ]
+        if let createTime = post.createTime {
+            data["createTime"] = AnyCodable(createTime)
+        }
+        if let profileImageUrl = post.profileImageUrl {
+            data["profileImageUrl"] = AnyCodable(profileImageUrl)
+        }
+        if let citationId = post.citationId {
+            data["citationId"] = AnyCodable(citationId)
         }
         return data
     }

@@ -130,51 +130,14 @@ private struct XAIModelsResponse: Decodable {
     let data: [Model]
 }
 
-private struct XAIResponseCreateResponse: Decodable {
-    struct OutputItem: Decodable {
-        struct ContentItem: Decodable {
-            let text: String?
-            let type: String?
-        }
-
-        let content: [ContentItem]?
-        let text: String?
-    }
-
-    let id: String
-    let output: [OutputItem]?
-    let outputText: String?
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case output
-        case outputText = "output_text"
-    }
-
-    var flattenedText: String? {
-        if let outputText, !outputText.isEmpty {
-            return outputText
-        }
-
-        let pieces = output?.flatMap { item -> [String] in
-            var values: [String] = []
-            if let text = item.text, !text.isEmpty {
-                values.append(text)
-            }
-            values.append(contentsOf: item.content?.compactMap(\.text).filter { !$0.isEmpty } ?? [])
-            return values
-        } ?? []
-
-        return pieces.isEmpty ? nil : pieces.joined(separator: "\n")
-    }
-}
-
 final class XAIOAuthClient {
     private static let defaultDiscoveryURL = "https://auth.x.ai/.well-known/openid-configuration"
     private static let defaultAPIBaseURL = "https://api.x.ai/v1"
     private static let defaultClientID = "b1a00492-073a-47ea-816f-4c329264a828"
     private static let defaultScope = "openid profile email offline_access grok-cli:access api:access"
     private static let deviceGrantType = "urn:ietf:params:oauth:grant-type:device_code"
+    private static let defaultRequestTimeoutSeconds: TimeInterval = 600
+    private static let defaultResourceTimeoutSeconds: TimeInterval = 900
 
     private let session: URLSession
     private let discoveryURL: URL
@@ -184,8 +147,12 @@ final class XAIOAuthClient {
     private let allowsLocalEndpoints: Bool
     private let videoPollIntervalNanoseconds: UInt64
 
-    init(environment: [String: String] = ProcessInfo.processInfo.environment, session: URLSession = .shared) throws {
-        self.session = session
+    init(environment: [String: String] = ProcessInfo.processInfo.environment, session: URLSession? = nil) throws {
+        if let session {
+            self.session = session
+        } else {
+            self.session = Self.defaultSession(environment: environment)
+        }
         self.clientID = environment["GROK_XAI_OAUTH_CLIENT_ID"]?.trimmedNonEmpty ?? Self.defaultClientID
         self.scope = environment["GROK_XAI_OAUTH_SCOPE"]?.trimmedNonEmpty ?? Self.defaultScope
         self.allowsLocalEndpoints = environment["GROK_XAI_OAUTH_ALLOW_LOCAL"] == "1" ||
@@ -208,6 +175,30 @@ final class XAIOAuthClient {
             name: "xAI API base URL",
             allowLocal: allowsLocalEndpoints
         )
+    }
+
+    private static func defaultSession(environment: [String: String]) -> URLSession {
+        let requestTimeout = positiveTimeout(
+            environment["GROK_XAI_API_TIMEOUT_SECONDS"],
+            fallback: defaultRequestTimeoutSeconds
+        )
+        let resourceTimeout = positiveTimeout(
+            environment["GROK_XAI_API_RESOURCE_TIMEOUT_SECONDS"],
+            fallback: max(defaultResourceTimeoutSeconds, requestTimeout)
+        )
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = requestTimeout
+        configuration.timeoutIntervalForResource = max(resourceTimeout, requestTimeout)
+        return URLSession(configuration: configuration)
+    }
+
+    private static func positiveTimeout(_ value: String?, fallback: TimeInterval) -> TimeInterval {
+        guard let value,
+              let timeout = TimeInterval(value.trimmingCharacters(in: .whitespacesAndNewlines)),
+              timeout > 0 else {
+            return fallback
+        }
+        return timeout
     }
 
     func authenticateWithDeviceCode(onDeviceCode: (XAIDeviceAuthorization) -> Void) async throws -> XAIOAuthCredential {
@@ -321,12 +312,72 @@ final class XAIOAuthClient {
             )
         )
 
-        do {
-            let decoded = try JSONDecoder().decode(XAIResponseCreateResponse.self, from: data)
-            return (decoded.id, decoded.flattenedText)
-        } catch {
-            throw GrokError.decodingError(error)
-        }
+        let result = try decodeResponsesResult(from: data)
+        let text = result.finalText.isEmpty ? nil : result.finalText
+        return (result.id, text)
+    }
+
+    func createResponseWithTools(
+        using credential: XAIOAuthCredential,
+        modelID: String,
+        message: String,
+        tools: [XAIResponsesToolDefinition],
+        previousResponseID: String?,
+        store: Bool,
+        fileAttachmentIDs: [String] = [],
+        toolChoice: XAIResponsesToolChoice? = nil,
+        parallelToolCalls: Bool? = false,
+        maxOutputTokens: Int? = nil
+    ) async throws -> XAIResponsesResult {
+        let data = try await performJSONRequest(
+            path: "responses",
+            method: "POST",
+            credential: credential,
+            body: try responsesRequestBody(
+                modelID: modelID,
+                input: [.userMessage(message, fileAttachmentIDs: fileAttachmentIDs)],
+                previousResponseID: previousResponseID,
+                store: store,
+                tools: tools,
+                toolChoice: toolChoice,
+                parallelToolCalls: parallelToolCalls,
+                maxOutputTokens: maxOutputTokens,
+                stream: false
+            )
+        )
+
+        return try decodeResponsesResult(from: data)
+    }
+
+    func continueResponseWithToolOutputs(
+        using credential: XAIOAuthCredential,
+        modelID: String,
+        previousResponseID: String,
+        toolOutputs: [XAIResponsesFunctionCallOutput],
+        store: Bool,
+        tools: [XAIResponsesToolDefinition] = [],
+        toolChoice: XAIResponsesToolChoice? = nil,
+        parallelToolCalls: Bool? = false,
+        maxOutputTokens: Int? = nil
+    ) async throws -> XAIResponsesResult {
+        let data = try await performJSONRequest(
+            path: "responses",
+            method: "POST",
+            credential: credential,
+            body: try responsesRequestBody(
+                modelID: modelID,
+                input: toolOutputs.map(XAIResponsesInputItem.functionCallOutput),
+                previousResponseID: previousResponseID,
+                store: store,
+                tools: tools,
+                toolChoice: toolChoice,
+                parallelToolCalls: parallelToolCalls,
+                maxOutputTokens: maxOutputTokens,
+                stream: false
+            )
+        )
+
+        return try decodeResponsesResult(from: data)
     }
 
     func streamResponse(
@@ -580,6 +631,39 @@ final class XAIOAuthClient {
         ]
     }
 
+    private func responsesRequestBody(
+        modelID: String,
+        input: [XAIResponsesInputItem],
+        previousResponseID: String?,
+        store: Bool,
+        tools: [XAIResponsesToolDefinition],
+        toolChoice: XAIResponsesToolChoice?,
+        parallelToolCalls: Bool?,
+        maxOutputTokens: Int?,
+        stream: Bool
+    ) throws -> [String: Any] {
+        let body = XAIResponsesRequestBody(
+            model: modelID,
+            input: input,
+            store: store,
+            previousResponseID: previousResponseID?.trimmedNonEmpty,
+            maxOutputTokens: maxOutputTokens,
+            stream: stream ? true : nil,
+            tools: tools.isEmpty ? nil : tools,
+            toolChoice: toolChoice,
+            parallelToolCalls: parallelToolCalls
+        )
+        return try Self.jsonDictionary(from: body)
+    }
+
+    private func decodeResponsesResult(from data: Data) throws -> XAIResponsesResult {
+        do {
+            return try JSONDecoder().decode(XAIResponsesResult.self, from: data)
+        } catch {
+            throw GrokError.decodingError(error)
+        }
+    }
+
     private func performJSONRequest(
         path: String,
         method: String,
@@ -699,6 +783,16 @@ final class XAIOAuthClient {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw GrokError.decodingError(
                 DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Expected JSON object"))
+            )
+        }
+        return json
+    }
+
+    private static func jsonDictionary<T: Encodable>(from value: T) throws -> [String: Any] {
+        let data = try JSONEncoder().encode(value)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw GrokError.decodingError(
+                DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Expected encoded JSON object"))
             )
         }
         return json

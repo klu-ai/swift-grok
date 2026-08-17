@@ -12,7 +12,6 @@ extension GrokCLI {
             }
             .joined(separator: "\n")
 
-        // Grok Code is disabled: the code harness concept will not work with grok.com because tool calls happen server side.
         print("""
 
          ██████╗ ██████╗  ██████╗ ██╗  ██╗
@@ -29,6 +28,7 @@ extension GrokCLI {
         Running just 'grok' with no commands starts an interactive chat session.
 
         Commands:
+          code <task>        - Run Grok Code with local OAuth tool calls
           chat              - Start an interactive chat session
           message <text>    - Send a message to Grok and exit
           transcribe <file>  - Transcribe audio and print the text
@@ -95,10 +95,14 @@ extension GrokCLI {
                                             - Upload a file, attach it, and ask in one call
           grok message --json Explain this briefly  - Send a message and print JSON
           grok message --stream --json Draft a note  - Stream NDJSON events
+          grok code --permission-mode bypass "Add tests"
+                                            - Run Grok Code using xAI OAuth
           grok message --audio note.webm --raw --quiet - Send an audio transcript
           grok transcribe note.webm                  - Print an audio transcript
           grok auth                                 - Generate new credentials from browser cookies
+          grok auth status                          - Show selected auth mode
           grok auth oauth                           - Sign in with xAI OAuth device code
+          grok auth use web                         - Select browser-cookie auth by default
           grok auth generate --json                  - Generate credentials and print JSON
           grok auth import /path/to/credentials.json --json
                                                     - Import credentials and print JSON

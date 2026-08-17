@@ -94,6 +94,23 @@ extension GrokCLI {
                 jsonRequested: jsonRequested
             )
 
+        case "status":
+            try handleAuthStatusCommand(
+                app: app,
+                jsonRequested: jsonRequested,
+                quietRequested: quietRequested
+            )
+
+        case "use":
+            try handleAuthUseCommand(
+                app: app,
+                args: Array(args.dropFirst()),
+                exitOnFailure: exitOnGenerateFailure,
+                exitOnUsageError: exitOnUsageError,
+                jsonRequested: jsonRequested,
+                quietRequested: quietRequested
+            )
+
         case "oauth":
             await handleXAIOAuthCommand(
                 app: app,
@@ -174,6 +191,98 @@ extension GrokCLI {
                 if exitOnUsageError {
                     exit(with: 2)
                 }
+            }
+        }
+    }
+
+    static func handleAuthStatusCommand(
+        app: GrokCLIApp,
+        jsonRequested: Bool,
+        quietRequested: Bool
+    ) throws {
+        let status = app.authSelectionStatus()
+        if jsonRequested {
+            try printJSONResult(
+                command: "auth",
+                subcommand: "status",
+                category: "auth_status",
+                data: AnyCodable(authSelectionJSON(action: "status", status: status))
+            )
+            return
+        }
+
+        guard !quietRequested else {
+            return
+        }
+
+        printAuthSelectionStatus(status)
+    }
+
+    static func handleAuthUseCommand(
+        app: GrokCLIApp,
+        args: [String],
+        exitOnFailure: Bool,
+        exitOnUsageError: Bool,
+        jsonRequested: Bool,
+        quietRequested: Bool
+    ) throws {
+        let useArgs = args.filter { $0 != "--quiet" }
+        if containsHelpArgument(useArgs) {
+            printAuthUseUsage()
+            return
+        }
+
+        guard useArgs.count == 1 else {
+            let message = "Usage: grok auth use <web|oauth>"
+            if jsonRequested {
+                printJSONError(command: "auth", subcommand: "use", message: message, code: "usage_error", exitCode: 2)
+            } else {
+                print("Error: \(message)".red)
+            }
+            if exitOnUsageError {
+                exit(with: 2)
+            }
+            return
+        }
+
+        guard let mode = GrokAuthMode.parse(useArgs[0]) else {
+            let message = "Unknown auth mode: \(useArgs[0]). Use web or oauth."
+            if jsonRequested {
+                printJSONError(command: "auth", subcommand: "use", message: message, code: "usage_error", exitCode: 2)
+            } else {
+                print("Error: \(message)".red)
+            }
+            if exitOnUsageError {
+                exit(with: 2)
+            }
+            return
+        }
+
+        do {
+            let status = try app.selectAuthMode(mode)
+            if jsonRequested {
+                try printJSONResult(
+                    command: "auth",
+                    subcommand: "use",
+                    category: "auth_result",
+                    data: AnyCodable(authSelectionJSON(action: "use", status: status))
+                )
+            } else if !quietRequested {
+                print("Default auth mode set to: \(mode.displayName)".green)
+                if let environmentMode = status.environmentMode {
+                    print("Current process is still using \(environmentMode.displayName) from \(GrokAuthMode.environmentKey).".yellow)
+                }
+            }
+        } catch {
+            if jsonRequested {
+                printJSONError(command: "auth", subcommand: "use", error: error, exitCode: 1)
+            } else if quietRequested {
+                CLIOutput.stderr("Error selecting auth mode: \(error.localizedDescription)")
+            } else {
+                print("Error selecting auth mode: \(error.localizedDescription)".red)
+            }
+            if exitOnFailure {
+                processExit(1)
             }
         }
     }
@@ -502,6 +611,21 @@ extension GrokCLI {
         return data
     }
 
+    static func authSelectionJSON(action: String, status: GrokAuthSelectionStatus) -> [String: AnyCodable] {
+        [
+            "action": AnyCodable(action),
+            "selectedMode": AnyCodable(status.selectedMode.rawValue),
+            "selectedModeDisplayName": AnyCodable(status.selectedMode.displayName),
+            "preferredMode": AnyCodable(status.preferredMode?.rawValue ?? ""),
+            "environmentMode": AnyCodable(status.environmentMode?.rawValue ?? ""),
+            "environmentKey": AnyCodable(GrokAuthMode.environmentKey),
+            "webAuthenticated": AnyCodable(status.webCredentialsPath != nil),
+            "webCredentialsPath": AnyCodable(status.webCredentialsPath ?? ""),
+            "oauthAuthenticated": AnyCodable(status.oauthCredentialsPath != nil),
+            "oauthCredentialsPath": AnyCodable(status.oauthCredentialsPath ?? "")
+        ]
+    }
+
     static func oauthVerificationJSON(_ verification: XAIOAuthVerificationResult) -> [String: AnyCodable] {
         var data: [String: AnyCodable] = [
             "modelCount": AnyCodable(verification.models.count),
@@ -525,6 +649,8 @@ extension GrokCLI {
     static func printAuthUsage() {
         print("Auth commands:".cyan)
         print("  auth          - Generate new credentials from browser cookies")
+        print("  status        - Show saved auth credentials and selected default")
+        print("  use <mode>    - Select default auth mode: web or oauth")
         print("  generate      - Generate new credentials from browser cookies")
         print("  oauth         - Sign in with xAI OAuth device code")
         print("  safari        - Generate credentials from Safari")
@@ -551,6 +677,14 @@ extension GrokCLI {
         """)
     }
 
+    static func printAuthUseUsage() {
+        print("""
+        Usage: grok auth use <web|oauth> [--json|--format json]
+
+        Selects the default auth mode without deleting saved credentials for the other mode.
+        """)
+    }
+
     static func printAuthOAuthUsage() {
         print("""
         Usage: grok auth oauth [login|status|verify] [options] [--json|--format json]
@@ -562,6 +696,32 @@ extension GrokCLI {
           --verify-response Verify the Responses API with a tiny test request
           --quiet           Suppress nonessential output
         """)
+    }
+
+    static func printAuthSelectionStatus(_ status: GrokAuthSelectionStatus) {
+        if let environmentMode = status.environmentMode {
+            print("Selected auth mode: \(status.selectedMode.displayName) (\(GrokAuthMode.environmentKey))".cyan)
+            if let preferredMode = status.preferredMode {
+                print("Default auth mode: \(preferredMode.displayName)".cyan)
+            }
+            print("Environment override: \(environmentMode.rawValue)")
+        } else {
+            print("Selected auth mode: \(status.selectedMode.displayName)".cyan)
+            if let preferredMode = status.preferredMode {
+                print("Default auth mode: \(preferredMode.displayName)")
+            }
+        }
+
+        let webStatus = status.webCredentialsPath == nil ? "missing" : "active"
+        let oauthStatus = status.oauthCredentialsPath == nil ? "missing" : "active"
+        print("Grok web credentials: \(webStatus)")
+        if let path = status.webCredentialsPath {
+            print("  Saved to: \(path)")
+        }
+        print("xAI OAuth credentials: \(oauthStatus)")
+        if let path = status.oauthCredentialsPath {
+            print("  Saved to: \(path)")
+        }
     }
 
 

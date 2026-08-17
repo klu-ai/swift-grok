@@ -7,13 +7,14 @@ This repo supports an xAI OAuth mode that is separate from Grok web cookie auth.
 `GrokCLIApp.currentAuthMode()` resolves auth in this order:
 
 1. `GROK_AUTH_MODE`, when it parses successfully.
-2. A saved `xai-oauth.json` credential.
-3. A saved `auth-mode.json` preference.
-4. Web cookie auth.
+2. A saved `auth-mode.json` preference from the last successful login, import, generate, or `grok auth use` command.
+3. Web cookie auth, when saved browser credentials exist.
+4. A saved `xai-oauth.json` credential.
+5. Web cookie auth.
 
 Accepted OAuth aliases are `oauth`, `xai`, `xai-oauth`, and `xai-oauth-api`. Accepted web aliases are `web`, `cookie`, `cookies`, `browser`, and `grok`.
 
-When OAuth credentials exist, the CLI prefers OAuth automatically. Use `GROK_AUTH_MODE=web` to force web-cookie mode for a single command.
+When both browser cookies and OAuth credentials exist, the saved selected mode is the default. Use `grok auth use web` or `grok auth use oauth` to change that default without deleting either credential. Use `GROK_AUTH_MODE=web` or `GROK_AUTH_MODE=oauth` to force a mode for a single process.
 
 ## Environment
 

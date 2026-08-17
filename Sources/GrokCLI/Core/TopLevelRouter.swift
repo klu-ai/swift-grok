@@ -76,31 +76,30 @@ extension GrokCLI {
         """)
     }
 
-    // Grok Code is disabled: the code harness concept will not work with grok.com because tool calls happen server side.
-    // static func printCodeUsage() {
-    //     print("""
-    //     Usage: grok code [options] [task...]
-    //            grok code restore --backup <path>
-    //
-    //     Starts Grok Code mode. With task args, queues the task and exits after the current scaffold turn.
-    //
-    //     Options:
-    //       --model, --mode <mode>      Use expert (default), beta/grok-4.3-beta, heavy, or a raw modeId
-    //       --format <md|raw|json>      Choose output format
-    //       --json                      Emit scriptable JSON output
-    //       --private                   Do not save Grok conversations created by code mode
-    //       --permission-mode <mode>    Use default, read-only, accept-edits, bypass, or plan
-    //       --prompt-file <path>        Read the code task from a UTF-8 text file
-    //       --dry-run-settings          Enter the settings-scope hook without applying real settings changes
-    //       --max-turns <count>         Stop after a positive number of scaffold turns
-    //       --agent-timeout-seconds <n> Stop a stalled agent response after n seconds
-    //
-    //     Restore:
-    //       grok code restore --backup ~/.config/grok-cli/code-mode/settings-backups/<file>.json
-    //
-    //     Code mode installs temporary coding agents, runs a local transcript and tool loop, then restores settings on exit.
-    //     """)
-    // }
+    static func printCodeUsage() {
+        print("""
+        Usage: grok code [options] [task...]
+
+        Starts the Grok Code command/session shell using xAI OAuth. With task args, records the task, assembles a code-mode prompt, and runs the Responses tool loop.
+
+        Options:
+          --model, --mode <model>       Use an explicit xAI API model
+          --format <md|raw|json|streaming-json>
+                                       Choose output format
+          --json                       Emit scriptable JSON output
+          --private                    Mark the session private in local state
+          --permission-mode <mode>     Use default, read-only, accept-edits, bypass, or plan
+          --prompt-file <path>         Read the code task from a UTF-8 text file
+          --max-turns <count>          Stop after a positive number of agent turns
+          --tools <csv>                Restrict active tool names
+          --disallowed-tools <csv>     Disable specific tool names
+          --rules <text|@file>         Add an instruction rule or read one from a file
+          --cwd <path>                 Run the session in another working directory
+
+        Default model resolution prefers grok-build-0.1, then the first /v1/models ID containing grok-build.
+        Code mode requires xAI OAuth credentials. Run: grok auth oauth
+        """)
+    }
 
     static func printTranscribeUsage() {
         print("""
@@ -144,14 +143,11 @@ extension GrokCLI {
     }
 
     static let recognizedTopLevelCommands: Set<String> = [
-        // Grok Code is disabled: the code harness concept will not work with grok.com because tool calls happen server side.
-        // "code",
-        "chat", "message", "auth", "help", "list", "models", "modes", "agents", "tasks",
+        "code", "chat", "message", "auth", "help", "list", "models", "modes", "agents", "tasks",
         "skills", "workspaces", "workspace", "files", "transcribe", "test"
     ]
 
     static let disabledTopLevelCommands: Set<String> = [
-        "code"
     ]
 
     static func normalizedTopLevelArguments(_ arguments: [String]) -> [String] {
@@ -203,8 +199,6 @@ extension GrokCLI {
             "--no-custom-instructions",
             "--private",
             "--stream"
-            // Grok Code is disabled: the code harness concept will not work with grok.com because tool calls happen server side.
-            // "--dry-run-settings"
         ].contains(arg)
     }
 
@@ -219,11 +213,13 @@ extension GrokCLI {
             "--prompt-file",
             "--file",
             "--upload",
-            "--attach"
-            // Grok Code is disabled: the code harness concept will not work with grok.com because tool calls happen server side.
-            // "--permission-mode",
-            // "--max-turns",
-            // "--agent-timeout-seconds"
+            "--attach",
+            "--permission-mode",
+            "--max-turns",
+            "--tools",
+            "--disallowed-tools",
+            "--rules",
+            "--cwd"
         ].contains(arg)
     }
 
@@ -237,11 +233,13 @@ extension GrokCLI {
             arg.hasPrefix("--prompt-file=") ||
             arg.hasPrefix("--file=") ||
             arg.hasPrefix("--upload=") ||
-            arg.hasPrefix("--attach=")
-            // Grok Code is disabled: the code harness concept will not work with grok.com because tool calls happen server side.
-            // arg.hasPrefix("--permission-mode=") ||
-            // arg.hasPrefix("--max-turns=") ||
-            // arg.hasPrefix("--agent-timeout-seconds=")
+            arg.hasPrefix("--attach=") ||
+            arg.hasPrefix("--permission-mode=") ||
+            arg.hasPrefix("--max-turns=") ||
+            arg.hasPrefix("--tools=") ||
+            arg.hasPrefix("--disallowed-tools=") ||
+            arg.hasPrefix("--rules=") ||
+            arg.hasPrefix("--cwd=")
     }
 
 
@@ -273,7 +271,7 @@ extension GrokCLI {
         }
 
         if disabledTopLevelCommands.contains(command) {
-            print("Grok Code is disabled: the code harness concept will not work with grok.com because tool calls happen server side.")
+            print("Command '\(command)' is disabled.")
             return
         }
 
@@ -294,9 +292,8 @@ extension GrokCLI {
             try await handleChatCommand(args: remainingArgs, exitOnParseError: true)
         case "message":
             try await handleMessageCommand(args: remainingArgs, exitOnError: true)
-        // Grok Code is disabled: the code harness concept will not work with grok.com because tool calls happen server side.
-        // case "code":
-        //     try await handleCodeCommand(args: remainingArgs, exitOnError: true)
+        case "code":
+            try await handleCodeCommand(args: remainingArgs, exitOnError: true)
         case "transcribe":
             try await handleTranscribeCommand(args: remainingArgs, exitOnError: true)
         case "auth":

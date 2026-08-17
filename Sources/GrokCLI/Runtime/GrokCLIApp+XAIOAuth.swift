@@ -10,7 +10,7 @@ extension GrokCLIApp {
         if credential.expiresSoon {
             let oauthClient = try XAIOAuthClient()
             credential = try await oauthClient.refresh(credential)
-            _ = try configManager.saveOAuthCredential(credential)
+            _ = try configManager.saveOAuthCredential(credential, select: false)
         }
 
         return credential
@@ -37,7 +37,7 @@ extension GrokCLIApp {
         let oauthClient = try XAIOAuthClient()
         if credential.expiresSoon {
             credential = try await oauthClient.refresh(credential)
-            _ = try configManager.saveOAuthCredential(credential)
+            _ = try configManager.saveOAuthCredential(credential, select: false)
         }
 
         let models = try await oauthClient.listModels(using: credential)
@@ -72,7 +72,7 @@ extension GrokCLIApp {
             let oauthClient = try XAIOAuthClient()
             if credential.expiresSoon {
                 credential = try await oauthClient.refresh(credential)
-                _ = try configManager.saveOAuthCredential(credential)
+                _ = try configManager.saveOAuthCredential(credential, select: false)
             }
 
             let modelIDs = try await oauthClient.listModels(using: credential)
