@@ -161,8 +161,33 @@ extension GrokCLI {
                 agent: agent,
                 toolRegistry: toolRegistry
             )
-            let state = try await session.run(task: task)
-            try printCodeState(state, task: task)
+            if let task {
+                let state = try await session.run(task: task)
+                try printCodeState(state, task: task)
+            } else if options.outputFormat == .json || options.outputFormat == .streamingJSON || isatty(STDIN_FILENO) == 0 {
+                let state = try await session.run(task: nil)
+                try printCodeState(state, task: nil)
+            } else {
+                print("Grok Code".green.bold + " - Interactive session shell".dim)
+                print("Model: \(options.resolvedModel?.displayName ?? "grok-build") | Permission: \(options.permissionMode.rawValue)")
+                print("Type a coding task, or '/exit' / '/quit' to leave.\n")
+                while true {
+                    print("grok-code> ".cyan.bold, terminator: "")
+                    fflush(stdout)
+                    guard let line = readLine(strippingNewline: true) else {
+                        print("")
+                        break
+                    }
+                    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if trimmed.isEmpty { continue }
+                    if trimmed == "/exit" || trimmed == "/quit" || trimmed == "exit" || trimmed == "quit" {
+                        break
+                    }
+                    let state = try await session.run(task: trimmed)
+                    try printCodeState(state, task: trimmed)
+                    print("")
+                }
+            }
         }
     }
 

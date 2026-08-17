@@ -73,15 +73,17 @@ struct GrokCodePromptAssembler {
     private func projectInstructions(startingAt cwd: URL) -> String? {
         var path = cwd.standardizedFileURL.path
         var seen: Set<String> = []
+        var collectedFiles: [(path: String, content: String)] = []
 
         while !seen.contains(path) {
             seen.insert(path)
             let candidate = URL(fileURLWithPath: path).appendingPathComponent("AGENTS.md")
             if let text = try? String(contentsOf: candidate, encoding: .utf8),
                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return text.count > 40_000
+                let trimmed = text.count > 40_000
                     ? String(text.prefix(40_000)) + "\n[AGENTS.md truncated]"
                     : text
+                collectedFiles.append((path: candidate.path, content: trimmed))
             }
 
             if path == "/" {
@@ -94,6 +96,17 @@ struct GrokCodePromptAssembler {
             path = parent
         }
 
-        return nil
+        guard !collectedFiles.isEmpty else {
+            return nil
+        }
+
+        let ordered = collectedFiles.reversed()
+        if ordered.count == 1 {
+            return ordered.first?.content
+        }
+
+        return ordered.map { file in
+            "### Instructions from \(file.path)\n\(file.content)"
+        }.joined(separator: "\n\n")
     }
 }

@@ -700,16 +700,34 @@ private enum GrokCodePath {
         let url = expanded.hasPrefix("/")
             ? URL(fileURLWithPath: expanded)
             : workingDirectory.appendingPathComponent(expanded)
-        let resolved = url.standardizedFileURL
-        guard isDescendant(resolved, of: workingDirectory.standardizedFileURL) else {
+        let resolved = resolveCanonicalPath(url)
+        let resolvedWorkingDir = resolveCanonicalPath(workingDirectory)
+        guard isDescendant(resolved, of: resolvedWorkingDir) else {
             throw GrokCodeToolError.permissionDenied("Path must stay inside the workspace.")
         }
         return resolved
     }
 
+    static func resolveCanonicalPath(_ url: URL) -> URL {
+        var current = url.standardizedFileURL
+        var missingComponents: [String] = []
+        let fileManager = FileManager.default
+
+        while !fileManager.fileExists(atPath: current.path) && current.path != "/" && current.pathComponents.count > 1 {
+            missingComponents.insert(current.lastPathComponent, at: 0)
+            current = current.deletingLastPathComponent().standardizedFileURL
+        }
+
+        var canonical = current.resolvingSymlinksInPath().standardizedFileURL
+        for component in missingComponents {
+            canonical = canonical.appendingPathComponent(component).standardizedFileURL
+        }
+        return canonical
+    }
+
     static func displayPath(_ url: URL, relativeTo root: URL) -> String {
-        let rootPath = root.standardizedFileURL.path
-        let path = url.standardizedFileURL.path
+        let rootPath = resolveCanonicalPath(root).path
+        let path = resolveCanonicalPath(url).path
         if path == rootPath {
             return "."
         }
@@ -720,8 +738,8 @@ private enum GrokCodePath {
     }
 
     static func isDescendant(_ url: URL, of root: URL) -> Bool {
-        let rootPath = root.standardizedFileURL.path
-        let path = url.standardizedFileURL.path
+        let rootPath = resolveCanonicalPath(root).path
+        let path = resolveCanonicalPath(url).path
         return path == rootPath || path.hasPrefix(rootPath + "/")
     }
 
@@ -871,6 +889,25 @@ private enum GrokCodeProcess {
             try? inputPipe.fileHandleForWriting.close()
         }
 
+        var stdoutData = Data()
+        var stderrData = Data()
+        let stdoutQueue = DispatchQueue(label: "grok.process.stdout")
+        let stderrQueue = DispatchQueue(label: "grok.process.stderr")
+        let stdoutGroup = DispatchGroup()
+        let stderrGroup = DispatchGroup()
+
+        stdoutGroup.enter()
+        stdoutQueue.async {
+            stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
+            stdoutGroup.leave()
+        }
+
+        stderrGroup.enter()
+        stderrQueue.async {
+            stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
+            stderrGroup.leave()
+        }
+
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         while process.isRunning && Date() < deadline {
             Thread.sleep(forTimeInterval: 0.05)
@@ -880,8 +917,9 @@ private enum GrokCodeProcess {
             throw GrokCodeToolError.executionFailed("Command timed out after \(Int(timeoutSeconds))s.")
         }
 
-        let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
+        _ = stdoutGroup.wait(timeout: .now() + 2.0)
+        _ = stderrGroup.wait(timeout: .now() + 2.0)
+
         return GrokCodeProcessResult(
             exitCode: process.terminationStatus,
             stdout: String(data: stdoutData, encoding: .utf8) ?? "",

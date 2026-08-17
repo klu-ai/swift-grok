@@ -106,6 +106,10 @@ struct GrokCodeOAuthResponsesAgent: GrokCodeResponsesAgent {
                 throw GrokError.apiError("Responses API returned tool calls without a response id")
             }
 
+            guard completedTurns < request.maxTurns else {
+                break
+            }
+
             response = try await client.continueResponseWithToolOutputs(
                 using: credential,
                 modelID: request.model.id,
