@@ -1,6 +1,10 @@
 If I ask you a question, answer it, it doesn't mean do something. If I want you to do something, I will tell you directly to do it.
 
-After completing a plan, run build and install so user can test on path
+ALWAYS use gpt-5.5 or better for sub agents workers, 5.4 mini is acceptable for exploration searches, but not for analysis search
+
+After executing every implementation task inside an approved plan, run build and install so the user can test the finished work from PATH.
+
+NEVER run build, tests, or install for plan-only requests, research-only requests, questions, or documentation-only edits unless the user explicitly asks for verification commands.
 
 -----
 

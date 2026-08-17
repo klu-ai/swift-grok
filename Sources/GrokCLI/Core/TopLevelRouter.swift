@@ -58,6 +58,8 @@ extension GrokCLI {
           --quiet                     Suppress UI/status output; useful with --raw in scripts
           --stdin                     Read the message from stdin
           --prompt-file <path>        Read the message from a UTF-8 text file
+          --file, --upload <path>     Upload and attach a local file before sending
+          --attach <fileId>           Attach an existing Grok file ID before sending
           --audio <path|->            Transcribe audio and send the transcript as the message
           --audio-format <format>     Required with --audio - or unknown file extensions
           --refinement-level <level>  Speech-to-text refinement level
@@ -71,6 +73,31 @@ extension GrokCLI {
         JSON mode writes only JSON to stdout. Human progress and debug banners are suppressed.
         With --stream --json, output is NDJSON: one JSON event object per line.
         With --raw --quiet, stdout contains only assistant answer text.
+        """)
+    }
+
+    static func printCodeUsage() {
+        print("""
+        Usage: grok code [options] [task...]
+
+        Starts the Grok Code command/session shell using xAI OAuth. With task args, records the task, assembles a code-mode prompt, and runs the Responses tool loop.
+
+        Options:
+          --model, --mode <model>       Use an explicit xAI API model
+          --format <md|raw|json|streaming-json>
+                                       Choose output format
+          --json                       Emit scriptable JSON output
+          --private                    Mark the session private in local state
+          --permission-mode <mode>     Use default, read-only, accept-edits, bypass, or plan
+          --prompt-file <path>         Read the code task from a UTF-8 text file
+          --max-turns <count>          Stop after a positive number of agent turns
+          --tools <csv>                Restrict active tool names
+          --disallowed-tools <csv>     Disable specific tool names
+          --rules <text|@file>         Add an instruction rule or read one from a file
+          --cwd <path>                 Run the session in another working directory
+
+        Default model resolution prefers grok-build-0.1, then the first /v1/models ID containing grok-build.
+        Code mode requires xAI OAuth credentials. Run: grok auth oauth
         """)
     }
 
@@ -99,9 +126,11 @@ extension GrokCLI {
     static func printListUsage() {
         print("""
         Usage: grok list [--json|--format json] [--conversation <conversationId>] [--debug]
+               grok list delete <conversationId> --yes [--json|--format json]
 
         Lists saved conversations and optionally loads one by number.
         With JSON output, prints conversation JSON to stdout instead of opening the selector.
+        Delete is scriptable and requires --yes.
         """)
     }
 
@@ -114,8 +143,11 @@ extension GrokCLI {
     }
 
     static let recognizedTopLevelCommands: Set<String> = [
-        "chat", "message", "auth", "help", "list", "models", "modes", "agents", "tasks",
+        "code", "chat", "message", "auth", "help", "list", "models", "modes", "agents", "tasks",
         "skills", "workspaces", "workspace", "files", "transcribe", "test"
+    ]
+
+    static let disabledTopLevelCommands: Set<String> = [
     ]
 
     static func normalizedTopLevelArguments(_ arguments: [String]) -> [String] {
@@ -146,7 +178,7 @@ extension GrokCLI {
         }
 
         let candidate = arguments[index].lowercased()
-        guard recognizedTopLevelCommands.contains(candidate) || isHelpArgument(candidate) else {
+        guard recognizedTopLevelCommands.contains(candidate) || disabledTopLevelCommands.contains(candidate) || isHelpArgument(candidate) else {
             return arguments
         }
 
@@ -171,7 +203,24 @@ extension GrokCLI {
     }
 
     private static func isTopLevelValueOption(_ arg: String) -> Bool {
-        ["--format", "--model", "--mode", "--audio", "--audio-format", "--refinement-level", "--prompt-file"].contains(arg)
+        [
+            "--format",
+            "--model",
+            "--mode",
+            "--audio",
+            "--audio-format",
+            "--refinement-level",
+            "--prompt-file",
+            "--file",
+            "--upload",
+            "--attach",
+            "--permission-mode",
+            "--max-turns",
+            "--tools",
+            "--disallowed-tools",
+            "--rules",
+            "--cwd"
+        ].contains(arg)
     }
 
     private static func isInlineTopLevelValueOption(_ arg: String) -> Bool {
@@ -181,7 +230,16 @@ extension GrokCLI {
             arg.hasPrefix("--audio=") ||
             arg.hasPrefix("--audio-format=") ||
             arg.hasPrefix("--refinement-level=") ||
-            arg.hasPrefix("--prompt-file=")
+            arg.hasPrefix("--prompt-file=") ||
+            arg.hasPrefix("--file=") ||
+            arg.hasPrefix("--upload=") ||
+            arg.hasPrefix("--attach=") ||
+            arg.hasPrefix("--permission-mode=") ||
+            arg.hasPrefix("--max-turns=") ||
+            arg.hasPrefix("--tools=") ||
+            arg.hasPrefix("--disallowed-tools=") ||
+            arg.hasPrefix("--rules=") ||
+            arg.hasPrefix("--cwd=")
     }
 
 
@@ -198,6 +256,11 @@ extension GrokCLI {
         let command = arguments[0].lowercased() // Convert to lowercase for case-insensitive comparison
         let remainingArgs = Array(arguments.dropFirst())
 
+        if command == "--version" || command == "-v" {
+            print("SwiftGrok CLI")
+            return
+        }
+
         if command == "--help" || command == "-h" {
             if isJSONRequested(arguments) {
                 try printHelpJSON()
@@ -205,6 +268,19 @@ extension GrokCLI {
                 showHelp()
             }
             return
+        }
+
+        if disabledTopLevelCommands.contains(command) {
+            if isJSONRequested(arguments) {
+                printJSONError(
+                    command: command,
+                    message: "Command '\(command)' is disabled.",
+                    exitCode: 1
+                )
+            } else {
+                print("Command '\(command)' is disabled.")
+            }
+            exit(with: 1)
         }
 
         // Check if first argument is a recognized command
@@ -224,6 +300,8 @@ extension GrokCLI {
             try await handleChatCommand(args: remainingArgs, exitOnParseError: true)
         case "message":
             try await handleMessageCommand(args: remainingArgs, exitOnError: true)
+        case "code":
+            try await handleCodeCommand(args: remainingArgs, exitOnError: true)
         case "transcribe":
             try await handleTranscribeCommand(args: remainingArgs, exitOnError: true)
         case "auth":
@@ -236,18 +314,36 @@ extension GrokCLI {
         case "list":
             try await handleListCommand(args: remainingArgs, exitOnError: true)
         case "models", "modes":
-            let modes = await GrokCLIApp.shared.loadModes()
-            if isJSONRequested(remainingArgs) {
+            let app = GrokCLIApp.shared
+            if containsHelpArgument(remainingArgs) {
+                printModelsUsage()
+                printAvailableModels(currentMode: app.getCurrentMode(), modes: GrokMode.knownModes)
+            } else if isJSONRequested(remainingArgs) {
+                let xaiOAuthMode = app.usesXAIOAuthMode()
+                let modes = xaiOAuthMode ? [] : await app.loadModes()
+                let xaiOAuthModelIDs = await app.loadXAIOAuthModelIDsIfAvailable()
+                let currentMode = xaiOAuthMode ? await app.resolveXAIOAuthModel(app.getCurrentMode()) : app.getCurrentMode()
                 try printJSONResult(
                     command: command == "modes" ? "modes" : "models",
                     category: "model_list",
-                    data: AnyCodable(selectedModelJSON(currentMode: GrokCLIApp.shared.getCurrentMode(), modes: modes))
+                    data: AnyCodable(selectedModelJSON(
+                        currentMode: currentMode,
+                        modes: modes,
+                        xaiOAuthModelIDs: xaiOAuthModelIDs,
+                        xaiOAuthSelectable: xaiOAuthMode
+                    ))
                 )
-            } else if containsHelpArgument(remainingArgs) {
-                printModelsUsage()
-                printAvailableModels(currentMode: GrokCLIApp.shared.getCurrentMode(), modes: modes)
             } else {
-                printAvailableModels(currentMode: GrokCLIApp.shared.getCurrentMode(), modes: modes)
+                let xaiOAuthMode = app.usesXAIOAuthMode()
+                let modes = xaiOAuthMode ? [] : await app.loadModes()
+                let xaiOAuthModelIDs = await app.loadXAIOAuthModelIDsIfAvailable()
+                let currentMode = xaiOAuthMode ? await app.resolveXAIOAuthModel(app.getCurrentMode()) : app.getCurrentMode()
+                printAvailableModels(
+                    currentMode: currentMode,
+                    modes: modes,
+                    xaiOAuthModelIDs: xaiOAuthModelIDs,
+                    xaiOAuthSelectable: xaiOAuthMode
+                )
             }
         case "agents":
             try await handleAgentsCommand(args: remainingArgs, exitOnError: true)

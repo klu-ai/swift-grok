@@ -73,6 +73,14 @@ grok auth import /path/to/credentials.json
 The credential JSON contains browser cookies, so keep it private and do not commit it.
 See [Advanced Configuration](#advanced-configuration) for the exact credential rules and storage paths.
 
+If both browser-cookie auth and xAI OAuth credentials are saved, select the default mode without deleting either credential:
+
+```bash
+grok auth use web
+grok auth use oauth
+grok auth status
+```
+
 ## Advanced Configuration
 
 Most installs do not need these settings, but they are useful for custom installs,
@@ -149,6 +157,77 @@ Human mode may print status text and terminal UI on stdout. JSON mode reserves s
 
 `grok message` uses exactly one prompt source: inline message arguments, `--prompt-file <path>`, or stdin. If no inline message or prompt file is supplied and stdin is piped, stdin is used automatically. `--stdin` is also available when you want to make that choice explicit.
 
+Attach documents to a one-shot message with repeatable `--file` / `--upload` options for local paths, or `--attach <fileId>` for an already-uploaded Grok file:
+
+```bash
+grok message --file paper.pdf --raw --quiet "What is novel or meaningful from this document?"
+```
+
+<!--
+Grok Code is disabled: the code harness concept will not work with grok.com because tool calls happen server side.
+
+## Grok Code
+
+`grok code` starts a local coding harness for repository work. Unlike `grok chat`, code mode keeps its own transcript, permission decisions, tool results, and agent roles so coding sessions do not depend on one long Grok web conversation.
+
+Start an interactive coding session:
+
+```bash
+grok code
+```
+
+Run one task from the shell:
+
+```bash
+grok code --model expert "review the proxy streaming path"
+grok code --model grok-4.3-beta --permission-mode ask "add retry coverage"
+```
+
+Code mode installs four temporary Grok agent customizations while it is running:
+
+- Strategy/coordinator for planning and task routing.
+- Architecture for system shape, interfaces, and integration risks.
+- Engineering for implementation details and focused code edits.
+- Security for credential, logging, and permission boundaries.
+
+### Settings Backup And Restore
+
+On entry, `grok code` fetches your Grok user settings and saves a raw backup under `~/.config/grok-cli/code-mode/settings-backups/`. It keeps the reusable Grok Code personas in `agentLibrary.agents`, backs up your current active agents into the library, and copies the four Grok Code library personas onto active slots 0-3. Before each remote role call, it activates that role through Grok settings and sends only task/context text. On normal exit, EOF, errors, and supported interrupts, it restores the original active agents and agent library from the raw backup.
+
+If automatic restore fails, the CLI prints the backup path and a recovery command:
+
+```text
+grok code restore --backup ~/.config/grok-cli/code-mode/settings-backups/<timestamp>.json
+```
+
+Keep these backup files private because they are snapshots of your account settings. They should not contain browser cookies, but they can contain custom agent names and instructions.
+
+### Permission Modes
+
+Code mode gates local tools before they run. The default is conservative and asks before actions that can modify files, run commands with side effects, or touch networked services.
+
+Common permission modes:
+
+- `--permission-mode ask`: prompt before unsafe or externally visible actions.
+- `--permission-mode read-only`: allow repository inspection only.
+- `--permission-mode workspace-write`: allow edits inside the current workspace while continuing to gate destructive or external actions.
+- `--permission-mode trusted`: allow the full local coding harness for sessions where you have already reviewed the task and repository scope.
+
+Use read-only mode for audits and planning:
+
+```bash
+grok code --permission-mode read-only "map the proxy request flow"
+```
+
+### Local Sample Task
+
+The repository includes a sample prompt for an end-to-end Grok Code fixture at `examples/grok-code/typescript-openai-proxy-task.md`. It asks Grok Code to create a local TypeScript OpenAI-compatible proxy fixture backed by this project, with no live network calls required during verification.
+
+```bash
+grok code --permission-mode workspace-write "$(cat examples/grok-code/typescript-openai-proxy-task.md)"
+```
+-->
+
 ## Audio And Transcription
 
 Use `--audio` when the prompt should come from a local audio file:
@@ -222,6 +301,7 @@ grok chat --format=json "explain AsyncSequence"
 grok models --json
 grok models --format json
 grok tasks list --format json
+grok tasks show <taskId> --format json
 grok tasks create --prompt "Check this tomorrow" --name "Follow up" --json
 grok list --json
 grok list --conversation <conversationId> --json
@@ -320,6 +400,11 @@ List and create tasks:
 
 ```bash
 grok tasks list
+grok tasks inactive
+grok tasks show <taskId>
+grok tasks results <taskId>
+grok tasks results <taskId> --limit 10
+grok tasks chat <taskId> --run previous --message "Explain this run"
 grok tasks create --prompt "Check this tomorrow" --name "Follow up"
 grok tasks archive <taskId>
 ```

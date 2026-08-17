@@ -26,6 +26,14 @@ class ConfigManager {
         return configDirectory.appendingPathComponent("credentials.json")
     }
 
+    private var oauthCredentialsPath: URL {
+        return configDirectory.appendingPathComponent("xai-oauth.json")
+    }
+
+    private var authModePath: URL {
+        return configDirectory.appendingPathComponent("auth-mode.json")
+    }
+
     // Create config directory if it doesn't exist
     private func ensureConfigDirectoryExists() throws {
         var isDirectory: ObjCBool = false
@@ -34,9 +42,37 @@ class ConfigManager {
         }
     }
 
+    // Grok Code is disabled: the code harness concept will not work with grok.com because tool calls happen server side.
+//    func codeModeSettingsDirectory() throws -> URL {
+//        try ensureConfigDirectoryExists()
+//        let directory = configDirectory.appendingPathComponent("code-mode", isDirectory: true)
+//        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+//        return directory
+//    }
+//
+//    func codeModeSettingsBackupsDirectory() throws -> URL {
+//        let directory = try codeModeSettingsDirectory().appendingPathComponent("settings-backups", isDirectory: true)
+//        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+//        return directory
+//    }
+//
+//    func codeModeSessionsDirectory() throws -> URL {
+//        let directory = try codeModeSettingsDirectory().appendingPathComponent("sessions", isDirectory: true)
+//        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+//        return directory
+//    }
+//
+//    func activeCodeModeSettingsScopePath() throws -> URL {
+//        try codeModeSettingsDirectory().appendingPathComponent("active-settings-scope.json")
+//    }
+
     // Get path to saved credentials if they exist
     func getSavedCredentialsPath() -> String? {
         return fileManager.fileExists(atPath: credentialsPath.path) ? credentialsPath.path : nil
+    }
+
+    func getSavedOAuthCredentialsPath() -> String? {
+        return fileManager.fileExists(atPath: oauthCredentialsPath.path) ? oauthCredentialsPath.path : nil
     }
 
     // Save path to credentials
@@ -51,6 +87,53 @@ class ConfigManager {
         // Save to the credentials path
         try data.write(to: credentialsPath)
         try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: credentialsPath.path)
+        try savePreferredAuthMode(.web)
+    }
+
+    @discardableResult
+    func saveOAuthCredential(_ credential: XAIOAuthCredential, select: Bool = true) throws -> String {
+        try ensureConfigDirectoryExists()
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(credential)
+
+        try data.write(to: oauthCredentialsPath, options: [.atomic])
+        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: oauthCredentialsPath.path)
+        if select {
+            try savePreferredAuthMode(.xaiOAuth)
+        }
+        return oauthCredentialsPath.path
+    }
+
+    func loadOAuthCredential() throws -> XAIOAuthCredential? {
+        guard fileManager.fileExists(atPath: oauthCredentialsPath.path) else {
+            return nil
+        }
+
+        let data = try Data(contentsOf: oauthCredentialsPath)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(XAIOAuthCredential.self, from: data)
+    }
+
+    func savePreferredAuthMode(_ mode: GrokAuthMode) throws {
+        try ensureConfigDirectoryExists()
+
+        let data = try JSONEncoder().encode(["mode": mode.rawValue])
+        try data.write(to: authModePath, options: [.atomic])
+        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: authModePath.path)
+    }
+
+    func loadPreferredAuthMode() throws -> GrokAuthMode? {
+        guard fileManager.fileExists(atPath: authModePath.path) else {
+            return nil
+        }
+
+        let data = try Data(contentsOf: authModePath)
+        let payload = try JSONDecoder().decode([String: String].self, from: data)
+        return GrokAuthMode.parse(payload["mode"])
     }
 
     private func validatedCredentialCookies(from data: Data, context: String) throws -> [String: String] {
@@ -146,6 +229,7 @@ class ConfigManager {
         }
 
         try validateSavedCredentials()
+        try savePreferredAuthMode(.web)
 
         return credentialsPath.path
     }

@@ -204,6 +204,7 @@ extension GrokCLI {
             throw GrokError.apiError("Could not encode JSON output")
         }
         print(json)
+        fflush(stdout)
     }
 
     static func anyCodable<T: Encodable>(_ value: T) throws -> AnyCodable {
@@ -223,6 +224,8 @@ extension GrokCLI {
             return "auth_error"
         case .accessDenied:
             return "access_denied"
+        case .antiBotRejected:
+            return "anti_bot_rejected"
         case .networkError:
             return "network_error"
         case .decodingError:
@@ -242,6 +245,8 @@ extension GrokCLI {
         }
         switch grokError {
         case .invalidCredentials, .unauthorized:
+            return true
+        case .antiBotRejected:
             return true
         case .accessDenied:
             return false
@@ -308,14 +313,43 @@ extension GrokCLI {
         return json
     }
 
-    static func selectedModelJSON(currentMode: GrokMode, modes: [GrokMode] = GrokMode.knownModes) -> [String: AnyCodable] {
-        [
+    static func selectedModelJSON(
+        currentMode: GrokMode,
+        modes: [GrokMode] = GrokMode.knownModes,
+        xaiOAuthModelIDs: [String] = [],
+        xaiOAuthSelectable: Bool = false
+    ) -> [String: AnyCodable] {
+        var seenOAuthModelIDs = Set<String>()
+        let uniqueOAuthModelIDs = xaiOAuthModelIDs.compactMap { modelID -> String? in
+            let trimmed = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seenOAuthModelIDs.insert(trimmed).inserted else {
+                return nil
+            }
+            return trimmed
+        }
+        return [
             "currentModel": AnyCodable(modeJSON(currentMode)),
             "models": AnyCodable(modes.map { mode in
                 var item = modeJSON(mode)
                 item["selected"] = AnyCodable(mode.id == currentMode.id)
                 return item
-            })
+            }),
+            "xaiOAuthModels": AnyCodable(uniqueOAuthModelIDs.map { modelID in
+                var json: [String: AnyCodable] = [
+                    "id": AnyCodable(modelID),
+                    "source": AnyCodable("xai_oauth_api"),
+                    "selected": AnyCodable(xaiOAuthSelectable && modelID == currentMode.id),
+                    "disabled": AnyCodable(!xaiOAuthSelectable)
+                ]
+                if !xaiOAuthSelectable {
+                    json["unavailableReason"] = AnyCodable("OAuth API model; web chat uses web modes")
+                }
+                return json
+            }),
+            "modelSources": AnyCodable([
+                "webModes": AnyCodable(modes.count),
+                "xaiOAuthModels": AnyCodable(uniqueOAuthModelIDs.count)
+            ])
         ]
     }
 
@@ -325,22 +359,63 @@ extension GrokCLI {
         request: [String: AnyCodable],
         input: [String: AnyCodable]? = nil
     ) -> [String: AnyCodable] {
+        let visibleMessage = GrokStreamMarkupParser.visibleText(from: response.message)
         var data: [String: AnyCodable] = [
-            "message": AnyCodable(response.message),
+            "message": AnyCodable(visibleMessage),
             "conversationId": AnyCodable(response.conversationId),
             "responseId": AnyCodable(response.responseId),
             "model": AnyCodable(modeJSON(mode)),
             "sources": AnyCodable([
-                "webSearchResults": AnyCodable(response.webSearchResults ?? []),
-                "xposts": AnyCodable(response.xposts ?? [])
+                "webSearchResults": AnyCodable((response.webSearchResults ?? []).map(webSearchResultJSON)),
+                "xposts": AnyCodable((response.xposts ?? []).map(xPostJSON))
             ]),
             "request": AnyCodable(request)
         ]
+        if visibleMessage != response.message {
+            data["rawMessage"] = AnyCodable(response.message)
+        }
         if let input {
             data["input"] = AnyCodable(input)
         }
         if let timestamp = response.timestamp {
             data["timestamp"] = AnyCodable(timestamp.timeIntervalSince1970)
+        }
+        return data
+    }
+
+    static func webSearchResultJSON(_ result: WebSearchResult) -> [String: AnyCodable] {
+        var data: [String: AnyCodable] = [
+            "url": AnyCodable(result.url),
+            "title": AnyCodable(result.title),
+            "preview": AnyCodable(result.preview)
+        ]
+        if let siteName = result.siteName {
+            data["siteName"] = AnyCodable(siteName)
+        }
+        if let description = result.description {
+            data["description"] = AnyCodable(description)
+        }
+        if let citationId = result.citationId {
+            data["citationId"] = AnyCodable(citationId)
+        }
+        return data
+    }
+
+    static func xPostJSON(_ post: XPost) -> [String: AnyCodable] {
+        var data: [String: AnyCodable] = [
+            "username": AnyCodable(post.username),
+            "name": AnyCodable(post.name),
+            "text": AnyCodable(post.text),
+            "postId": AnyCodable(post.postId)
+        ]
+        if let createTime = post.createTime {
+            data["createTime"] = AnyCodable(createTime)
+        }
+        if let profileImageUrl = post.profileImageUrl {
+            data["profileImageUrl"] = AnyCodable(profileImageUrl)
+        }
+        if let citationId = post.citationId {
+            data["citationId"] = AnyCodable(citationId)
         }
         return data
     }
@@ -477,12 +552,46 @@ extension GrokCLI {
         }
         if let isEnabled = task.isEnabled ?? boolValue(in: raw, keys: ["isEnabled", "is_enabled"]) {
             data["isEnabled"] = AnyCodable(isEnabled)
-            data["status"] = AnyCodable(enabledStatus(isEnabled) ?? "")
+        }
+        if let scheduleIsEnabled = scheduleEnabled(in: raw) {
+            data["scheduleIsEnabled"] = AnyCodable(scheduleIsEnabled)
+        }
+        if let status = taskStatus(task) {
+            data["status"] = AnyCodable(status)
         }
         if let schedule = scheduleValue(in: raw) {
             data["schedule"] = AnyCodable(schedule)
         }
-        data["raw"] = AnyCodable(task.rawJSON)
+        return data
+    }
+
+    static func taskResultJSON(_ result: GrokTaskResult) -> [String: AnyCodable] {
+        let raw = jsonDictionary(from: result)
+        var data: [String: AnyCodable] = [:]
+        if let id = result.resultId ?? result.id ?? stringValue(in: raw, keys: ["taskResultId", "task_result_id", "resultId", "result_id", "id"]) {
+            data["id"] = AnyCodable(id)
+        }
+        if let resultId = result.resultId ?? stringValue(in: raw, keys: ["taskResultId", "task_result_id", "resultId", "result_id"]) {
+            data["resultId"] = AnyCodable(resultId)
+        }
+        if let taskId = result.taskId ?? stringValue(in: raw, keys: ["taskId", "task_id"]) {
+            data["taskId"] = AnyCodable(taskId)
+        }
+        if let conversationId = result.conversationId ?? stringValue(in: raw, keys: ["conversationId", "conversation_id"]) {
+            data["conversationId"] = AnyCodable(conversationId)
+        }
+        if let responseId = result.responseId ?? stringValue(in: raw, keys: ["responseId", "response_id"]) {
+            data["responseId"] = AnyCodable(responseId)
+        }
+        if let message = result.message ?? stringValue(in: raw, keys: ["summary", "message", "content", "output", "text", "result"]) {
+            data["message"] = AnyCodable(message)
+        }
+        if let status = result.status ?? stringValue(in: raw, keys: ["status", "state"]) {
+            data["status"] = AnyCodable(status)
+        }
+        if let created = stringValue(in: raw, keys: ["createTime", "createdAt", "created_at", "completedAt", "completed_at", "lastRunAt", "last_run_at"]) {
+            data["created"] = AnyCodable(created)
+        }
         return data
     }
 
@@ -507,7 +616,6 @@ extension GrokCLI {
         if let description = stringValue(in: raw, keys: ["description", "summary"]) {
             data["description"] = AnyCodable(description)
         }
-        data["raw"] = AnyCodable(skill.rawJSON)
         return data
     }
 
@@ -534,7 +642,6 @@ extension GrokCLI {
         if let customPersonality = workspace.customPersonality {
             data["customPersonality"] = AnyCodable(customPersonality)
         }
-        data["raw"] = AnyCodable(workspace.rawJSON)
         return data
     }
 
@@ -549,7 +656,6 @@ extension GrokCLI {
         if let mimeType = asset.mimeType {
             data["mimeType"] = AnyCodable(mimeType)
         }
-        data["raw"] = AnyCodable(asset.rawJSON)
         return data
     }
 
@@ -564,7 +670,6 @@ extension GrokCLI {
         if let asset = response.asset {
             data["asset"] = AnyCodable(assetJSON(asset))
         }
-        data["raw"] = response.rawJSON
         return data
     }
 }

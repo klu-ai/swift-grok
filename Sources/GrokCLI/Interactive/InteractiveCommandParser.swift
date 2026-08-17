@@ -49,10 +49,30 @@ extension GrokCLI {
         return isBareInteractiveCommand(command) ? command : nil
     }
 
+    static func parseSkillCreatePrompt(from remainder: String) throws -> String {
+        let trimmed = remainder.trimmingCharacters(in: .whitespacesAndNewlines)
+        var commandEnd = trimmed.startIndex
+        while commandEnd < trimmed.endIndex, !trimmed[commandEnd].isWhitespace {
+            commandEnd = trimmed.index(after: commandEnd)
+        }
+
+        let subcommand = String(trimmed[..<commandEnd]).lowercased()
+        guard subcommand == "create" else {
+            throw GrokError.apiError("Usage: /skill create <prompt>")
+        }
+
+        let prompt = String(trimmed[commandEnd...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else {
+            throw GrokError.apiError("Usage: /skill create <prompt>")
+        }
+        return prompt
+    }
+
     static func isBareInteractiveCommand(_ command: InteractiveCommand) -> Bool {
         let exactCommands: Set<String> = [
-            "exit", "quit", "help", "new", "list",
-            "clear", "cls", "reset-conversation", "special"
+            "exit", "quit", "help", "new", "resume", "list",
+            "clear", "cls", "limits"
+//            "special"
         ]
         if exactCommands.contains(command.name) {
             return command.isExact
@@ -65,7 +85,7 @@ extension GrokCLI {
 
         let toggleCommands: Set<String> = [
             "reason", "reasoning",
-            "private", "stream",
+            "private", "stream", "typeahead",
             "md", "markdown", "raw"
         ]
         if toggleCommands.contains(command.name) {
@@ -90,9 +110,13 @@ extension GrokCLI {
             return OutputFormat.resolve(String(parts[0])) != nil
         }
 
+        if command.name == "goal" {
+            return true
+        }
+
         let groupSubcommands: [String: Set<String>] = [
-            "auth": Set(["generate", "import", "help", "-h", "--help"]).union(authBrowserNames),
-            "tasks": ["list", "create", "archive", "help", "-h", "--help", "--json", "--debug"],
+            "auth": Set(["generate", "import", "oauth", "help", "-h", "--help"]).union(authBrowserNames),
+            "tasks": ["list", "select", "show", "details", "detail", "results", "result", "create", "archive", "help", "-h", "--help", "--json", "--debug"],
             "skills": ["list", "mine", "user", "help", "-h", "--help", "--json", "--debug"],
             "agents": ["list", "show", "view", "edit", "set", "clear", "help", "-h", "--help", "--replace", "--include-instructions", "--show-instructions", "--json", "--debug"],
             "workspaces": ["list", "create", "add-conversation", "delete", "remove", "conversation", "select", "help", "-h", "--help", "--json", "--debug"],

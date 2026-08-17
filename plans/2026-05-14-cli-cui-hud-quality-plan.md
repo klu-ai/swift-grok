@@ -8,7 +8,7 @@ Implement a more highly designed interactive terminal experience for the Swift `
 
 - [ ] Interactive `grok` sessions show a compact, stable, project-first HUD before each prompt with no key/value colon labels, no permanent command cheat sheet, and only non-default state.
 - [ ] `/help`, slash completion, command suggestions, typo hints, and command examples are generated from one command registry.
-- [ ] Streaming responses render a clean transcript with stable `Grok:` answer headers and a per-turn activity timeline for thinking/search/tool events.
+- [ ] Streaming responses render a clean transcript with stable `Grok` answer headers and a per-turn activity timeline for thinking/search/tool events.
 - [ ] Model, workspace, file, and conversation selection use one reusable fuzzy picker with previews and keyboard hints.
 - [ ] Terminal colors and labels come from semantic style helpers rather than scattered ad hoc `.cyan`, `.yellow`, `.green`, `.red`.
 - [ ] Existing JSON/quiet/raw outputs remain script-safe and do not receive HUD or decorative CUI output.
@@ -24,7 +24,7 @@ Implement a more highly designed interactive terminal experience for the Swift `
 - [x] `Sources/GrokCLI/Core/TopLevelRouter.swift` recognizes top-level entries such as `modes`, `workspace`, and `test`; the command registry must cover top-level help as well as interactive slash help.
 - [x] `Sources/GrokCLI/Interactive/InteractiveModelCommands.swift` has a bespoke raw-mode arrow picker for model selection.
 - [x] `Sources/GrokCLI/Interactive/InteractiveMenus.swift` has simple numbered workspace/file pickers.
-- [x] `Sources/GrokCLI/Presentation/OutputFormatter.swift` renders `Thinking`, `Grok:`, markdown, tables, sources, and interactive help.
+- [x] `Sources/GrokCLI/Presentation/OutputFormatter.swift` renders `Thinking`, `Grok`, markdown, tables, sources, and interactive help.
 - [x] `Sources/GrokCLI/Presentation/GrokStreamMarkupParser.swift` converts Grok internal tags and tool cards into `.text` and `.trace(String)` display events.
 - [x] `Sources/GrokCLI/Core/CLIIO.swift` has `TransientStatusLine`, TTY detection, stdout/stderr routing, and prompt-file/stdin helpers.
 - [x] `Sources/GrokCLI/Commands/MessageCommand.swift` preserves separate human, JSON, and quiet stream paths. JSON stream already emits request/progress/trace/final events.
@@ -47,7 +47,7 @@ swift test --filter GrokCLIE2ETests
 ```text
 Connected to SuperGrok! Use / for commands, or type help.
 
-Grok > Model Fast | MD
+Grok > Fast | MD
 
 > 
 ```
@@ -55,7 +55,7 @@ Grok > Model Fast | MD
 ### HUD After Workspace and Attachment Changes
 
 ```text
-Research Notes > Model Expert | MD | 2 files
+Research Notes > Expert | MD | 2 files
 
 > summarize the attached notes
 ```
@@ -63,7 +63,7 @@ Research Notes > Model Expert | MD | 2 files
 ### HUD With Non-Default State
 
 ```text
-Research Notes > Private | Model Expert | MD | Stream off | 2 files
+Research Notes > Private | Expert | MD | Stream off | 2 files
 
 > 
 ```
@@ -71,7 +71,7 @@ Research Notes > Private | Model Expert | MD | Stream off | 2 files
 ### HUD With Rate-Limit Warning
 
 ```text
-Research Notes > Model Expert | MD | 2 files
+Research Notes > Expert | MD | 2 files
 Limit > 2 left | reset 14m
 
 > 
@@ -85,7 +85,7 @@ workspace Research Notes
 attached 2 files
 private on
 
-Research Notes > Private | Model Expert | MD | 2 files
+Research Notes > Private | Expert | MD | 2 files
 > 
 ```
 
@@ -94,7 +94,7 @@ HUD design rules:
 - Put project/workspace first because it organizes chats and can influence responses more than model choice.
 - Preserve the current visual spirit: bright connection line, colored `>` prompt, cyan/blue status label, yellow model/format emphasis, and a clear pipe-separated status rhythm.
 - Use `Project > ...` rather than `Settings > ...` when a project is selected; use `Grok > ...` when no project is selected.
-- Keep the model secondary and short with `Model Fast` or `Model Expert`, not `model:expert`.
+- Keep the model secondary by position and short by text: `Grok > Fast | MD`, `Grok > 4.3 (beta) | MD`, or `Research Notes > Expert | MD`, not `model:expert` or `Model Fast`.
 - Keep `MD` visible because it is part of the current clean status language and tells the user how responses will render.
 - Omit defaults that add little value, especially `Private off`, `Stream on`, no files, and new conversation.
 - Show the second HUD line only for warnings or genuinely actionable state, such as `Limit > 2 left | reset 14m`.
@@ -106,8 +106,6 @@ HUD design rules:
 > /wo
 
   /workspace          Choose the project for new chats
-> /workspaces         List or manage workspaces
-  /workspace select   Choose the project for new chats
 
 tab complete  arrows select  enter run
 ```
@@ -123,12 +121,11 @@ Run /help for commands
 ### Activity Timeline During Streaming
 
 ```text
-Grok:
-
 [thinking] reading the prompt
 [search] swift terminal raw mode cursor redraw
 [search] complete in 1.2s
 
+Grok
 The cleanest path is to isolate prompt chrome from transcript rendering...
 ```
 
@@ -316,7 +313,7 @@ Todos:
 - [ ] Preserve the current clear, colorful terminal style: green connection success, cyan/blue label before `>`, yellow highlighted model/format segments, and green prompt.
 - [ ] Render project/workspace as the first HUD label, using `Research Notes > ...`; fall back to `Grok > ...` when no project is selected.
 - [ ] Omit default state from the resting HUD: stream on, private off, no attachments, and new conversation.
-- [ ] Avoid key/value colon labels in the HUD. Prefer readable segments such as `Research Notes > Model Expert | MD | 2 files`.
+- [ ] Avoid key/value colon labels and redundant nouns in the HUD. Prefer readable segments such as `Research Notes > Expert | MD | 2 files`.
 - [ ] Keep command hints out of the resting HUD. They should appear in slash completion, picker footers, and `/help`.
 - [ ] Render a second HUD line only for warnings or genuinely actionable state, such as `Limit > 2 left | reset 14m`.
 - [ ] Revise the recent rate-limit status plumbing so the HUD receives an already-clean warning line or structured remaining/reset fields. Do not parse old status prose inside the renderer.
@@ -365,7 +362,7 @@ enum CLIHUDRenderer {
             segments.append("Private")
         }
 
-        segments.append("Model \(state.modelName)")
+        segments.append(compactModelName(state.modelName, label: label))
         segments.append(state.outputFormat.statusName)
 
         if !state.stream {
@@ -388,7 +385,8 @@ enum CLIHUDRenderer {
     }
 
     private static func colorStatusLine(_ line: String, label: String) -> String {
-        // Keep this close to the current "Settings > Model: Fast | MD" feel:
+        // Keep this close to the current "Settings > Model: Fast | MD" feel,
+        // but remove the redundant "Model" noun from the HUD:
         // colored label, colored chevron, highlighted value segments.
         let prefix = "\(label) > "
         guard line.hasPrefix(prefix) else {
@@ -398,6 +396,14 @@ enum CLIHUDRenderer {
         return TerminalStyle.text(label, .status)
             + " > ".cyan
             + rest.yellow
+    }
+
+    private static func compactModelName(_ modelName: String, label: String) -> String {
+        let trimmed = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if label == "Grok", trimmed.hasPrefix("Grok ") {
+            return String(trimmed.dropFirst("Grok ".count))
+        }
+        return trimmed.isEmpty ? "Auto" : trimmed
     }
 }
 ```
@@ -581,7 +587,7 @@ extension GrokCLI {
             InteractiveCommandSpec(command: "/new", aliases: [], usage: "/new", description: "Start a new conversation thread", category: .session, acceptsBare: true, requiresArgument: false),
             InteractiveCommandSpec(command: "/help", aliases: [], usage: "/help", description: "Show interactive command help", category: .utility, acceptsBare: true, requiresArgument: false),
             InteractiveCommandSpec(command: "/exit", aliases: ["/quit"], usage: "/exit", description: "Exit the app", category: .session, acceptsBare: true, requiresArgument: false),
-            InteractiveCommandSpec(command: "/list", aliases: [], usage: "/list", description: "List and load saved conversations", category: .session, acceptsBare: true, requiresArgument: false),
+            InteractiveCommandSpec(command: "/resume", aliases: ["/list"], usage: "/resume", description: "Resume a saved conversation", category: .session, acceptsBare: true, requiresArgument: false),
             InteractiveCommandSpec(command: "/model", aliases: ["/mode", "/models", "/modes"], usage: "/model [mode|list]", description: "Switch the active model or open the model picker", category: .model, acceptsBare: true, requiresArgument: false),
             InteractiveCommandSpec(command: "/reason", aliases: ["/reasoning"], usage: "/reason [on|off]", description: "Toggle reasoning mode", category: .model, acceptsBare: true, requiresArgument: false),
             InteractiveCommandSpec(command: "/stream", aliases: [], usage: "/stream [on|off]", description: "Toggle streaming responses", category: .model, acceptsBare: true, requiresArgument: false),
@@ -592,8 +598,7 @@ extension GrokCLI {
             InteractiveCommandSpec(command: "/audio <path>", aliases: [], usage: "/audio <path>", description: "Transcribe audio, edit the text, then send", category: .audio, acceptsBare: false, requiresArgument: true),
             InteractiveCommandSpec(command: "/audio-send <path>", aliases: [], usage: "/audio-send <path>", description: "Transcribe audio and send immediately", category: .audio, acceptsBare: false, requiresArgument: true),
             InteractiveCommandSpec(command: "/transcribe <path>", aliases: [], usage: "/transcribe <path>", description: "Transcribe audio and print the text", category: .audio, acceptsBare: false, requiresArgument: true),
-            InteractiveCommandSpec(command: "/workspaces", aliases: ["/workspace"], usage: "/workspace [select|list|create|delete]", description: "List or manage workspaces", category: .workspace, acceptsBare: true, requiresArgument: false),
-            InteractiveCommandSpec(command: "/workspace select", aliases: ["/workspaces select"], usage: "/workspace select", description: "Choose the project for new chats", category: .workspace, acceptsBare: true, requiresArgument: false),
+            InteractiveCommandSpec(command: "/workspace", aliases: ["/workspaces"], usage: "/workspace", description: "Choose the project for new chats", category: .workspace, acceptsBare: true, requiresArgument: false),
             InteractiveCommandSpec(command: "/files", aliases: [], usage: "/files [list|upload|delete]", description: "List or upload assets", category: .files, acceptsBare: true, requiresArgument: false),
             InteractiveCommandSpec(command: "/tasks", aliases: [], usage: "/tasks [list|create|archive]", description: "Manage tasks", category: .library, acceptsBare: true, requiresArgument: false),
             InteractiveCommandSpec(command: "/skills", aliases: [], usage: "/skills [list|mine|user]", description: "List Grok skills", category: .library, acceptsBare: true, requiresArgument: false),
@@ -1157,7 +1162,7 @@ func testHUDRendererShowsSessionStateAndTruncates() {
     )
 
     let wide = strippingANSI(CLIHUDRenderer.lines(state: state, width: 120).joined(separator: "\n"))
-    XCTAssertContains(wide, "Research Notes > Model Expert | MD")
+    XCTAssertContains(wide, "Research Notes > Expert | MD")
     XCTAssertContains(wide, "2 files")
     XCTAssertFalse(wide.contains("model:"))
     XCTAssertFalse(wide.contains("workspace:"))
@@ -1178,7 +1183,7 @@ func testHUDRendererShowsWarningLineOnlyWhenActionable() {
         rateLimitWarning: nil
     )
 
-    XCTAssertEqual(strippingANSI(CLIHUDRenderer.lines(state: state, width: 80).joined(separator: "\n")), "Research Notes > Model Expert | MD")
+    XCTAssertEqual(strippingANSI(CLIHUDRenderer.lines(state: state, width: 80).joined(separator: "\n")), "Research Notes > Expert | MD")
 
     state.rateLimitWarning = "2 left | reset 14m"
     let warned = strippingANSI(CLIHUDRenderer.lines(state: state, width: 80).joined(separator: "\n"))
@@ -1193,7 +1198,7 @@ func testCommandRegistryIncludesHelpCommandsAndTypoHints() {
     XCTAssertContains(commands.joined(separator: "\n"), "/audio-send")
 
     let suggestion = GrokCLI.InteractiveCommandRegistry.nearestCommand(to: "wrkspace")
-    XCTAssertEqual(suggestion?.command, "/workspaces")
+    XCTAssertEqual(suggestion?.command, "/workspace")
 }
 ```
 
@@ -1253,7 +1258,7 @@ func testInteractiveHUDAppearsInTTYLikeSessionOutput() throws {
     let run = try environment.run([], input: "/quit\n")
 
     XCTAssertEqual(run.status, 0)
-    XCTAssertContains(run.cleanOutput, "Grok > Model")
+    XCTAssertContains(run.cleanOutput, "Grok > Fast")
     XCTAssertFalse(run.cleanOutput.contains("model:"))
     XCTAssertFalse(run.cleanOutput.contains("/ commands"))
 }
@@ -1268,13 +1273,13 @@ func testQuietAndJSONDoNotEmitHUD() throws {
 
     let quiet = try environment.run(["message", "--raw", "--quiet", "hello"])
     XCTAssertEqual(quiet.status, 0)
-    XCTAssertFalse(quiet.cleanOutput.contains("Grok > Model"))
+    XCTAssertFalse(quiet.cleanOutput.contains("Grok > Fast"))
     XCTAssertFalse(quiet.cleanOutput.contains("model:"))
     assertAnswerOnlyStdout(quiet.stdout, equals: "answer")
 
     let json = try environment.run(["message", "--json", "hello"])
     XCTAssertEqual(json.status, 0)
-    XCTAssertFalse(json.cleanOutput.contains("Grok > Model"))
+    XCTAssertFalse(json.cleanOutput.contains("Grok > Fast"))
     XCTAssertFalse(json.cleanOutput.contains("model:"))
     XCTAssertContains(json.cleanOutput, #""command""#)
 }

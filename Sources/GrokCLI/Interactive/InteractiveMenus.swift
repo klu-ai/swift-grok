@@ -3,11 +3,58 @@ import GrokClient
 import Rainbow
 
 extension GrokCLI {
+    private enum WorkspacePickerSelection {
+        case none
+        case workspace(GrokWorkspace)
+    }
+
     static func showWorkspacePicker(app: GrokCLIApp) async throws {
         let client = try app.initializeClient()
         let workspaces = try await client.listWorkspaces(pageSize: 50)
         guard !workspaces.isEmpty else {
             print("No workspaces found.".yellow)
+            return
+        }
+
+        if stdinIsTTY(), stdoutIsTTY() {
+            var items: [PickerItem<WorkspacePickerSelection>] = [
+                PickerItem(
+                    id: "none",
+                    title: "No project",
+                    subtitle: "clear project",
+                    preview: "New chats will not be project-scoped.",
+                    value: .none,
+                    searchText: "none no project clear"
+                )
+            ]
+            items += workspaces.map { workspace in
+                PickerItem(
+                    id: workspace.cliResolvedId ?? workspace.cliDisplayName,
+                    title: workspace.cliDisplayName,
+                    subtitle: workspace.cliResolvedId,
+                    preview: workspace.customPersonality ?? workspace.preferredModel,
+                    value: .workspace(workspace)
+                )
+            }
+
+            guard let selection = InteractivePicker.select(
+                title: "Select project",
+                items: items,
+                currentId: app.getCurrentWorkspace()?.cliResolvedId
+            ) else {
+                return
+            }
+
+            switch selection {
+            case .none:
+                app.setCurrentWorkspace(nil)
+                app.resetConversation()
+                print("Workspace cleared. New chats will not be project-scoped.".yellow)
+            case .workspace(let workspace):
+                app.setCurrentWorkspace(workspace)
+                app.resetConversation()
+                print("Workspace set to: \(workspace.cliDisplayName)".green)
+            }
             return
         }
 
@@ -48,6 +95,29 @@ extension GrokCLI {
         let assets = try await client.listAssets(pageSize: 25)
         guard !assets.isEmpty else {
             print("No files found.".yellow)
+            return
+        }
+
+        if stdinIsTTY(), stdoutIsTTY() {
+            let items = assets.map { asset in
+                PickerItem(
+                    id: asset.resolvedId ?? asset.cliDisplayName,
+                    title: asset.cliDisplayName,
+                    subtitle: asset.resolvedId,
+                    preview: asset.mimeType,
+                    value: asset
+                )
+            }
+            guard let asset = InteractivePicker.select(title: "Select file", items: items) else {
+                return
+            }
+            guard let fileId = asset.resolvedId else {
+                print("Selected file has no usable attachment ID.".red)
+                return
+            }
+
+            app.addAttachedFileId(fileId)
+            print("Attached: \(asset.cliDisplayName)".green)
             return
         }
 

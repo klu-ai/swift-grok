@@ -16,7 +16,10 @@ struct MessageCommand: ParsableCommand {
     func run() async throws {
         let app = GrokCLIApp.shared
         app.setDebugMode(options.debug)
-        let selectedMode = GrokMode.resolve(options.model)
+        var selectedMode = GrokMode.resolve(options.model)
+        if app.usesXAIOAuthMode() {
+            selectedMode = await app.resolveXAIOAuthModel(selectedMode)
+        }
         app.setCurrentMode(selectedMode)
         let formatter = OutputFormatter(format: try options.resolvedOutputFormat())
         let reasoningWarnings = GrokCLI.reasoningConfigurationWarnings(
@@ -55,8 +58,7 @@ struct MessageCommand: ParsableCommand {
         print("Sending: \(message)".cyan)
 
         do {
-            // Try to initialize the client
-            _ = try app.initializeClient()
+            try await app.ensureAuthenticationReady()
 
             let stream = try await app.msg(
                 message: message,
@@ -94,6 +96,7 @@ struct MessageCommand: ParsableCommand {
                 }
             }
         } catch {
+            formatter.clearTransientStatusBeforeError()
             await app.handleError(error, debug: options.debug)
         }
     }
@@ -101,9 +104,23 @@ struct MessageCommand: ParsableCommand {
 
 
 extension GrokCLI {
-    static func handleMessageCommand(args: [String], exitOnError: Bool = false) async throws {
+    static func handleMessageCommand(
+        args: [String],
+        exitOnError: Bool = false,
+        jsonCommandName: String = "message"
+    ) async throws {
         let jsonRequested = isJSONRequested(args)
         let quietRequested = args.contains("--quiet")
+
+        func reportUsageError(_ message: String, toStderr: Bool) {
+            reportMessageUsageError(
+                message,
+                jsonRequested: jsonRequested,
+                exitOnError: exitOnError,
+                command: jsonCommandName,
+                toStderr: toStderr
+            )
+        }
 
         if args.count == 1, let first = args.first, isHelpArgument(first) {
             printMessageUsage()
@@ -116,6 +133,8 @@ extension GrokCLI {
         var explicitStdin = false
         var audioPath: String?
         var audioFormat: String?
+        var uploadPaths: [String] = []
+        var attachmentIds: [String] = []
         var refinementLevel = GrokClient.defaultSpeechRefinementLevel
         var reasoningRequested = false
         var enableDeepSearch = false
@@ -135,7 +154,7 @@ extension GrokCLI {
             let modelOption = applyModelOption(arg, nextValue: nextValue)
 
             if modelOption.missingValue {
-                reportMessageUsageError("\(arg) requires a model value", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                reportUsageError("\(arg) requires a model value", toStderr: quietRequested)
                 if exitOnError {
                     exit(with: 2)
                 }
@@ -148,13 +167,13 @@ extension GrokCLI {
 
             let outputFormatOption = applyOutputFormatOption(arg, nextValue: nextValue)
             if outputFormatOption.missingValue {
-                reportMessageUsageError("\(arg) requires a format value", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                reportUsageError("\(arg) requires a format value", toStderr: quietRequested)
                 if exitOnError {
                     exit(with: 2)
                 }
                 return
             } else if let invalidValue = outputFormatOption.invalidValue {
-                reportMessageUsageError("Invalid output format '\(invalidValue)'. Use md, raw, or json.", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                reportUsageError("Invalid output format '\(invalidValue)'. Use md, raw, or json.", toStderr: quietRequested)
                 if exitOnError {
                     exit(with: 2)
                 }
@@ -185,7 +204,7 @@ extension GrokCLI {
                 explicitStdin = true
             } else if arg == "--audio" {
                 guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
-                    reportMessageUsageError("--audio requires a path or -", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    reportUsageError("--audio requires a path or -", toStderr: quietRequested)
                     if exitOnError {
                         exit(with: 2)
                     }
@@ -196,7 +215,7 @@ extension GrokCLI {
             } else if arg.hasPrefix("--audio=") {
                 let value = String(arg.dropFirst("--audio=".count))
                 guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    reportMessageUsageError("--audio requires a path or -", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    reportUsageError("--audio requires a path or -", toStderr: quietRequested)
                     if exitOnError {
                         exit(with: 2)
                     }
@@ -205,7 +224,7 @@ extension GrokCLI {
                 audioPath = value
             } else if arg == "--audio-format" {
                 guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
-                    reportMessageUsageError("--audio-format requires a value", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    reportUsageError("--audio-format requires a value", toStderr: quietRequested)
                     if exitOnError {
                         exit(with: 2)
                     }
@@ -216,16 +235,66 @@ extension GrokCLI {
             } else if arg.hasPrefix("--audio-format=") {
                 let value = String(arg.dropFirst("--audio-format=".count))
                 guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    reportMessageUsageError("--audio-format requires a value", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    reportUsageError("--audio-format requires a value", toStderr: quietRequested)
                     if exitOnError {
                         exit(with: 2)
                     }
                     return
                 }
                 audioFormat = value
+            } else if arg == "--file" || arg == "--upload" {
+                guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
+                    reportUsageError("\(arg) requires a path", toStderr: quietRequested)
+                    if exitOnError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                uploadPaths.append(nextValue)
+                index += 1
+            } else if arg.hasPrefix("--file=") {
+                let value = String(arg.dropFirst("--file=".count))
+                guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    reportUsageError("--file requires a path", toStderr: quietRequested)
+                    if exitOnError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                uploadPaths.append(value)
+            } else if arg.hasPrefix("--upload=") {
+                let value = String(arg.dropFirst("--upload=".count))
+                guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    reportUsageError("--upload requires a path", toStderr: quietRequested)
+                    if exitOnError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                uploadPaths.append(value)
+            } else if arg == "--attach" {
+                guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
+                    reportUsageError("--attach requires a file ID", toStderr: quietRequested)
+                    if exitOnError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                attachmentIds.append(nextValue)
+                index += 1
+            } else if arg.hasPrefix("--attach=") {
+                let value = String(arg.dropFirst("--attach=".count))
+                guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    reportUsageError("--attach requires a file ID", toStderr: quietRequested)
+                    if exitOnError {
+                        exit(with: 2)
+                    }
+                    return
+                }
+                attachmentIds.append(value)
             } else if arg == "--refinement-level" {
                 guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
-                    reportMessageUsageError("--refinement-level requires a value", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    reportUsageError("--refinement-level requires a value", toStderr: quietRequested)
                     if exitOnError {
                         exit(with: 2)
                     }
@@ -236,7 +305,7 @@ extension GrokCLI {
             } else if arg.hasPrefix("--refinement-level=") {
                 let value = String(arg.dropFirst("--refinement-level=".count))
                 guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    reportMessageUsageError("--refinement-level requires a value", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    reportUsageError("--refinement-level requires a value", toStderr: quietRequested)
                     if exitOnError {
                         exit(with: 2)
                     }
@@ -245,7 +314,7 @@ extension GrokCLI {
                 refinementLevel = value
             } else if arg == "--prompt-file" {
                 guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
-                    reportMessageUsageError("--prompt-file requires a path", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    reportUsageError("--prompt-file requires a path", toStderr: quietRequested)
                     if exitOnError {
                         exit(with: 2)
                     }
@@ -256,7 +325,7 @@ extension GrokCLI {
             } else if arg.hasPrefix("--prompt-file=") {
                 let value = String(arg.dropFirst("--prompt-file=".count))
                 guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    reportMessageUsageError("--prompt-file requires a path", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: quietRequested)
+                    reportUsageError("--prompt-file requires a path", toStderr: quietRequested)
                     if exitOnError {
                         exit(with: 2)
                     }
@@ -272,7 +341,7 @@ extension GrokCLI {
         let jsonMode = outputFormat.isJSON
         let promptSourceCount = (message.isEmpty ? 0 : 1) + (promptFile == nil ? 0 : 1) + (explicitStdin ? 1 : 0) + (audioPath == nil ? 0 : 1)
         guard promptSourceCount <= 1 else {
-            reportMessageUsageError("Inline message arguments, --audio, --prompt-file, and --stdin are mutually exclusive", jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: enableQuiet)
+            reportUsageError("Inline message arguments, --audio, --prompt-file, and --stdin are mutually exclusive", toStderr: enableQuiet)
             if exitOnError {
                 exit(with: 2)
             }
@@ -282,6 +351,9 @@ extension GrokCLI {
         let app = GrokCLIApp.shared
         app.setQuietMode(enableQuiet && !jsonMode)
         app.setDebugMode(enableDebug && !jsonMode && !enableQuiet)
+        if app.usesXAIOAuthMode() {
+            selectedMode = await app.resolveXAIOAuthModel(selectedMode)
+        }
         app.setCurrentMode(selectedMode)
 
         let messageText: String
@@ -316,7 +388,7 @@ extension GrokCLI {
                 messageCameFromStdin = false
             }
         } catch {
-            reportMessageUsageError(error.localizedDescription, jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: enableQuiet)
+            reportUsageError(error.localizedDescription, toStderr: enableQuiet)
             if exitOnError {
                 exit(with: 2)
             }
@@ -327,7 +399,7 @@ extension GrokCLI {
             let message = messageCameFromStdin
                 ? "Please provide a message to send on stdin"
                 : "Please provide a message to send"
-            reportMessageUsageError(message, jsonRequested: jsonRequested, exitOnError: exitOnError, toStderr: enableQuiet)
+            reportUsageError(message, toStderr: enableQuiet)
             if exitOnError {
                 exit(with: 2)
             }
@@ -349,9 +421,6 @@ extension GrokCLI {
         // Execute the command
         if !jsonMode {
             printSearchConfigurationWarnings(warnings, toStderr: enableQuiet)
-            if !enableQuiet {
-                print("Calling Grok API...".cyan)
-            }
         }
 
         if enableDebug && !jsonMode {
@@ -363,6 +432,8 @@ extension GrokCLI {
                 "Debug: Output Format = \(outputFormat.description)",
                 "Debug: Streaming = \(enableStream)",
                 "Debug: Model = \(selectedMode.displayName) (\(selectedMode.id))",
+                "Debug: Upload Files = \(uploadPaths.count)",
+                "Debug: Existing Attachments = \(attachmentIds.count)",
                 "Debug: Custom instructions disable requested = \(enableNoCustomInstructions) (ignored)"
             ]
             for line in debugLines {
@@ -379,14 +450,39 @@ extension GrokCLI {
 
         let formatter = OutputFormatter(format: outputFormat)
 
-        if !jsonMode && !enableQuiet {
-            print("Sending: \(messageText)".cyan)
-            formatter.printThinkingStatus()
-        }
-
         do {
-            // Initialize client
-            _ = try app.initializeClient()
+            try await app.ensureAuthenticationReady()
+
+            var fileAttachmentIds = attachmentIds
+            if !uploadPaths.isEmpty, !jsonMode, !enableQuiet {
+                print(uploadPaths.count == 1 ? "Uploading file...".cyan : "Uploading \(uploadPaths.count) files...".cyan)
+            }
+            for path in uploadPaths {
+                let mimeType = inferredMessageAttachmentMimeType(for: path)
+                let response = if app.usesXAIOAuthMode() {
+                    try await app.uploadFileWithXAIOAuth(at: path, mimeType: mimeType)
+                } else {
+                    try await app.initializeClient().uploadFile(
+                        at: path,
+                        mimeType: mimeType
+                    )
+                }
+                guard let fileId = response.uploadedFileId?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !fileId.isEmpty else {
+                    throw GrokError.apiError("Uploaded file response did not include an attachment ID")
+                }
+                appendUniqueAttachmentId(fileId, to: &fileAttachmentIds)
+                if !jsonMode, !enableQuiet {
+                    let fileName = response.fileName ?? URL(fileURLWithPath: path).lastPathComponent
+                    print("Attached: \(fileName)".green)
+                }
+            }
+
+            if !jsonMode && !enableQuiet {
+                print("Calling Grok API...".cyan)
+                print("Sending: \(messageText)".cyan)
+                formatter.printThinkingStatus()
+            }
 
             // Send message
             let stream = try await app.msg(
@@ -397,6 +493,7 @@ extension GrokCLI {
                 customInstructions: "",
                 temporary: enablePrivate,
                 mode: selectedMode,
+                fileAttachments: fileAttachmentIds,
                 workspaceIds: app.getCurrentWorkspaceIds(),
                 streamOutput: enableStream
             )
@@ -409,7 +506,7 @@ extension GrokCLI {
                     privateMode: enablePrivate,
                     stream: enableStream,
                     workspaceIds: app.getCurrentWorkspaceIds(),
-                    fileAttachmentIds: []
+                    fileAttachmentIds: fileAttachmentIds
                 )
                 if enableStream {
                     let streamSucceeded = try await printMessageJSONStream(
@@ -429,7 +526,7 @@ extension GrokCLI {
                         throw GrokError.streamingError
                     }
                     try printJSONResult(
-                        command: "message",
+                        command: jsonCommandName,
                         category: "assistant_response",
                         data: AnyCodable(assistantResponseJSON(response: response, mode: selectedMode, request: request, input: resolvedAudioInput?.json)),
                         debug: enableDebug,
@@ -438,12 +535,12 @@ extension GrokCLI {
                 }
             } else if enableQuiet {
                 if enableStream {
-                    try await printQuietStreamingResponse(stream)
+                    try await printQuietStreamingResponse(stream, format: outputFormat)
                 } else {
                     guard let response = try await finalResponse(from: stream) else {
                         throw GrokError.streamingError
                     }
-                    printQuietResponse(response.message)
+                    printQuietResponse(response.message, format: outputFormat)
                 }
             } else if enableStream {
                 // If streaming is enabled, print each chunk as it comes in
@@ -479,9 +576,10 @@ extension GrokCLI {
                         "phase": AnyCodable("aborted")
                     ]))
                 } else {
-                    printJSONError(command: "message", error: error, exitCode: 1, debug: enableDebug)
+                    printJSONError(command: jsonCommandName, error: error, exitCode: 1, debug: enableDebug)
                 }
             } else {
+                formatter.clearTransientStatusBeforeError()
                 await app.handleError(error, debug: enableDebug)
             }
             if exitOnError {
@@ -490,10 +588,16 @@ extension GrokCLI {
         }
     }
 
-    static func reportMessageUsageError(_ message: String, jsonRequested: Bool, exitOnError: Bool, toStderr: Bool = false) {
+    static func reportMessageUsageError(
+        _ message: String,
+        jsonRequested: Bool,
+        exitOnError: Bool,
+        command: String = "message",
+        toStderr: Bool = false
+    ) {
         if jsonRequested {
             printJSONError(
-                command: "message",
+                command: command,
                 message: message,
                 code: "usage_error",
                 exitCode: 2
@@ -505,25 +609,66 @@ extension GrokCLI {
         }
     }
 
-    static func printQuietResponse(_ message: String) {
-        CLIOutput.stdout(message, terminator: message.hasSuffix("\n") ? "" : "\n")
+    static func printQuietResponse(_ message: String, format: OutputFormat = .raw) {
+        guard format == .markdown else {
+            let visibleMessage = GrokStreamMarkupParser.visibleText(from: message)
+            CLIOutput.stdout(visibleMessage, terminator: visibleMessage.hasSuffix("\n") ? "" : "\n")
+            return
+        }
+
+        OutputFormatter(format: .markdown).printQuietResponseBody(message)
     }
 
-    static func printQuietStreamingResponse(_ stream: AsyncThrowingStream<ConversationResponse, Error>) async throws {
+    static func printQuietStreamingResponse(_ stream: AsyncThrowingStream<ConversationResponse, Error>, format: OutputFormat = .raw) async throws {
+        if format == .markdown {
+            try await printQuietMarkdownStreamingResponse(stream)
+            return
+        }
+
+        try await printRawQuietStreamingResponse(stream)
+    }
+
+    private static func printQuietMarkdownStreamingResponse(_ stream: AsyncThrowingStream<ConversationResponse, Error>) async throws {
+        var finalResponse: ConversationResponse?
+        var collectedMessage = ""
+
+        for try await response in stream {
+            if response.isSoftStop && response.message.isEmpty {
+                continue
+            }
+
+            if response.isFinal {
+                finalResponse = response
+                break
+            } else if !response.isThinking {
+                collectedMessage += response.message
+            }
+        }
+
+        printQuietResponse(finalResponse?.message ?? collectedMessage, format: .markdown)
+    }
+
+    private static func printRawQuietStreamingResponse(_ stream: AsyncThrowingStream<ConversationResponse, Error>) async throws {
         let answerParser = GrokStreamMarkupParser()
         var printedAnswerDelta = false
         var printedAnyText = false
         var finalResponse: ConversationResponse?
 
         func printEvents(_ events: [StreamDisplayEvent]) {
-            for event in events {
-                guard case .text(let text) = event, !text.isEmpty else {
-                    continue
-                }
-                printedAnswerDelta = true
-                printedAnyText = true
-                CLIOutput.stdout(text, terminator: "")
+            let text = events.compactMap { event -> String? in
+                guard case .text(let text) = event else { return nil }
+                return text
+            }.joined()
+            guard !text.isEmpty else {
+                return
             }
+            let visibleText = GrokStreamMarkupParser.visibleText(from: text, hidesHiddenPreamble: false)
+            guard !visibleText.isEmpty else {
+                return
+            }
+            printedAnswerDelta = true
+            printedAnyText = true
+            CLIOutput.stdout(visibleText, terminator: "")
         }
 
         for try await response in stream {
@@ -533,6 +678,7 @@ extension GrokCLI {
 
             if response.isFinal {
                 finalResponse = response
+                break
             } else if !response.isThinking {
                 printEvents(answerParser.consume(response.message))
             }
@@ -557,6 +703,41 @@ extension GrokCLI {
             }
         }
         return nil
+    }
+
+    static func appendUniqueAttachmentId(_ fileId: String, to attachmentIds: inout [String]) {
+        guard !attachmentIds.contains(fileId) else {
+            return
+        }
+        attachmentIds.append(fileId)
+    }
+
+    static func inferredMessageAttachmentMimeType(for path: String) -> String {
+        let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
+        switch ext {
+        case "txt":
+            return "text/plain"
+        case "json":
+            return "application/json"
+        case "csv":
+            return "text/csv"
+        case "pdf":
+            return "application/pdf"
+        case "png":
+            return "image/png"
+        case "jpg", "jpeg":
+            return "image/jpeg"
+        case "docx":
+            return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        case "xlsx":
+            return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        case "pptx":
+            return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        case "md":
+            return "text/markdown"
+        default:
+            return "application/octet-stream"
+        }
     }
 
     static func printMessageJSONStream(
@@ -591,7 +772,7 @@ extension GrokCLI {
         sequence += 1
 
         let answerParser = GrokStreamMarkupParser()
-        let thinkingParser = GrokStreamMarkupParser(hidesHiddenPreamble: false)
+        let thinkingParser = GrokStreamMarkupParser()
         var thinkingActive = false
         var emittedFinal = false
 
@@ -605,6 +786,72 @@ extension GrokCLI {
                 case .trace(let line):
                     try printJSONEvent(sequence: sequence, event: "trace", data: AnyCodable(["kind": AnyCodable("tool"), "text": AnyCodable(line)]))
                     sequence += 1
+                case .activity(let activity):
+                    try printJSONEvent(sequence: sequence, event: "activity", data: AnyCodable([
+                        "kind": AnyCodable(activity.kind.rawValue),
+                        "text": AnyCodable(activity.displayText)
+                    ]))
+                    sequence += 1
+                    try printJSONEvent(sequence: sequence, event: "trace", data: AnyCodable([
+                        "kind": AnyCodable(activity.kind.rawValue),
+                        "text": AnyCodable(activity.displayText)
+                    ]))
+                    sequence += 1
+                }
+            }
+        }
+
+        func emitThinkingStartIfNeeded() throws {
+            if !thinkingActive {
+                try printJSONEvent(sequence: sequence, event: "thinking_start", data: AnyCodable([
+                    "phase": AnyCodable("thinking")
+                ]))
+                sequence += 1
+                thinkingActive = true
+            }
+        }
+
+        func emitThinkingEndIfNeeded() throws {
+            if thinkingActive {
+                try printJSONEvent(sequence: sequence, event: "thinking_end", data: AnyCodable([
+                    "phase": AnyCodable("thinking")
+                ]))
+                sequence += 1
+                thinkingActive = false
+            }
+        }
+
+        func emitThinkingEvents(_ events: [StreamDisplayEvent]) throws {
+            for event in events {
+                switch event {
+                case .text(let text):
+                    let lines = text
+                        .split(separator: "\n", omittingEmptySubsequences: false)
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                    for line in lines {
+                        try emitThinkingStartIfNeeded()
+                        try printJSONEvent(sequence: sequence, event: "thinking_delta", data: AnyCodable(["text": AnyCodable(line)]))
+                        sequence += 1
+                        try printJSONEvent(sequence: sequence, event: "trace", data: AnyCodable(["kind": AnyCodable("thinking"), "text": AnyCodable(line)]))
+                        sequence += 1
+                    }
+                case .trace(let line):
+                    try printJSONEvent(sequence: sequence, event: "progress", data: AnyCodable(["kind": AnyCodable("tool"), "text": AnyCodable(line)]))
+                    sequence += 1
+                    try printJSONEvent(sequence: sequence, event: "trace", data: AnyCodable(["kind": AnyCodable("tool"), "text": AnyCodable(line)]))
+                    sequence += 1
+                case .activity(let activity):
+                    try printJSONEvent(sequence: sequence, event: "activity", data: AnyCodable([
+                        "kind": AnyCodable(activity.kind.rawValue),
+                        "text": AnyCodable(activity.displayText)
+                    ]))
+                    sequence += 1
+                    try printJSONEvent(sequence: sequence, event: "trace", data: AnyCodable([
+                        "kind": AnyCodable(activity.kind.rawValue),
+                        "text": AnyCodable(activity.displayText)
+                    ]))
+                    sequence += 1
                 }
             }
         }
@@ -616,13 +863,8 @@ extension GrokCLI {
                 }
 
                 if response.isFinal {
-                    if thinkingActive {
-                        try printJSONEvent(sequence: sequence, event: "thinking_end", data: AnyCodable([
-                            "phase": AnyCodable("thinking")
-                        ]))
-                        sequence += 1
-                        thinkingActive = false
-                    }
+                    try emitThinkingEvents(thinkingParser.finish())
+                    try emitThinkingEndIfNeeded()
                     try emitDisplayEvents(answerParser.finish(), textEvent: "assistant_delta")
                     let data = assistantResponseJSON(response: response, mode: mode, request: request, input: input)
                     try printJSONEvent(sequence: sequence, event: "assistant_final", data: AnyCodable(data))
@@ -633,47 +875,18 @@ extension GrokCLI {
                     ]))
                     sequence += 1
                     emittedFinal = true
+                    break
                 } else if response.isThinking {
-                    if !thinkingActive {
-                        try printJSONEvent(sequence: sequence, event: "thinking_start", data: AnyCodable([
-                            "phase": AnyCodable("thinking")
-                        ]))
-                        sequence += 1
-                        thinkingActive = true
-                    }
-                    let events = thinkingParser.consume(response.message)
-                    for event in events {
-                        switch event {
-                        case .text(let text):
-                            let lines = text
-                                .split(separator: "\n", omittingEmptySubsequences: false)
-                                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                                .filter { !$0.isEmpty }
-                            for line in lines {
-                                try printJSONEvent(sequence: sequence, event: "thinking_delta", data: AnyCodable(["text": AnyCodable(line)]))
-                                sequence += 1
-                                try printJSONEvent(sequence: sequence, event: "trace", data: AnyCodable(["kind": AnyCodable("thinking"), "text": AnyCodable(line)]))
-                                sequence += 1
-                            }
-                        case .trace(let line):
-                            try printJSONEvent(sequence: sequence, event: "progress", data: AnyCodable(["kind": AnyCodable("tool"), "text": AnyCodable(line)]))
-                            sequence += 1
-                            try printJSONEvent(sequence: sequence, event: "trace", data: AnyCodable(["kind": AnyCodable("tool"), "text": AnyCodable(line)]))
-                            sequence += 1
-                        }
-                    }
+                    try emitThinkingEvents(thinkingParser.consume(response.message))
                 } else {
-                    if thinkingActive {
-                        try printJSONEvent(sequence: sequence, event: "thinking_end", data: AnyCodable([
-                            "phase": AnyCodable("thinking")
-                        ]))
-                        sequence += 1
-                        thinkingActive = false
-                    }
+                    try emitThinkingEvents(thinkingParser.finish())
+                    try emitThinkingEndIfNeeded()
                     try emitDisplayEvents(answerParser.consume(response.message), textEvent: "assistant_delta")
                 }
             }
 
+            try emitThinkingEvents(thinkingParser.finish())
+            try emitThinkingEndIfNeeded()
             try emitDisplayEvents(answerParser.finish(), textEvent: "assistant_delta")
             if !emittedFinal {
                 try printJSONEvent(sequence: sequence, event: "done", data: AnyCodable([
@@ -683,12 +896,7 @@ extension GrokCLI {
             }
             return true
         } catch {
-            if thinkingActive {
-                try printJSONEvent(sequence: sequence, event: "thinking_end", data: AnyCodable([
-                    "phase": AnyCodable("thinking")
-                ]))
-                sequence += 1
-            }
+            try emitThinkingEndIfNeeded()
             try printJSONErrorEvent(sequence: sequence, error: error, exitCode: 1, debug: debug)
             sequence += 1
             try printJSONEvent(sequence: sequence, event: "done", data: AnyCodable([

@@ -4,6 +4,14 @@ import Rainbow
 
 extension GrokCLI {
     static func showHelp() {
+        let commandWidth = max(20, InteractiveCommandRegistry.visibleCommands.map(\.usage.count).max() ?? 20)
+        let chatCommands = InteractiveCommandRegistry.visibleCommands
+            .map { spec in
+                let usage = spec.usage + String(repeating: " ", count: max(0, commandWidth - spec.usage.count))
+                return "          \(usage) - \(spec.description)"
+            }
+            .joined(separator: "\n")
+
         print("""
 
          ██████╗ ██████╗  ██████╗ ██╗  ██╗
@@ -20,6 +28,7 @@ extension GrokCLI {
         Running just 'grok' with no commands starts an interactive chat session.
 
         Commands:
+          code <task>        - Run Grok Code with local OAuth tool calls
           chat              - Start an interactive chat session
           message <text>    - Send a message to Grok and exit
           transcribe <file>  - Transcribe audio and print the text
@@ -42,6 +51,8 @@ extension GrokCLI {
           --private         - Enable private mode (conversations will not be saved)
           --stream          - Stream responses as they are generated
           --quiet           - Suppress UI/status output for scriptable raw text
+          --file <path>     - Upload and attach a local file before sending a message
+          --attach <fileId> - Attach an existing Grok file ID before sending
           --audio <path|->  - Transcribe audio before sending a message
           --audio-format <format> - Required with audio stdin or unknown extensions
           --refinement-level <level> - Speech-to-text refinement level
@@ -57,50 +68,13 @@ extension GrokCLI {
           - grok message --raw --quiet writes only assistant answer text to stdout
           - grok message reads piped stdin when no message args or prompt file are supplied
           - grok message --prompt-file <path> reads a UTF-8 prompt file
+          - grok message --file <path> uploads, attaches, and sends one prompt
           - grok message --audio <path> transcribes audio, then sends the transcript
           - grok transcribe <path> prints only the transcript
           - grok chat --raw --quiet supports cleaner piped multi-message sessions
 
         Chat Commands:
-          /new              - Start a new conversation
-          /help             - Show interactive command help
-          /list             - List and load past conversations
-          /tasks            - List or manage tasks
-          /agents           - List or manage agent settings
-          /skills           - List Grok skills
-          /workspaces       - List or manage workspaces
-          /files            - List files/assets
-          /auth             - Refresh browser credentials
-          /auth help        - Show auth commands
-          /agents help      - Show agent management usage
-          /tasks help       - Show task command usage
-          /skills help      - Show skills command usage
-          /workspaces help  - Show workspace command usage
-          /files help       - Show file command usage
-          /workspace        - Choose the project for new chats
-          /workspace select - Choose the project for new chats
-          /attach           - Browse files and attach one to following messages
-          /attach upload    - Upload a local file and attach it
-          /attach clear     - Remove all attached files
-          /audio            - Record audio, edit the transcript, then send
-          /audio <path>     - Transcribe audio, edit the text field, then send
-          /audio file <path> - Same as /audio <path>
-          /audio send <path> - Transcribe audio and send immediately
-          /audio-send <path> - Legacy alias for /audio send <path>
-          /transcribe <path> - Transcribe audio and print text only
-          /model <mode>     - Switch model for following messages
-          /mode, /models    - Model command aliases
-          models <mode>     - Common commands also work without the slash
-          /format [md|raw]  - Toggle or choose Markdown/Raw output
-          /md, /markdown    - Enable Markdown output
-          /raw [on|off]     - Toggle raw Markdown output
-          /private [on|off] - Toggle private mode (conversations not saved)
-          /stream [on|off]  - Toggle streaming responses
-          /reset-conversation - Clear the current conversation context
-          /special          - Start a private special-mode conversation
-          /clear            - Clear the current screen
-          /cls              - Alias for /clear
-          /exit, /quit      - Exit the app
+        \(chatCommands)
 
         Notes:
           - In chat mode, conversation context is maintained between messages
@@ -117,11 +91,18 @@ extension GrokCLI {
           cat prompt.md | grok message --raw --quiet - Send piped prompt text
           grok message --raw --quiet --prompt-file prompt.md
                                             - Send a prompt file and print answer text
+          grok message --file paper.pdf "What matters here?"
+                                            - Upload a file, attach it, and ask in one call
           grok message --json Explain this briefly  - Send a message and print JSON
           grok message --stream --json Draft a note  - Stream NDJSON events
+          grok code --permission-mode bypass "Add tests"
+                                            - Run Grok Code using xAI OAuth
           grok message --audio note.webm --raw --quiet - Send an audio transcript
           grok transcribe note.webm                  - Print an audio transcript
           grok auth                                 - Generate new credentials from browser cookies
+          grok auth status                          - Show selected auth mode
+          grok auth oauth                           - Sign in with xAI OAuth device code
+          grok auth use web                         - Select browser-cookie auth by default
           grok auth generate --json                  - Generate credentials and print JSON
           grok auth import /path/to/credentials.json --json
                                                     - Import credentials and print JSON
@@ -134,6 +115,11 @@ extension GrokCLI {
                                                     - Set agent 0 instructions
           grok tasks                                - List tasks
           grok tasks list --json                    - List tasks as JSON
+          grok tasks inactive                       - List archived tasks
+          grok tasks show <taskId>                  - Show task details and latest result
+          grok tasks results <taskId> --limit 10    - Show recent task runs
+          grok tasks chat <taskId> --run previous --message "Explain this"
+                                                    - Continue a specific task run thread
           grok skills                               - List skills
           grok workspaces                           - List workspaces
           grok workspaces delete <workspaceId>      - Delete a workspace
@@ -141,6 +127,8 @@ extension GrokCLI {
           grok files delete <fileId>                 - Delete an asset
           grok list                                 - List and select from saved conversations
           grok list --json                          - List conversations as JSON
+          grok list delete <conversationId> --yes --json
+                                                    - Delete a saved conversation by ID
         """.green.bold)
     }
 
@@ -150,24 +138,9 @@ extension GrokCLI {
             category: "help",
             data: AnyCodable([
                 "usage": "grok [command] [options]",
-                "commands": [
-                    "chat",
-                    "message",
-                    "transcribe",
-                    "auth",
-                    "list",
-                    "models",
-                    "modes",
-                    "agents",
-                    "tasks",
-                    "skills",
-                    "workspaces",
-                    "workspace",
-                    "files",
-                    "test",
-                    "help"
-                ],
-                "jsonOptions": ["--json", "--format json", "--format=json"],
+                "commands": recognizedTopLevelCommands.sorted() as [Any],
+                "interactiveCommands": InteractiveCommandRegistry.visibleCommands.map(\.usage) as [Any],
+                "jsonOptions": ["--json", "--format json", "--format=json"] as [Any],
                 "streaming": "grok message --stream --json emits NDJSON"
             ])
         )

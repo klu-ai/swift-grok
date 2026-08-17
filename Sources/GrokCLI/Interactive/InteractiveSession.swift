@@ -3,34 +3,31 @@ import GrokClient
 import Rainbow
 
 extension GrokCLI {
-    static func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool, currentStream: Bool, currentFormat: OutputFormat = .defaultFormat, currentMode: GrokMode = GrokCLIApp.shared.getCurrentMode(), rateLimitStatus: String? = nil) {
-        var segments = ["Model: \(currentMode.displayName)".yellow]
-        if currentPrivate {
-            segments.append("Private".red)
-        }
-        if !currentStream {
-            segments.append("No Stream".red)
-        }
-        segments.append(currentFormat.statusName.yellow)
-        if let rateLimitStatus {
-            segments.append(rateLimitStatus.yellow)
-        }
+    static let deleteConfirmationPrompt = "Delete current conversation? type d to confirm delete "
 
-        print("Settings > ".cyan + segments.joined(separator: " | "))
+    static func isDeleteConfirmation(_ input: String?) -> Bool {
+        input?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "d"
+    }
+
+    static func printSettingsStatus(currentReasoning: Bool, currentDeepSearch: Bool, currentNoCustomInstructions: Bool, currentNoSearch: Bool, currentPrivate: Bool, currentStream: Bool, currentFormat: OutputFormat = .defaultFormat, currentMode: GrokMode = GrokCLIApp.shared.getCurrentMode(), rateLimitStatus: String? = nil) {
+        var state = ChatSessionState(
+            reasoning: currentReasoning,
+            deepSearch: currentDeepSearch,
+            noSearch: currentNoSearch,
+            privateMode: currentPrivate,
+            stream: currentStream,
+            mode: currentMode,
+            outputFormat: currentFormat
+        )
+        state.rateLimitStatus = rateLimitStatus
+        printSettingsStatus(state: state)
     }
 
     static func printSettingsStatus(state: ChatSessionState) {
-        printSettingsStatus(
-            currentReasoning: state.reasoning,
-            currentDeepSearch: state.deepSearch,
-            currentNoCustomInstructions: false,
-            currentNoSearch: state.noSearch,
-            currentPrivate: state.privateMode,
-            currentStream: state.stream,
-            currentFormat: state.outputFormat,
-            currentMode: state.mode,
-            rateLimitStatus: state.rateLimitStatus
-        )
+        let hudState = CLIHUDRenderer.state(from: state, app: GrokCLIApp.shared)
+        for line in CLIHUDRenderer.lines(state: hudState) {
+            print(line)
+        }
     }
 
     private static func refreshRateLimitStatus(
@@ -49,6 +46,256 @@ extension GrokCLI {
         }
     }
 
+    private static func printInteractiveAudioTranscript(_ transcript: String) {
+        let label = TerminalStyle.text("[transcript]", .transcript)
+        let displayText = transcript.trimmingCharacters(in: .newlines)
+        let lines = displayText.components(separatedBy: .newlines)
+        guard let first = lines.first else {
+            print(label)
+            return
+        }
+
+        print("\(label) \(first)")
+        for line in lines.dropFirst() {
+            print("             \(line)")
+        }
+    }
+
+    private static func handleGoalCommand(
+        args: [String],
+        state: inout ChatSessionState,
+        app: GrokCLIApp,
+        formatter: OutputFormatter,
+        enableQuiet: Bool,
+        enableDebug: Bool
+    ) async {
+        do {
+            switch try parseGoalCommand(args: args) {
+            case .show:
+                print(goalSummary(state.goal))
+            case .create(let objective, let maxTurns):
+                state.goal = GoalState(objective: objective, maxTurns: maxTurns)
+                print("Goal started")
+                try await runGoalLoop(
+                    state: &state,
+                    app: app,
+                    formatter: formatter,
+                    enableQuiet: enableQuiet,
+                    enableDebug: enableDebug
+                )
+            case .pause:
+                guard var goal = state.goal else {
+                    print("No active goal.")
+                    return
+                }
+                goal.status = .paused
+                state.goal = goal
+                print("Goal paused")
+            case .resume:
+                guard var goal = state.goal else {
+                    print("No active goal.")
+                    return
+                }
+                guard goal.status == .paused || goal.status == .budgetLimited else {
+                    print(goalSummary(goal))
+                    return
+                }
+                goal.status = .active
+                if goal.turnsCompleted >= goal.maxTurns {
+                    goal.maxTurns = goal.turnsCompleted + GoalState.defaultMaxTurns
+                }
+                state.goal = goal
+                print("Goal resumed")
+                try await runGoalLoop(
+                    state: &state,
+                    app: app,
+                    formatter: formatter,
+                    enableQuiet: enableQuiet,
+                    enableDebug: enableDebug
+                )
+            case .clear:
+                state.goal = nil
+                print("Goal cleared")
+            case .complete:
+                guard var goal = state.goal else {
+                    print("No active goal.")
+                    return
+                }
+                goal.status = .complete
+                state.goal = goal
+                print("Goal complete")
+            }
+        } catch {
+            formatter.clearTransientStatusBeforeError()
+            await app.handleError(error, debug: enableDebug)
+        }
+    }
+
+    private static func runGoalLoop(
+        state: inout ChatSessionState,
+        app: GrokCLIApp,
+        formatter: OutputFormatter,
+        enableQuiet: Bool,
+        enableDebug: Bool
+    ) async throws {
+        while shouldContinueGoal(state.goal) {
+            guard var goal = state.goal else {
+                return
+            }
+
+            let prompt = goal.turnsCompleted == 0
+                ? initialGoalPrompt(for: goal)
+                : continuationGoalPrompt(for: goal)
+            let pendingFileAttachments = goal.turnsCompleted == 0 ? app.getAttachedFileIds() : []
+            let assistantMessage = try await sendGoalTurn(
+                prompt: prompt,
+                state: state,
+                app: app,
+                formatter: formatter,
+                fileAttachments: pendingFileAttachments,
+                enableQuiet: enableQuiet,
+                enableDebug: enableDebug
+            )
+            if !pendingFileAttachments.isEmpty {
+                app.clearAttachedFiles()
+            }
+
+            goal.turnsCompleted += 1
+            switch goalTurnResult(from: assistantMessage) {
+            case .complete:
+                goal.status = .complete
+                state.goal = goal
+                print("Goal complete")
+                return
+            case .paused:
+                goal.status = .paused
+                state.goal = goal
+                print("Goal paused")
+                return
+            case .continueRunning:
+                if goal.turnsCompleted >= goal.maxTurns {
+                    goal.status = .budgetLimited
+                    state.goal = goal
+                    print("Goal stopped after \(goal.maxTurns) turns.")
+                    return
+                }
+                state.goal = goal
+            case .maxTurns:
+                goal.status = .budgetLimited
+                state.goal = goal
+                print("Goal stopped after \(goal.maxTurns) turns.")
+                return
+            }
+        }
+    }
+
+    private static func sendGoalTurn(
+        prompt: String,
+        state: ChatSessionState,
+        app: GrokCLIApp,
+        formatter: OutputFormatter,
+        fileAttachments: [String],
+        enableQuiet: Bool,
+        enableDebug: Bool
+    ) async throws -> String {
+        if !enableQuiet {
+            formatter.printThinkingStatus()
+        }
+        let stream = try await app.msg(
+            message: prompt,
+            enableReasoning: true,
+            enableDeepSearch: false,
+            disableSearch: false,
+            customInstructions: "",
+            temporary: state.privateMode,
+            mode: state.mode,
+            fileAttachments: fileAttachments,
+            workspaceIds: state.workspaceIds(app: app),
+            streamOutput: state.stream
+        )
+
+        var capturedFinalResponse: ConversationResponse?
+        if enableQuiet {
+            if state.stream {
+                capturedFinalResponse = try await printQuietGoalStreamingResponse(stream, format: state.outputFormat)
+            } else {
+                capturedFinalResponse = try await finalResponse(from: stream)
+                if let response = capturedFinalResponse {
+                    printQuietResponse(response.message, format: state.outputFormat)
+                }
+            }
+        } else if state.stream {
+            let capturedStream = AsyncThrowingStream<ConversationResponse, Error> { continuation in
+                let forwardingTask = Task {
+                    do {
+                        for try await response in stream {
+                            if response.isFinal {
+                                capturedFinalResponse = response
+                            }
+                            continuation.yield(response)
+                            if response.isFinal {
+                                continuation.finish()
+                                return
+                            }
+                        }
+                        continuation.finish()
+                    } catch {
+                        continuation.finish(throwing: error)
+                    }
+                }
+                continuation.onTermination = { _ in
+                    forwardingTask.cancel()
+                }
+            }
+            try await formatter.printStreamingResponse(capturedStream)
+        } else {
+            capturedFinalResponse = try await finalResponse(from: stream)
+            if let response = capturedFinalResponse {
+                formatter.printResponse(
+                    response.message,
+                    conversationId: app.getCurrentConversationId(),
+                    responseId: app.getLastResponseId(),
+                    debug: enableDebug,
+                    webSearchResults: response.webSearchResults,
+                    xposts: response.xposts
+                )
+            }
+        }
+
+        return capturedFinalResponse?.message ?? ""
+    }
+
+    private static func printQuietGoalStreamingResponse(
+        _ stream: AsyncThrowingStream<ConversationResponse, Error>,
+        format: OutputFormat
+    ) async throws -> ConversationResponse? {
+        var finalResponse: ConversationResponse?
+        let capturedStream = AsyncThrowingStream<ConversationResponse, Error> { continuation in
+            let forwardingTask = Task {
+                do {
+                    for try await response in stream {
+                        if response.isFinal {
+                            finalResponse = response
+                        }
+                        continuation.yield(response)
+                        if response.isFinal {
+                            continuation.finish()
+                            return
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in
+                forwardingTask.cancel()
+            }
+        }
+        try await printQuietStreamingResponse(capturedStream, format: format)
+        return finalResponse
+    }
+
     static func handleChatCommand(args: [String], exitOnParseError: Bool = false) async throws {
         let quietRequested = args.contains("--quiet")
         func printParseError(_ message: String) {
@@ -65,7 +312,7 @@ extension GrokCLI {
         }
 
         if isJSONRequested(args) {
-            try await handleMessageCommand(args: args, exitOnError: exitOnParseError)
+            try await handleMessageCommand(args: args, exitOnError: exitOnParseError, jsonCommandName: "chat")
             return
         }
 
@@ -139,6 +386,18 @@ extension GrokCLI {
                 enableStream = true
             } else if arg == "--quiet" {
                 enableQuiet = true
+            } else if arg == "--stdin" {
+                printParseError("--stdin is only supported by grok message")
+                if exitOnParseError {
+                    exit(with: 2)
+                }
+                return
+            } else if arg == "--prompt-file" || arg.hasPrefix("--prompt-file=") {
+                printParseError("--prompt-file is only supported by grok message")
+                if exitOnParseError {
+                    exit(with: 2)
+                }
+                return
             } else if arg == "--audio" {
                 guard let nextValue, !nextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !nextValue.hasPrefix("--") else {
                     printParseError("--audio requires a path or -")
@@ -216,13 +475,16 @@ extension GrokCLI {
         let app = GrokCLIApp.shared
         app.setQuietMode(enableQuiet)
         app.setDebugMode(enableDebug && !enableQuiet)
+        if app.usesXAIOAuthMode() {
+            selectedMode = await app.resolveXAIOAuthModel(selectedMode)
+        }
         app.setCurrentMode(selectedMode)
 
         // Reset conversation ID when starting a new chat session
         app.resetConversation()
 
         var formatter = OutputFormatter(format: outputFormat)
-        let inputReader = InputReader(showsPromptWhenNotTTY: !enableQuiet)
+        var inputReader = InputReader(showsPromptWhenNotTTY: !enableQuiet)
         let startupStatus = !enableQuiet && !enableDebug && stdoutIsTTY()
             ? CLIOutput.TransientStatusLine()
             : nil
@@ -286,7 +548,7 @@ extension GrokCLI {
         // `/auth` and `/auth import` can repair the session in place.
         var canSendInitialMessage = true
         do {
-            _ = try app.initializeClient()
+            try await app.ensureAuthenticationReady()
             if !hasInitialInput {
                 connectedServiceName = try await loadConnectedServiceName()
             }
@@ -299,7 +561,7 @@ extension GrokCLI {
             let recovered = await app.handleError(error, debug: enableDebug, statusLine: startupStatus)
             if recovered {
                 do {
-                    _ = try app.initializeClient()
+                    try await app.ensureAuthenticationReady()
                     if !hasInitialInput {
                         connectedServiceName = try await loadConnectedServiceName()
                     }
@@ -314,10 +576,13 @@ extension GrokCLI {
                 }
             } else if app.isAuthenticationError(error) {
                 canSendInitialMessage = false
+                let authHint = app.usesXAIOAuthMode()
+                    ? "Interactive mode is still available. Run '/oauth' to refresh xAI OAuth credentials."
+                    : "Interactive mode is still available. Run '/auth' or '/auth import <file>' to refresh credentials."
                 if enableQuiet {
-                    CLIOutput.stderr("Interactive mode is still available. Run '/auth' or '/auth import <file>' to refresh credentials.")
+                    CLIOutput.stderr(authHint)
                 } else {
-                    print("Interactive mode is still available. Run '/auth' or '/auth import <file>' to refresh credentials.".yellow)
+                    print(authHint.yellow)
                 }
             } else {
                 return
@@ -392,12 +657,12 @@ extension GrokCLI {
 
                 if enableQuiet {
                     if enableStream {
-                        try await printQuietStreamingResponse(stream)
+                        try await printQuietStreamingResponse(stream, format: outputFormat)
                     } else {
                         guard let response = try await finalResponse(from: stream) else {
                             throw GrokError.streamingError
                         }
-                        printQuietResponse(response.message)
+                        printQuietResponse(response.message, format: outputFormat)
                     }
                 } else if enableStream {
                     try await formatter.printStreamingResponse(stream)
@@ -422,6 +687,7 @@ extension GrokCLI {
                 }
                 sentInitialMessage = true
             } catch {
+                formatter.clearTransientStatusBeforeError()
                 _ = await app.handleError(error, debug: enableDebug)
                 if !app.isAuthenticationError(error) {
                     return
@@ -438,9 +704,58 @@ extension GrokCLI {
             mode: selectedMode,
             outputFormat: outputFormat
         )
+        let renderState = InteractiveRenderState(chatState: state)
+
+        func syncPromptHUD() {
+            renderState.chatState = state
+        }
+
+        func printSessionStatus() {
+            syncPromptHUD()
+            guard !stdinIsTTY() || !stdoutIsTTY() else {
+                return
+            }
+            let hudState = CLIHUDRenderer.state(from: state, app: app)
+            for line in CLIHUDRenderer.lines(state: hudState) {
+                print(line)
+            }
+        }
+
+        var typeaheadEnabled = false
+        let typeaheadController = (!enableQuiet && stdinIsTTY() && stdoutIsTTY())
+            ? RemoteTypeaheadController(app: app)
+            : nil
+        inputReader = InputReader(
+            showsPromptWhenNotTTY: !enableQuiet,
+            hudProvider: {
+                guard !enableQuiet, stdinIsTTY(), stdoutIsTTY() else {
+                    return []
+                }
+                return CLIHUDRenderer.lines(
+                    state: CLIHUDRenderer.state(from: renderState.chatState, app: app)
+                )
+            },
+            typeaheadSuggestionsProvider: { buffer in
+                guard typeaheadEnabled else {
+                    return []
+                }
+                return typeaheadController?.suggestions(for: buffer) ?? []
+            },
+            typeaheadVersionProvider: {
+                typeaheadEnabled ? (typeaheadController?.version ?? 0) : 0
+            },
+            typeaheadQueryDidChange: { buffer in
+                guard typeaheadEnabled else {
+                    return
+                }
+                typeaheadController?.observe(buffer: buffer)
+            }
+        )
+
         if !sentInitialMessage && !enableQuiet {
             if canSendInitialMessage {
                 await refreshRateLimitStatus(state: &state, app: app, enableQuiet: enableQuiet)
+                syncPromptHUD()
             }
             if canSendInitialMessage {
                 if let startupStatus {
@@ -452,28 +767,43 @@ extension GrokCLI {
                 startupStatus?.clear()
                 print("Interactive mode ready. Authenticate with '/auth' or '/auth import <file>' before sending messages.".yellow)
             }
-            printSettingsStatus(state: state)
-            if let workspace = app.getCurrentWorkspace() {
-                print("Workspace: \(workspace.cliDisplayName)".cyan)
-            }
-            if !app.getAttachedFileIds().isEmpty {
-                print("Attached files: \(app.getAttachedFileIds().count)".cyan)
-            }
-            if let conversationId = app.getCurrentConversationId() {
-                print("Conversation ID: \(conversationId)".cyan)
-            }
+            printSessionStatus()
         }
         // Main chat loop
         var isRunning = true
+        var pendingVideoReferenceImages: [XAIVideoReferenceImage] = []
+        var pendingVideoReferenceFileNames: [String] = []
 
         while isRunning {
             // Get user input
             guard let input = inputReader.readLine(prompt: enableQuiet ? "" : "> ") else { break }
             let trimmedInput = input.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-            let interactiveCommand = GrokCLI.interactiveCommand(from: input)
+            let currentInputModeIsXAIOAuthVideo: Bool
+            if app.usesXAIOAuthMode() {
+                currentInputModeIsXAIOAuthVideo = await app.resolveXAIOAuthModel(state.mode).isXAIOAuthVideoGenerationModel
+            } else {
+                currentInputModeIsXAIOAuthVideo = false
+            }
+            let preParsedVideoReferenceInput: GrokCLI.InteractiveVideoReferenceInput?
+            do {
+                preParsedVideoReferenceInput = currentInputModeIsXAIOAuthVideo
+                    ? try GrokCLI.interactiveVideoReferenceInput(from: input, requiresPrompt: false)
+                    : nil
+            } catch {
+                await app.handleError(error, debug: enableDebug)
+                continue
+            }
+            var interactiveCommand = GrokCLI.interactiveCommand(from: input)
+            if preParsedVideoReferenceInput != nil {
+                interactiveCommand = nil
+            }
             let interactiveArgs: [String]
             do {
-                interactiveArgs = try interactiveCommand?.arguments() ?? []
+                if interactiveCommand?.name == "skill" {
+                    interactiveArgs = []
+                } else {
+                    interactiveArgs = try interactiveCommand?.arguments() ?? []
+                }
             } catch {
                 await app.handleError(error, debug: enableDebug)
                 continue
@@ -493,14 +823,9 @@ extension GrokCLI {
 
             case .some("new"):
                 app.resetConversation()
+                state.goal = nil
                 print("Started a new conversation thread.".yellow)
-                if let workspace = app.getCurrentWorkspace() {
-                    print("Workspace: \(workspace.cliDisplayName)".cyan)
-                }
-                if let conversationId = app.getCurrentConversationId() {
-                    print("Conversation ID: \(conversationId)".cyan)
-                }
-                printSettingsStatus(state: state)
+                printSessionStatus()
                 continue
 
             case .some("reason"), .some("reasoning"):
@@ -526,7 +851,7 @@ extension GrokCLI {
                     continue
                 }
                 print("Private mode: \(state.privateMode ? "ENABLED".green : "DISABLED".red)")
-                printSettingsStatus(state: state)
+                printSessionStatus()
                 continue
 
             case .some("stream"):
@@ -537,7 +862,20 @@ extension GrokCLI {
                     continue
                 }
                 print("Streaming: \(state.stream ? "ENABLED".green : "DISABLED".red)")
-                printSettingsStatus(state: state)
+                printSessionStatus()
+                continue
+
+            case .some("typeahead"):
+                do {
+                    typeaheadEnabled = try GrokCLI.resolveToggle(current: typeaheadEnabled, args: interactiveArgs, usage: interactiveCommand?.hasSlash == true ? "/typeahead" : "typeahead")
+                    if !typeaheadEnabled {
+                        typeaheadController?.reset()
+                    }
+                } catch {
+                    await app.handleError(error, debug: enableDebug)
+                    continue
+                }
+                print("Typeahead: \(typeaheadEnabled ? "ENABLED".green : "DISABLED".red)")
                 continue
 
             case .some("format"), .some("md"), .some("markdown"), .some("raw"):
@@ -556,43 +894,104 @@ extension GrokCLI {
                 }
                 print("Output format: \(state.outputFormat.description)".green)
                 await refreshRateLimitStatus(state: &state, app: app, enableQuiet: enableQuiet)
-                printSettingsStatus(state: state)
+                printSessionStatus()
                 continue
 
             case .some("model"), .some("models"), .some("mode"), .some("modes"):
                 let modelCommand = interactiveModelCommand(from: input)
-                let modes = await app.loadModes()
+                let xaiOAuthMode = app.usesXAIOAuthMode()
+                let xaiOAuthModelIDs = await app.loadXAIOAuthModelIDsIfAvailable()
+                let modes = xaiOAuthMode ? [] : await app.loadModes()
+                let currentDisplayMode = xaiOAuthMode ? await app.resolveXAIOAuthModel(state.mode) : state.mode
                 switch modelCommand {
                 case .some(.select):
-                    guard let selectedMode = promptForModelSelection(currentMode: state.mode, modes: modes) else {
+                    guard let selectedMode = promptForModelSelection(
+                        currentMode: currentDisplayMode,
+                        modes: modes,
+                        xaiOAuthModelIDs: xaiOAuthModelIDs,
+                        xaiOAuthSelectable: xaiOAuthMode
+                    ) else {
                         continue
                     }
                     state.mode = selectedMode
                 case .some(.set(let requestedMode)):
                     if requestedMode.lowercased() == "list" {
-                        printAvailableModels(currentMode: state.mode, modes: modes)
+                        printAvailableModels(
+                            currentMode: currentDisplayMode,
+                            modes: modes,
+                            xaiOAuthModelIDs: xaiOAuthModelIDs,
+                            xaiOAuthSelectable: xaiOAuthMode
+                        )
                         continue
                     }
-                    guard let selectedMode = selectableResolvedMode(requestedMode, modes: modes) else {
-                        continue
+                    if xaiOAuthMode {
+                        state.mode = await app.resolveXAIOAuthModel(
+                            GrokMode.resolve(requestedMode, modes: xaiOAuthModes(from: xaiOAuthModelIDs))
+                        )
+                    } else {
+                        guard let selectedMode = selectableResolvedMode(requestedMode, modes: modes) else {
+                            continue
+                        }
+                        state.mode = selectedMode
                     }
-                    state.mode = selectedMode
                 case .none:
                     continue
                 }
                 app.setCurrentMode(state.mode)
                 print("Model set to: \(state.mode.displayName) (\(state.mode.id))".green)
                 await refreshRateLimitStatus(state: &state, app: app, enableQuiet: enableQuiet)
-                printSettingsStatus(state: state)
+                printSessionStatus()
                 continue
 
             case .some("help"):
                 formatter.printHelp()
                 continue
 
-            case .some("list"):
+            case .some("limits"):
                 guard interactiveArgs.isEmpty else {
-                    print("Usage: /list".red)
+                    print("Usage: /limits".red)
+                    continue
+                }
+                let summary = await app.refreshRateLimitSummary(for: state.mode)
+                state.rateLimitStatus = app.currentRateLimitStatus(for: state.mode)
+                print(summary.green)
+                syncPromptHUD()
+                continue
+
+            case .some("goal"):
+                await handleGoalCommand(
+                    args: interactiveArgs,
+                    state: &state,
+                    app: app,
+                    formatter: formatter,
+                    enableQuiet: enableQuiet,
+                    enableDebug: enableDebug
+                )
+                syncPromptHUD()
+                continue
+
+            case .some("share"):
+                guard interactiveArgs.isEmpty else {
+                    print("Usage: /share".red)
+                    continue
+                }
+                do {
+                    let shareLink = try await app.shareLinkForCurrentConversation()
+                    do {
+                        try GrokCLI.copyToClipboard(shareLink)
+                        print("Copied share link \(shareLink)".green)
+                    } catch {
+                        print("Share link \(shareLink)".green)
+                        print("Clipboard copy failed \(error.localizedDescription)".yellow)
+                    }
+                } catch {
+                    await app.handleError(error, debug: enableDebug)
+                }
+                continue
+
+            case .some("resume"), .some("list"):
+                guard interactiveArgs.isEmpty else {
+                    print("Usage: /resume".red)
                     continue
                 }
                 do {
@@ -601,20 +1000,82 @@ extension GrokCLI {
                         debug: app.getDebugMode(),
                         selectionPrompt: "Select a conversation by number: ",
                         allowsEmptySelection: false,
+                        outputFormat: state.outputFormat,
                         invalidSelectionMessage: "Invalid selection.",
                         readSelection: { prompt in
                             inputReader.readLine(prompt: prompt)
                         }
                     )
+                    state.mode = app.getCurrentMode()
+                    syncPromptHUD()
                 } catch {
                     await app.handleError(error, debug: enableDebug)
                     continue
                 }
                 continue
 
+            case .some("search"):
+                let query = interactiveCommand?.remainder.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let liveSearch = query.isEmpty
+                if liveSearch, (!stdinIsTTY() || !stdoutIsTTY() || enableQuiet) {
+                    print("Usage: /search <query>".red)
+                    continue
+                }
+                do {
+                    try await GrokCLI.listAndSelectConversation(
+                        app: app,
+                        debug: app.getDebugMode(),
+                        selectionPrompt: "Select a conversation by number: ",
+                        allowsEmptySelection: false,
+                        outputFormat: state.outputFormat,
+                        invalidSelectionMessage: "Invalid selection.",
+                        pageSize: 60,
+                        searchQuery: liveSearch ? nil : query,
+                        liveSearch: liveSearch,
+                        readSelection: { prompt in
+                            inputReader.readLine(prompt: prompt)
+                        }
+                    )
+                    state.mode = app.getCurrentMode()
+                    syncPromptHUD()
+                } catch {
+                    await app.handleError(error, debug: enableDebug)
+                    continue
+                }
+                continue
+
+            case .some("delete"):
+                let skipsConfirmation = interactiveArgs == ["--yes"]
+                guard interactiveArgs.isEmpty || skipsConfirmation else {
+                    print("Usage: /delete [--yes]".red)
+                    continue
+                }
+                if !skipsConfirmation {
+                    guard stdinIsTTY(), stdoutIsTTY(), !enableQuiet else {
+                        print("Usage: /delete --yes".red)
+                        continue
+                    }
+                    let confirmationReader = InputReader(commandSpecs: [], showsPromptWhenNotTTY: !enableQuiet)
+                    let confirmation = confirmationReader
+                        .readLine(prompt: deleteConfirmationPrompt)
+                    guard isDeleteConfirmation(confirmation) else {
+                        print("Delete cancelled.".yellow)
+                        continue
+                    }
+                }
+
+                do {
+                    let conversationDisplayName = try await app.deleteCurrentConversation()
+                    print("Deleted conversation \(conversationDisplayName).".yellow)
+                    printSessionStatus()
+                } catch {
+                    await app.handleError(error, debug: enableDebug)
+                }
+                continue
+
             case .some("tasks"):
                 do {
-                    try await GrokCLI.handleTasksCommand(args: interactiveArgs)
+                    try await GrokCLI.handleInteractiveTasksCommand(args: interactiveArgs, debug: enableDebug)
                 } catch {
                     await app.handleError(error, debug: enableDebug)
                 }
@@ -626,6 +1087,55 @@ extension GrokCLI {
                 } catch {
                     await app.handleError(error, debug: enableDebug)
                 }
+                continue
+
+            case .some("skill"):
+                let prompt: String
+                do {
+                    prompt = try GrokCLI.parseSkillCreatePrompt(from: interactiveCommand?.remainder ?? "")
+                } catch {
+                    await app.handleError(error, debug: enableDebug)
+                    continue
+                }
+
+                do {
+                    state.mode = .grok43Beta
+                    app.setCurrentMode(state.mode)
+                    let stream = try await app.createSkillConversation(
+                        prompt: prompt,
+                        temporary: state.privateMode,
+                        fileAttachments: app.getAttachedFileIds(),
+                        workspaceIds: state.workspaceIds(app: app),
+                        streamOutput: state.stream
+                    )
+                    formatter.printThinkingStatus()
+
+                    if state.stream {
+                        try await formatter.printStreamingResponse(stream)
+                    } else {
+                        var finalResponse: ConversationResponse?
+                        for try await response in stream {
+                            if response.isFinal {
+                                finalResponse = response
+                                break
+                            }
+                        }
+                        if let response = finalResponse {
+                            formatter.printResponse(
+                                response.message,
+                                conversationId: app.getCurrentConversationId(),
+                                responseId: app.getLastResponseId(),
+                                debug: false,
+                                webSearchResults: response.webSearchResults,
+                                xposts: response.xposts
+                            )
+                        }
+                    }
+                } catch {
+                    formatter.clearTransientStatusBeforeError()
+                    await app.handleError(error, debug: enableDebug)
+                }
+                syncPromptHUD()
                 continue
 
             case .some("agents"):
@@ -644,13 +1154,21 @@ extension GrokCLI {
                 }
                 continue
 
+            case .some("oauth"):
+                do {
+                    try await GrokCLI.handleAuthCommand(args: ["oauth"] + interactiveArgs)
+                } catch {
+                    await app.handleError(error, debug: enableDebug)
+                }
+                continue
+
             case .some("workspaces"), .some("workspace"):
                 do {
                     let shouldSelectWorkspace =
                         interactiveCommand?.name == "workspace" && (interactiveArgs.isEmpty || interactiveArgs.first?.lowercased() == "select") ||
                         interactiveCommand?.name == "workspaces" && interactiveArgs.first?.lowercased() == "select"
                     if shouldSelectWorkspace, interactiveArgs.count > 1 {
-                        throw GrokError.apiError("Usage: /workspace select")
+                        throw GrokError.apiError("Usage: /workspace")
                     }
                     if shouldSelectWorkspace {
                         try await GrokCLI.showWorkspacePicker(app: app)
@@ -726,6 +1244,9 @@ extension GrokCLI {
                         print("Edit transcript, then press Enter to send.".yellow)
                     }
                     if options.sendImmediately {
+                        if !enableQuiet {
+                            printInteractiveAudioTranscript(resolved.transcript)
+                        }
                         inputForSend = resolved.transcript
                     } else {
                         guard let edited = inputReader.readLine(prompt: enableQuiet ? "" : "> ", prefill: resolved.transcript) else {
@@ -760,6 +1281,9 @@ extension GrokCLI {
                     let resolved = try await resolveInteractiveAudioInput(options, app: app) {
                         _ = inputReader.readLine(prompt: enableQuiet ? "" : "Press Enter to stop recording... ")
                     }
+                    if !enableQuiet {
+                        printInteractiveAudioTranscript(resolved.transcript)
+                    }
                     inputForSend = resolved.transcript
                 } catch {
                     await app.handleError(error, debug: enableDebug)
@@ -785,73 +1309,68 @@ extension GrokCLI {
                 }
                 continue
 
-            case .some("reset-conversation"):
-                app.resetConversation()
-                print("Conversation reset. Starting a new conversation.".yellow)
-                if let workspace = app.getCurrentWorkspace() {
-                    print("Workspace: \(workspace.cliDisplayName)".cyan)
-                }
-                printSettingsStatus(state: state)
-                continue
-
-            case .some("special"):
-                // Start a new private thread
-                app.resetConversation()
-                print("Started a new special mode conversation thread.".red.bold)
-                print("Special mode activated.".red.bold)
-                state.privateMode = true
-                printSettingsStatus(state: state)
-
-                do {
-                    let stream = try await app.msg(
-                        message: ChatCommand.hiddenMode,
-                        enableReasoning: true,
-                        enableDeepSearch: false,
-                        disableSearch: false,
-                        customInstructions: "",
-                        temporary: true,
-                        mode: state.mode,
-                        fileAttachments: app.getAttachedFileIds(),
-                        workspaceIds: state.workspaceIds(app: app),
-                        streamOutput: state.stream
-                    )
-                    formatter.printThinkingStatus()
-
-                    if state.stream {
-                        try await formatter.printStreamingResponse(stream)
-                    } else {
-                        var finalResponse: ConversationResponse?
-                        for try await response in stream {
-                            if response.isFinal {
-                                finalResponse = response
-                                break
-                            }
-                        }
-                        if let response = finalResponse {
-                            formatter.printResponse(
-                                response.message,
-                                conversationId: app.getCurrentConversationId(),
-                                responseId: app.getLastResponseId(),
-                                debug: false,
-                                webSearchResults: response.webSearchResults,
-                                xposts: response.xposts
-                            )
-                        }
-                    }
-                } catch {
-                    await app.handleError(error, debug: enableDebug)
-                    continue
-                }
+//            case .some("special"):
+//                // Start a new private thread
+//                app.resetConversation()
+//                state.goal = nil
+//                print("Started a new special mode conversation thread.".red.bold)
+//                print("Special mode activated.".red.bold)
+//                state.privateMode = true
+//                printSessionStatus()
+//
+//                do {
+//                    let stream = try await app.msg(
+//                        message: ChatCommand.hiddenMode,
+//                        enableReasoning: true,
+//                        enableDeepSearch: false,
+//                        disableSearch: false,
+//                        customInstructions: "",
+//                        temporary: true,
+//                        mode: state.mode,
+//                        fileAttachments: app.getAttachedFileIds(),
+//                        workspaceIds: state.workspaceIds(app: app),
+//                        streamOutput: state.stream
+//                    )
+//                    formatter.printThinkingStatus()
+//
+//                    if state.stream {
+//                        try await formatter.printStreamingResponse(stream)
+//                    } else {
+//                        var finalResponse: ConversationResponse?
+//                        for try await response in stream {
+//                            if response.isFinal {
+//                                finalResponse = response
+//                                break
+//                            }
+//                        }
+//                        if let response = finalResponse {
+//                            formatter.printResponse(
+//                                response.message,
+//                                conversationId: app.getCurrentConversationId(),
+//                                responseId: app.getLastResponseId(),
+//                                debug: false,
+//                                webSearchResults: response.webSearchResults,
+//                                xposts: response.xposts
+//                            )
+//                        }
+//                    }
+//                } catch {
+//                    await app.handleError(error, debug: enableDebug)
+//                    continue
+//                }
 
 
             case .some("clear"), .some("cls"):
                 formatter.clearScreen()
-                printSettingsStatus(state: state)
+                printSessionStatus()
                 continue
 
             case .some(let unknown) where interactiveCommand?.hasSlash == true:
-                print("Unknown command: /\(unknown)".red)
-                print("Run /help for commands.".yellow)
+                print("Unknown command /\(unknown)".red)
+                if let suggestion = InteractiveCommandRegistry.nearestCommand(to: unknown) {
+                    print("Did you mean \(suggestion.command)".yellow)
+                }
+                print("Run /help for commands".yellow)
                 continue
 
             case .none where trimmedInput.isEmpty:
@@ -865,6 +1384,37 @@ extension GrokCLI {
             // show thinking indicator
             do {
                 let pendingFileAttachments = app.getAttachedFileIds()
+                var videoReferenceImages = currentInputModeIsXAIOAuthVideo ? pendingVideoReferenceImages : []
+                var videoReferenceFileNames = currentInputModeIsXAIOAuthVideo ? pendingVideoReferenceFileNames : []
+                if currentInputModeIsXAIOAuthVideo {
+                    if let droppedReferenceInput = preParsedVideoReferenceInput {
+                        if droppedReferenceInput.prompt.isEmpty {
+                            pendingVideoReferenceImages = droppedReferenceInput.referenceImages
+                            pendingVideoReferenceFileNames = droppedReferenceInput.fileNames
+                            if !enableQuiet {
+                                let fileSummary = droppedReferenceInput.fileNames.count == 1
+                                    ? droppedReferenceInput.fileNames[0]
+                                    : "\(droppedReferenceInput.fileNames.count) reference images"
+                                print("Added video reference image for next prompt: \(fileSummary)".cyan)
+                            }
+                            continue
+                        }
+                        inputForSend = droppedReferenceInput.prompt
+                        videoReferenceImages.append(contentsOf: droppedReferenceInput.referenceImages)
+                        videoReferenceFileNames.append(contentsOf: droppedReferenceInput.fileNames)
+                    }
+                }
+                if !videoReferenceImages.isEmpty {
+                    guard videoReferenceImages.count <= 7 else {
+                        throw GrokError.apiError("xAI reference-to-video supports at most 7 reference images")
+                    }
+                    if !enableQuiet {
+                        let fileSummary = videoReferenceFileNames.count == 1
+                            ? videoReferenceFileNames[0]
+                            : "\(videoReferenceFileNames.count) reference images"
+                        print("Using video reference image: \(fileSummary)".cyan)
+                    }
+                }
                 let wasMultiTurnConversation = app.getCurrentConversationId() != nil
                 if !enableQuiet {
                     formatter.printThinkingStatus()
@@ -879,17 +1429,18 @@ extension GrokCLI {
                     mode: state.mode,
                     fileAttachments: pendingFileAttachments,
                     workspaceIds: state.workspaceIds(app: app),
-                    streamOutput: state.stream
+                    streamOutput: state.stream,
+                    xaiOAuthVideoReferenceImages: videoReferenceImages
                 )
 
                 if enableQuiet {
                     if state.stream {
-                        try await printQuietStreamingResponse(stream)
+                        try await printQuietStreamingResponse(stream, format: state.outputFormat)
                     } else {
                         guard let response = try await finalResponse(from: stream) else {
                             throw GrokError.streamingError
                         }
-                        printQuietResponse(response.message)
+                        printQuietResponse(response.message, format: state.outputFormat)
                     }
                 } else if state.stream {
                     try await formatter.printStreamingResponse(stream)
@@ -915,13 +1466,19 @@ extension GrokCLI {
                 if !pendingFileAttachments.isEmpty {
                     app.clearAttachedFiles()
                 }
+                if !videoReferenceImages.isEmpty {
+                    pendingVideoReferenceImages.removeAll()
+                    pendingVideoReferenceFileNames.removeAll()
+                }
                 await refreshRateLimitStatus(
                     state: &state,
                     app: app,
                     enableQuiet: enableQuiet,
                     printWarning: wasMultiTurnConversation
                 )
+                syncPromptHUD()
             } catch {
+                formatter.clearTransientStatusBeforeError()
                 await app.handleError(error, debug: enableDebug)
             }
         }
