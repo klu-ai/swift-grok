@@ -484,6 +484,9 @@ extension GrokCLI {
             "resource": AnyCodable(resource),
             "items": AnyCodable(items)
         ]
+        if let raw {
+            data["raw"] = raw
+        }
         for (key, value) in extra {
             data[key] = value
         }
@@ -509,6 +512,9 @@ extension GrokCLI {
         }
         if let item {
             data["item"] = item
+        }
+        if let raw {
+            data["raw"] = raw
         }
         for (key, value) in extra {
             data[key] = value

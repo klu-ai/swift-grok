@@ -271,8 +271,16 @@ extension GrokCLI {
         }
 
         if disabledTopLevelCommands.contains(command) {
-            print("Command '\(command)' is disabled.")
-            return
+            if isJSONRequested(arguments) {
+                printJSONError(
+                    command: command,
+                    message: "Command '\(command)' is disabled.",
+                    exitCode: 1
+                )
+            } else {
+                print("Command '\(command)' is disabled.")
+            }
+            exit(with: 1)
         }
 
         // Check if first argument is a recognized command

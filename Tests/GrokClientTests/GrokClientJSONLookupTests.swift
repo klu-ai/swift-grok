@@ -77,4 +77,36 @@ final class GrokClientJSONLookupTests: XCTestCase {
         XCTAssertEqual(recursive[0]["id"]?.value as? String, "one")
         XCTAssertEqual(recursive[1]["id"]?.value as? String, "two")
     }
+
+    func testDictionariesRecursesIntoWrapperDictionariesBeforeReturningThem() {
+        let lookup = JSONLookup([
+            "data": [
+                "workspaces": [
+                    ["id": "ws-1", "name": "first"],
+                    ["id": "ws-2", "name": "second"]
+                ]
+            ]
+        ])
+
+        let results = lookup.dictionaries(["workspaces", "data", "result", "items"])
+        XCTAssertEqual(results.count, 2)
+        XCTAssertEqual(results[0]["id"]?.value as? String, "ws-1")
+        XCTAssertEqual(results[0]["name"]?.value as? String, "first")
+        XCTAssertEqual(results[1]["id"]?.value as? String, "ws-2")
+        XCTAssertEqual(results[1]["name"]?.value as? String, "second")
+    }
+
+    func testDictionariesReturnsSingleLeafDictionaryWhenNoNestedCollectionMatches() {
+        let lookup = JSONLookup([
+            "workspace": [
+                "id": "ws-single",
+                "name": "single workspace"
+            ]
+        ])
+
+        let results = lookup.dictionaries(["workspace"])
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(results[0]["id"]?.value as? String, "ws-single")
+        XCTAssertEqual(results[0]["name"]?.value as? String, "single workspace")
+    }
 }

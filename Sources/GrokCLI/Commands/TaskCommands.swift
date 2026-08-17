@@ -42,8 +42,7 @@ extension GrokCLI {
                         category: "resource_list",
                         data: AnyCodable(resourceListJSON(
                             resource: "task",
-                            items: tasks.map { AnyCodable(taskJSON($0)) },
-                            raw: response.rawJSON
+                            items: tasks.map { AnyCodable(taskJSON($0)) }
                         )),
                         debug: parsed.debug
                     )

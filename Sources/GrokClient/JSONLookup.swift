@@ -124,24 +124,39 @@ internal struct JSONLookup {
             return []
         }
 
+        // 1. Direct array matches: if dictionary[key] is directly an array
         for key in keys {
             guard let nested = dictionary[key]?.value else {
                 continue
             }
-            let nestedDictionaries = Self.directDictionaries(from: nested)
-            if !nestedDictionaries.isEmpty {
-                return nestedDictionaries
+            if let array = Self.arrayValue(nested) {
+                let items = array.flatMap(Self.directDictionaries)
+                if !items.isEmpty {
+                    return items
+                }
             }
         }
 
+        // 2. Recursive matches: if dictionary[key] is a wrapper object that contains an array or nested matches under keys
         for key in keys {
             guard let nested = dictionary[key]?.value else {
                 continue
             }
-            let nestedDictionaries = JSONLookup(nested).dictionaries(keys)
-            if !nestedDictionaries.isEmpty {
-                return nestedDictionaries
+            if Self.dictionaryValue(nested) != nil {
+                let nestedDictionaries = JSONLookup(nested).dictionaries(keys)
+                if !nestedDictionaries.isEmpty {
+                    return nestedDictionaries
+                }
             }
+        }
+
+        // 3. Single object match fallback: if dictionary[key] is a single leaf dictionary
+        for key in keys {
+            guard let nested = dictionary[key]?.value,
+                  let dict = Self.dictionaryValue(nested) else {
+                continue
+            }
+            return [dict]
         }
 
         return []

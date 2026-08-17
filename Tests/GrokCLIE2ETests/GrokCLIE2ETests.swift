@@ -4285,6 +4285,28 @@ final class GrokCLIE2ETests: XCTestCase {
         XCTAssertEqual(server.requests(matchingPath: "/rest/app-chat/conversations/conv-e2e/responses", method: "POST").count, 1)
     }
 
+    func testResourceListAndMutationJSONPreservesRawField() throws {
+        let rawData = AnyCodable(["debug_info": "payload", "count": 42])
+        let listJSON = GrokCLI.resourceListJSON(
+            resource: "skills",
+            items: [AnyCodable(["id": "skill-1"])],
+            raw: rawData
+        )
+        XCTAssertNotNil(listJSON["raw"])
+        let listRaw = try XCTUnwrap(listJSON["raw"]?.value as? [String: Any])
+        XCTAssertEqual(listRaw["count"] as? Int, 42)
+
+        let mutationJSON = GrokCLI.resourceMutationJSON(
+            resource: "skills",
+            action: "delete",
+            id: "skill-1",
+            raw: rawData
+        )
+        XCTAssertNotNil(mutationJSON["raw"])
+        let mutationRaw = try XCTUnwrap(mutationJSON["raw"]?.value as? [String: Any])
+        XCTAssertEqual(mutationRaw["count"] as? Int, 42)
+    }
+
     private func captureStdout(_ body: () -> Void) -> String {
         fflush(stdout)
 
